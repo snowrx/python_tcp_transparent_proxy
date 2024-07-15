@@ -1,0 +1,14 @@
+[Unit]
+Description=Transparent TCP Proxy
+After=network-online.target
+ConditionPathExists=/opt/proxy.py
+
+[Service]
+DynamicUser=yes
+ExecStart=pypy3 /opt/proxy.py
+MemoryHigh=50%
+CPUSchedulingPolicy=rr
+CPUSchedulingPriority=1
+
+[Install]
+WantedBy=multi-user.target
