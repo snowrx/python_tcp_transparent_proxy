@@ -108,6 +108,6 @@ def run(_):
 
 logging.basicConfig(level=logging.DEBUG)
 nproc = multiprocessing.cpu_count() << 1
-logging.debug(f"{nproc=}, {config.limit=}")
+logging.debug(f"{nproc=}, {config.limit=}, {config.chunk=}")
 with ProcessPoolExecutor(nproc) as ex:
     ex.map(run, range(nproc))
