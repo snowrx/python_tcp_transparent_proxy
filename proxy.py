@@ -10,7 +10,8 @@ import struct
 class config:
     port: int = 8081
     timeout: int = 3660
-    limit: int = 1 << 18
+    limit: int = 1 << 24
+    chunk: int = 1 << 18
 
 
 class consts:
@@ -37,7 +38,7 @@ async def proxy(r: asyncio.StreamReader, w: asyncio.StreamWriter):
     try:
         s: socket.socket = w.get_extra_info("socket")
         s.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, True)
-        while not w.is_closing() and (data := await asyncio.wait_for(r.read(config.limit), config.timeout)):
+        while not w.is_closing() and (data := await asyncio.wait_for(r.read(config.chunk), config.timeout)):
             w.write(data)
             del data
             await w.drain()
