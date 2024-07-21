@@ -10,8 +10,8 @@ import struct
 class config:
     port: int = 8081
     timeout: int = 3660
-    limit: int = 1 << 24
-    chunk: int = 1 << 18
+    limit: int = 1 << 18
+    chunk: int = 1 << 14
 
 
 class consts:
