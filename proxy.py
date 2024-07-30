@@ -5,12 +5,14 @@ import logging
 import multiprocessing
 import socket
 import struct
+import configparser
 
 
 class config:
     port: int = 8081
     timeout: int = 3660
     limit: int = 1 << 20
+    conf: str = "proxy.conf"
 
 
 class consts:
@@ -37,6 +39,7 @@ async def proxy(r: asyncio.StreamReader, w: asyncio.StreamWriter):
     try:
         s: socket.socket = w.get_extra_info("socket")
         s.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, True)
+        logging.debug(f"{config.limit=}")
         while not w.is_closing() and (data := await asyncio.wait_for(r.read(config.limit), config.timeout)):
             w.write(data)
             del data
@@ -77,6 +80,7 @@ async def client(cr: asyncio.StreamReader, cw: asyncio.StreamWriter):
             pass
         return
     try:
+        logging.debug(f"{config.limit=}")
         pr, pw = await asyncio.open_connection(host=r[0], port=r[1], limit=config.limit)
     except:
         try:
@@ -96,6 +100,7 @@ async def client(cr: asyncio.StreamReader, cw: asyncio.StreamWriter):
 
 
 async def server():
+    logging.debug(f"{config.limit=}")
     server = await asyncio.start_server(client, port=config.port, reuse_port=True, limit=config.limit)
     async with server:
         await server.serve_forever()
@@ -107,6 +112,18 @@ def run(_):
 
 logging.basicConfig(level=logging.DEBUG)
 nproc = multiprocessing.cpu_count()
+conf = configparser.ConfigParser()
+conf.read(config.conf)
+if "DEFAULT" in conf:
+    if "port" in conf["DEFAULT"]:
+        config.port = int(conf["DEFAULT"]["port"])
+    if "timeout" in conf["DEFAULT"]:
+        config.timeout = int(conf["DEFAULT"]["timeout"])
+    if "limit" in conf["DEFAULT"]:
+        config.limit = int(conf["DEFAULT"]["limit"])
+    if "nproc" in conf["DEFAULT"]:
+        nproc = int(conf["DEFAULT"]["nproc"])
+
 logging.debug(f"{nproc=}, {config.limit=}")
 with ProcessPoolExecutor(nproc) as ex:
     ex.map(run, range(nproc))
