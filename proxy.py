@@ -1,5 +1,4 @@
 from concurrent.futures import ProcessPoolExecutor
-import os
 from time import time
 import asyncio
 import logging
@@ -113,7 +112,6 @@ def run(_):
 
 logging.basicConfig(level=logging.DEBUG)
 nproc = multiprocessing.cpu_count()
-logging.debug(os.getcwd())
 conf = configparser.ConfigParser()
 conf.read(config.conf)
 if "DEFAULT" in conf:
