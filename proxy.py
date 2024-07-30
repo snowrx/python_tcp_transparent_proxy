@@ -39,7 +39,6 @@ async def proxy(r: asyncio.StreamReader, w: asyncio.StreamWriter):
     try:
         s: socket.socket = w.get_extra_info("socket")
         s.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, True)
-        logging.debug(f"{config.limit=}")
         while not w.is_closing() and (data := await asyncio.wait_for(r.read(config.limit), config.timeout)):
             w.write(data)
             del data
@@ -80,7 +79,6 @@ async def client(cr: asyncio.StreamReader, cw: asyncio.StreamWriter):
             pass
         return
     try:
-        logging.debug(f"{config.limit=}")
         pr, pw = await asyncio.open_connection(host=r[0], port=r[1], limit=config.limit)
     except:
         try:
@@ -100,7 +98,6 @@ async def client(cr: asyncio.StreamReader, cw: asyncio.StreamWriter):
 
 
 async def server():
-    logging.debug(f"{config.limit=}")
     server = await asyncio.start_server(client, port=config.port, reuse_port=True, limit=config.limit)
     async with server:
         await server.serve_forever()
@@ -124,6 +121,6 @@ if "DEFAULT" in conf:
     if "nproc" in conf["DEFAULT"]:
         nproc = int(conf["DEFAULT"]["nproc"])
 
-logging.debug(f"{nproc=}, {config.limit=}")
+logging.debug(f"{config.port=}, {config.timeout=}, {config.limit=}, {nproc=}")
 with ProcessPoolExecutor(nproc) as ex:
     ex.map(run, range(nproc))
