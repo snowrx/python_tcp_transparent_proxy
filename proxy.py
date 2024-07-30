@@ -114,7 +114,7 @@ conf.read(config.conf)
 if "DEFAULT" in conf:
     if "port" in conf["DEFAULT"]:
         try:
-            if (t := int(conf["DEFAULT"]["port"])) < 0x1 or t > 0xffff:
+            if (t := int(conf["DEFAULT"]["port"], 0)) < 0x1 or t > 0xffff:
                 logging.debug("config port out of range, ignoring.")
             else:
                 config.port = t
@@ -122,7 +122,7 @@ if "DEFAULT" in conf:
             logging.debug(ex)
     if "timeout" in conf["DEFAULT"]:
         try:
-            if (t := int(conf["DEFAULT"]["timeout"])) < 1:
+            if (t := int(conf["DEFAULT"]["timeout"], 0)) < 1:
                 logging.debug("config timeout out of range, ignoring.")
             else:
                 config.timeout = t
@@ -130,7 +130,7 @@ if "DEFAULT" in conf:
             logging.debug(ex)
     if "limit" in conf["DEFAULT"]:
         try:
-            if (t := int(conf["DEFAULT"]["limit"])) < 1:
+            if (t := int(conf["DEFAULT"]["limit"], 0)) < 1:
                 logging.debug("config limit out of range, ignoring.")
             else:
                 config.limit = t
@@ -138,7 +138,7 @@ if "DEFAULT" in conf:
             logging.debug(ex)
     if "nproc" in conf["DEFAULT"]:
         try:
-            if (t := int(conf["DEFAULT"]["nproc"])) < 1:
+            if (t := int(conf["DEFAULT"]["nproc"], 0)) < 1:
                 logging.debug("config nproc out of range, ignoring.")
             else:
                 config.limit = t
