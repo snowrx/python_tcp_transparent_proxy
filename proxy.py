@@ -113,14 +113,37 @@ conf = configparser.ConfigParser()
 conf.read(config.conf)
 if "DEFAULT" in conf:
     if "port" in conf["DEFAULT"]:
-        config.port = int(conf["DEFAULT"]["port"])
+        try:
+            if (t := int(conf["DEFAULT"]["port"])) < 0x1 or t > 0xffff:
+                logging.debug("config port out of range, ignoring.")
+            else:
+                config.port = t
+        except Exception as ex:
+            logging.debug(ex)
     if "timeout" in conf["DEFAULT"]:
-        config.timeout = int(conf["DEFAULT"]["timeout"])
+        try:
+            if (t := int(conf["DEFAULT"]["timeout"])) < 1:
+                logging.debug("config timeout out of range, ignoring.")
+            else:
+                config.timeout = t
+        except Exception as ex:
+            logging.debug(ex)
     if "limit" in conf["DEFAULT"]:
-        config.limit = int(conf["DEFAULT"]["limit"])
+        try:
+            if (t := int(conf["DEFAULT"]["limit"])) < 1:
+                logging.debug("config limit out of range, ignoring.")
+            else:
+                config.limit = t
+        except Exception as ex:
+            logging.debug(ex)
     if "nproc" in conf["DEFAULT"]:
-        nproc = int(conf["DEFAULT"]["nproc"])
-
+        try:
+            if (t := int(conf["DEFAULT"]["nproc"])) < 1:
+                logging.debug("config nproc out of range, ignoring.")
+            else:
+                config.limit = t
+        except Exception as ex:
+            logging.debug(ex)
 logging.debug(f"{config.port=}, {config.timeout=}, {config.limit=}, {nproc=}")
 with ProcessPoolExecutor(nproc) as ex:
     ex.map(run, range(nproc))
