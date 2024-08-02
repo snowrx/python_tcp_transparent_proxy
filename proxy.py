@@ -11,7 +11,7 @@ import configparser
 class config:
     port: int = 8081
     timeout: int = 3660
-    limit: int = 1 << 24
+    limit: int = 1 << 18
     conf: str = "proxy.conf"
 
 
