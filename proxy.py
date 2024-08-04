@@ -9,10 +9,11 @@ import configparser
 
 
 class config:
+    conf: str = "proxy.conf"
     port: int = 8081
     timeout: int = 3660
     limit: int = 1 << 18
-    conf: str = "proxy.conf"
+    tcp_defer_accept: bool = True
 
 
 class consts:
@@ -99,6 +100,13 @@ async def client(cr: asyncio.StreamReader, cw: asyncio.StreamWriter):
 
 async def server():
     server = await asyncio.start_server(client, port=config.port, reuse_port=True, limit=config.limit)
+    if config.tcp_defer_accept:
+        try:
+            for s in server.sockets:
+                s.setsockopt(socket.SOL_TCP, socket.TCP_DEFER_ACCEPT, 1)
+                logging.debug(s.getsockopt(socket.SOL_TCP, socket.TCP_DEFER_ACCEPT))
+        except:
+            logging.exception("set TCP_DEFER_ACCEPT failed")
     async with server:
         await server.serve_forever()
 
