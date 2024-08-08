@@ -11,7 +11,7 @@ import configparser
 class config:
     port: int = 8081
     timeout: int = 3660
-    limit: int = 1 << 18
+    limit: int = 1 << 20
     conf: str = "proxy.conf"
 
 
@@ -141,7 +141,7 @@ if "DEFAULT" in conf:
             if (t := int(conf["DEFAULT"]["nproc"], 0)) < 1:
                 logging.debug("config nproc out of range, ignoring.")
             else:
-                config.limit = t
+                nproc = t
         except Exception as ex:
             logging.debug(ex)
 logging.debug(f"{config.port=}, {config.timeout=}, {config.limit=}, {nproc=}")
