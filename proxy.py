@@ -1,18 +1,15 @@
-from concurrent.futures import ProcessPoolExecutor
 from time import time
 import asyncio
 import logging
 import multiprocessing
 import socket
 import struct
-import configparser
 
 
 class config:
     port: int = 8081
     timeout: int = 3660
     limit: int = 1 << 20
-    conf: str = "proxy.conf"
 
 
 class consts:
@@ -109,41 +106,6 @@ def run(_):
 
 logging.basicConfig(level=logging.DEBUG)
 nproc = multiprocessing.cpu_count()
-conf = configparser.ConfigParser()
-conf.read(config.conf)
-if "DEFAULT" in conf:
-    if "port" in conf["DEFAULT"]:
-        try:
-            if (t := int(conf["DEFAULT"]["port"], 0)) < 0x1 or t > 0xffff:
-                logging.debug("config port out of range, ignoring.")
-            else:
-                config.port = t
-        except Exception as ex:
-            logging.debug(ex)
-    if "timeout" in conf["DEFAULT"]:
-        try:
-            if (t := int(conf["DEFAULT"]["timeout"], 0)) < 1:
-                logging.debug("config timeout out of range, ignoring.")
-            else:
-                config.timeout = t
-        except Exception as ex:
-            logging.debug(ex)
-    if "limit" in conf["DEFAULT"]:
-        try:
-            if (t := int(conf["DEFAULT"]["limit"], 0)) < 1:
-                logging.debug("config limit out of range, ignoring.")
-            else:
-                config.limit = t
-        except Exception as ex:
-            logging.debug(ex)
-    if "nproc" in conf["DEFAULT"]:
-        try:
-            if (t := int(conf["DEFAULT"]["nproc"], 0)) < 1:
-                logging.debug("config nproc out of range, ignoring.")
-            else:
-                nproc = t
-        except Exception as ex:
-            logging.debug(ex)
 logging.debug(f"{config.port=}, {config.timeout=}, {config.limit=}, {nproc=}")
-with ProcessPoolExecutor(nproc) as ex:
-    ex.map(run, range(nproc))
+with multiprocessing.Pool(nproc) as pool:
+    pool.map(run, range(nproc))
