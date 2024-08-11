@@ -94,18 +94,18 @@ async def client(cr: asyncio.StreamReader, cw: asyncio.StreamWriter):
     logging.info(f"Close proxy in {c[0]}@{c[1]} ({codes[0]}) <-> {r[0]}@{r[1]} ({codes[1]}) in {round(duration)}s")
 
 
-async def server():
-    server = await asyncio.start_server(client, port=config.port, reuse_port=True, limit=config.limit)
-    async with server:
-        await server.serve_forever()
-
-
 def run(_):
+    async def server():
+        server = await asyncio.start_server(client, port=config.port, reuse_port=True, limit=config.limit)
+        async with server:
+            await server.serve_forever()
+    logging.debug(_)
     asyncio.run(server())
 
 
-logging.basicConfig(level=logging.DEBUG)
-nproc = multiprocessing.cpu_count()
-logging.debug(f"{config.port=}, {config.timeout=}, {config.limit=}, {nproc=}")
-with multiprocessing.Pool(nproc) as pool:
-    pool.map(run, range(nproc))
+if __name__ == '__main__':
+    logging.basicConfig(level=logging.DEBUG)
+    nproc = multiprocessing.cpu_count()
+    logging.debug(f"{config.port=}, {config.timeout=}, {config.limit=}, {nproc=}")
+    with multiprocessing.Pool(nproc) as pool:
+        pool.map(run, range(nproc))
