@@ -1,3 +1,4 @@
+from concurrent.futures import ProcessPoolExecutor
 from time import time
 import asyncio
 import logging
@@ -10,6 +11,7 @@ class config:
     port: int = 8081
     timeout: int = 3660
     limit: int = 1 << 20
+    op: bool = True
 
 
 class consts:
@@ -99,13 +101,13 @@ def run(_):
         server = await asyncio.start_server(client, port=config.port, reuse_port=True, limit=config.limit)
         async with server:
             await server.serve_forever()
-    logging.debug(_)
+
     asyncio.run(server())
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     logging.basicConfig(level=logging.DEBUG)
-    nproc = multiprocessing.cpu_count()
+    nproc = multiprocessing.cpu_count() << int(config.op)
     logging.debug(f"{config.port=}, {config.timeout=}, {config.limit=}, {nproc=}")
-    with multiprocessing.Pool(nproc) as pool:
-        pool.map(run, range(nproc))
+    with ProcessPoolExecutor(nproc) as ex:
+        ex.map(run, range(nproc))
