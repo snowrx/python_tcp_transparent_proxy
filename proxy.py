@@ -9,8 +9,8 @@ import struct
 
 class config:
     port: int = 8081
-    timeout: int = 3660
-    limit: int = 1 << 20
+    timeout: int = 660
+    limit: int = 1 << 14
     op: bool = True
 
 
