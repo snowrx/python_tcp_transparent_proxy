@@ -79,7 +79,8 @@ async def client(cr: asyncio.StreamReader, cw: asyncio.StreamWriter):
         return
     try:
         pr, pw = await asyncio.open_connection(host=r[0], port=r[1], limit=config.limit)
-    except:
+    except Exception as ex:
+        logging.debug(ex)
         try:
             cw.close()
             await cw.wait_closed()
