@@ -9,9 +9,8 @@ import struct
 
 class config:
     port: int = 8081
-    timeout: int = 3660
-    limit: int = 1 << 14
-    op: bool = True
+    timeout: int = 660
+    limit: int = 1 << 16
 
 
 class consts:
@@ -108,7 +107,7 @@ def run(_):
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.DEBUG)
-    nproc = multiprocessing.cpu_count() << int(config.op)
+    nproc = multiprocessing.cpu_count()
     logging.debug(f"{config.port=}, {config.timeout=}, {config.limit=}, {nproc=}")
     with ProcessPoolExecutor(nproc) as ex:
         ex.map(run, range(nproc))
