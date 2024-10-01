@@ -10,7 +10,7 @@ import struct
 
 class config:
     port: int = 8081
-    timeout: int = 660
+    timeout: int = 86400
     limit: int = 1 << 18
     gc_interval: int = 3600
 
@@ -47,14 +47,16 @@ async def proxy(r: asyncio.StreamReader, w: asyncio.StreamWriter):
             w.write(data)
             del data
             await w.drain()
-    except Exception:
+    except asyncio.TimeoutError:
         code |= 0b0001
+    except Exception:
+        code |= 0b0010
     finally:
         if r.at_eof():
             try:
                 r.feed_eof()
             except Exception:
-                code |= 0b0010
+                code |= 0b0100
         if not w.is_closing():
             try:
                 w.write_eof()
@@ -62,7 +64,7 @@ async def proxy(r: asyncio.StreamReader, w: asyncio.StreamWriter):
                 w.close()
                 await w.wait_closed()
             except Exception:
-                code |= 0b0100
+                code |= 0b1000
     return code
 
 
