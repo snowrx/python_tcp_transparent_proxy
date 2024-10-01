@@ -95,7 +95,12 @@ async def client(cr: asyncio.StreamReader, cw: asyncio.StreamWriter):
     codes = await asyncio.gather(proxy(cr, pw), proxy(pr, cw))
     end = time()
     duration = end - start
-    logging.info(f"Close proxy in {c[0]}@{c[1]} ({codes[0]}) <> {r[0]}@{r[1]} ({codes[1]}) in {round(duration)}s")
+    if any(codes):
+        logging.warning(
+            f"Close proxy in {c[0]}@{c[1]} ({codes[0]}) <> {r[0]}@{r[1]} ({codes[1]}) in {round(duration)}s"
+        )
+    else:
+        logging.info(f"Close proxy in {c[0]}@{c[1]} <> {r[0]}@{r[1]} in {round(duration)}s")
 
     if end > (v.gc_timer + config.gc_interval):
         logging.debug("Trigger Timer GC")
@@ -116,7 +121,7 @@ def run(_):
 
 
 if __name__ == "__main__":
-    logging.basicConfig(level=logging.DEBUG)
+    logging.basicConfig(level=logging.WARNING)
     nproc = multiprocessing.cpu_count()
     logging.debug(f"{config.port=}, {config.timeout=}, {config.limit=}, {nproc=}")
     with ProcessPoolExecutor(nproc) as ex:
