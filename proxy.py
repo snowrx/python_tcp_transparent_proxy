@@ -49,7 +49,6 @@ async def proxy(r: asyncio.StreamReader, w: asyncio.StreamWriter):
             await w.drain()
     except Exception:
         code |= 0b0001
-        logging.debug(ex)
     finally:
         if r.at_eof():
             try:
