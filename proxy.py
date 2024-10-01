@@ -1,4 +1,5 @@
 from concurrent.futures import ProcessPoolExecutor
+import gc
 from time import time
 import asyncio
 import logging
@@ -11,6 +12,7 @@ class config:
     port: int = 8081
     timeout: int = 660
     limit: int = 1 << 18
+    gc_interval: int = 3600
 
 
 class consts:
@@ -18,6 +20,10 @@ class consts:
     SOL_IPV6 = 41
     V4_LEN = 16
     V6_LEN = 28
+
+
+class v:
+    gc_timer: float
 
 
 def get_original_dst(so: socket.socket, is_ipv4=True):
@@ -82,18 +88,26 @@ async def client(cr: asyncio.StreamReader, cw: asyncio.StreamWriter):
             await cw.wait_closed()
         except:
             pass
-        logging.warning(f"Failed proxy in {c[0]}@{c[1]} <-> {r[0]}@{r[1]}")
+        logging.warning(f"Failed proxy in {c[0]}@{c[1]} <> {r[0]}@{r[1]}")
         return
 
-    logging.info(f"Open proxy in {c[0]}@{c[1]} <-> {r[0]}@{r[1]}")
+    logging.info(f"Open proxy in {c[0]}@{c[1]} <> {r[0]}@{r[1]}")
     start = time()
     codes = await asyncio.gather(proxy(cr, pw), proxy(pr, cw))
     end = time()
     duration = end - start
-    logging.info(f"Close proxy in {c[0]}@{c[1]} ({codes[0]}) <-> {r[0]}@{r[1]} ({codes[1]}) in {round(duration)}s")
+    logging.info(f"Close proxy in {c[0]}@{c[1]} ({codes[0]}) <> {r[0]}@{r[1]} ({codes[1]}) in {round(duration)}s")
+
+    if end > (v.gc_timer + config.gc_interval):
+        logging.debug("Trigger Timer GC")
+        gc.collect()
+        v.gc_timer = end
+        logging.debug("Finish Timer GC")
 
 
 def run(_):
+    v.gc_timer = time()
+
     async def server():
         server = await asyncio.start_server(client, port=config.port, reuse_port=True, limit=config.limit)
         async with server:
@@ -103,7 +117,7 @@ def run(_):
 
 
 if __name__ == "__main__":
-    logging.basicConfig(level=logging.WARNING)
+    logging.basicConfig(level=logging.DEBUG)
     nproc = multiprocessing.cpu_count()
     logging.debug(f"{config.port=}, {config.timeout=}, {config.limit=}, {nproc=}")
     with ProcessPoolExecutor(nproc) as ex:
