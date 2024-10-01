@@ -41,25 +41,23 @@ async def proxy(r: asyncio.StreamReader, w: asyncio.StreamWriter):
             w.write(data)
             del data
             await w.drain()
-    except asyncio.TimeoutError:
-        code |= 0b0010
-    except Exception as ex:
+    except Exception:
         code |= 0b0001
         logging.debug(ex)
     finally:
         if r.at_eof():
             try:
                 r.feed_eof()
-            except:
-                code |= 0b0100
+            except Exception:
+                code |= 0b0010
         if not w.is_closing():
             try:
                 w.write_eof()
                 await w.drain()
                 w.close()
                 await w.wait_closed()
-            except:
-                code |= 0b1000
+            except Exception:
+                code |= 0b0100
     return code
 
 
@@ -78,8 +76,7 @@ async def client(cr: asyncio.StreamReader, cw: asyncio.StreamWriter):
         return
     try:
         pr, pw = await asyncio.open_connection(host=r[0], port=r[1], limit=config.limit)
-    except Exception as ex:
-        logging.debug(ex)
+    except Exception:
         try:
             cw.close()
             await cw.wait_closed()
@@ -106,7 +103,7 @@ def run(_):
 
 
 if __name__ == "__main__":
-    logging.basicConfig(level=logging.DEBUG)
+    logging.basicConfig(level=logging.WARNING)
     nproc = multiprocessing.cpu_count()
     logging.debug(f"{config.port=}, {config.timeout=}, {config.limit=}, {nproc=}")
     with ProcessPoolExecutor(nproc) as ex:
