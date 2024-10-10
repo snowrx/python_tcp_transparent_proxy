@@ -1,11 +1,11 @@
 from concurrent.futures import ProcessPoolExecutor
-import gc
-from time import time
 import asyncio
+import gc
 import logging
 import multiprocessing
 import socket
 import struct
+import time
 
 
 class config:
@@ -69,6 +69,7 @@ async def proxy(r: asyncio.StreamReader, w: asyncio.StreamWriter):
 
 
 async def client(cr: asyncio.StreamReader, cw: asyncio.StreamWriter):
+    open_start = time.perf_counter()
     c = cw.get_extra_info("peername")
     sn = cw.get_extra_info("sockname")
     is_ipv4 = "." in c[0]
@@ -91,28 +92,25 @@ async def client(cr: asyncio.StreamReader, cw: asyncio.StreamWriter):
             pass
         logging.warning(f"Failed proxy in {c[0]}@{c[1]} <> {r[0]}@{r[1]}")
         return
+    open_finish = time.perf_counter()
+    open_delay = open_finish - open_start
 
-    logging.info(f"Open proxy in {c[0]}@{c[1]} <> {r[0]}@{r[1]}")
-    start = time()
+    logging.info(f"Open proxy in {c[0]}@{c[1]} <> {r[0]}@{r[1]} ({round(open_delay * 1000)}ms)")
+    proxy_start = time.perf_counter()
     codes = await asyncio.gather(proxy(cr, pw), proxy(pr, cw))
-    end = time()
-    duration = end - start
-    if any(codes):
-        logging.warning(
-            f"Close proxy in {c[0]}@{c[1]} ({codes[0]}) <> {r[0]}@{r[1]} ({codes[1]}) in {round(duration)}s"
-        )
-    else:
-        logging.info(f"Close proxy in {c[0]}@{c[1]} <> {r[0]}@{r[1]} in {round(duration)}s")
+    proxy_end = time.perf_counter()
+    proxy_duration = proxy_end - proxy_start
+    logging.info(f"Close proxy in {c[0]}@{c[1]} ({codes[0]}) <> {r[0]}@{r[1]} ({codes[1]}) in {round(proxy_duration)}s")
 
-    if end > (v.gc_timer + config.gc_interval):
+    if proxy_end > (v.gc_timer + config.gc_interval):
         logging.debug("Trigger Timer GC")
         gc.collect()
-        v.gc_timer = end
+        v.gc_timer = proxy_end
         logging.debug("Finish Timer GC")
 
 
 def run(_):
-    v.gc_timer = time()
+    v.gc_timer = time.perf_counter()
 
     async def server():
         server = await asyncio.start_server(client, port=config.port, reuse_port=True, limit=config.limit)
@@ -123,8 +121,8 @@ def run(_):
 
 
 if __name__ == "__main__":
-    logging.basicConfig(level=logging.WARNING)
-    nproc = multiprocessing.cpu_count()
+    logging.basicConfig(level=logging.DEBUG)
+    nproc = multiprocessing.cpu_count() << 1
     logging.debug(f"{config.port=}, {config.timeout=}, {config.limit=}, {nproc=}")
     with ProcessPoolExecutor(nproc) as ex:
         ex.map(run, range(nproc))
