@@ -69,7 +69,6 @@ async def proxy(r: asyncio.StreamReader, w: asyncio.StreamWriter):
 
 
 async def client(cr: asyncio.StreamReader, cw: asyncio.StreamWriter):
-    open_start = time.perf_counter()
     c = cw.get_extra_info("peername")
     sn = cw.get_extra_info("sockname")
     is_ipv4 = "." in c[0]
@@ -83,7 +82,10 @@ async def client(cr: asyncio.StreamReader, cw: asyncio.StreamWriter):
             pass
         return
     try:
+        open_start = time.perf_counter()
         pr, pw = await asyncio.open_connection(host=r[0], port=r[1], limit=config.limit)
+        open_finish = time.perf_counter()
+        open_delay = open_finish - open_start
     except Exception:
         try:
             cw.close()
@@ -92,8 +94,6 @@ async def client(cr: asyncio.StreamReader, cw: asyncio.StreamWriter):
             pass
         logging.warning(f"Failed proxy in {c[0]}@{c[1]} <> {r[0]}@{r[1]}")
         return
-    open_finish = time.perf_counter()
-    open_delay = open_finish - open_start
 
     logging.info(f"Open proxy in {c[0]}@{c[1]} <> {r[0]}@{r[1]} ({round(open_delay * 1000)}ms)")
     proxy_start = time.perf_counter()
