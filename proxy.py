@@ -104,9 +104,12 @@ async def client(cr: asyncio.StreamReader, cw: asyncio.StreamWriter):
 
     if proxy_end > (v.gc_timer + config.gc_interval):
         logging.debug("Trigger Timer GC")
+        gc_start = time.perf_counter()
         gc.collect()
+        gc_end = time.perf_counter()
+        gc_duration = gc_end - gc_start
         v.gc_timer = proxy_end
-        logging.debug("Finish Timer GC")
+        logging.debug(f"Finish Timer GC ({round(gc_duration * 1000)}ms)")
 
 
 def run(_):
