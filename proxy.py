@@ -1,6 +1,5 @@
 from concurrent.futures import ProcessPoolExecutor
 import asyncio
-import gc
 import logging
 import multiprocessing
 import socket
@@ -10,9 +9,8 @@ import time
 
 class config:
     port: int = 8081
-    timeout: int = 86400
-    limit: int = 1 << 18
-    gc_interval: int = 3600
+    timeout: int = 3660
+    limit: int = 1 << 20
 
 
 class consts:
@@ -20,10 +18,6 @@ class consts:
     SOL_IPV6 = 41
     V4_LEN = 16
     V6_LEN = 28
-
-
-class v:
-    gc_timer: float
 
 
 def get_original_dst(so: socket.socket, is_ipv4=True):
@@ -102,19 +96,8 @@ async def client(cr: asyncio.StreamReader, cw: asyncio.StreamWriter):
     proxy_duration = proxy_end - proxy_start
     logging.info(f"Close proxy in {c[0]}@{c[1]} ({codes[0]}) <> {r[0]}@{r[1]} ({codes[1]}) in {round(proxy_duration)}s")
 
-    if proxy_end > (v.gc_timer + config.gc_interval):
-        logging.debug("Trigger Timer GC")
-        gc_start = time.perf_counter()
-        gc.collect()
-        gc_end = time.perf_counter()
-        gc_duration = gc_end - gc_start
-        v.gc_timer = proxy_end
-        logging.debug(f"Finish Timer GC ({round(gc_duration * 1000)}ms)")
-
 
 def run(_):
-    v.gc_timer = time.perf_counter()
-
     async def server():
         server = await asyncio.start_server(client, port=config.port, reuse_port=True, limit=config.limit)
         async with server:
