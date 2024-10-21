@@ -32,12 +32,12 @@ def get_original_dst(so: socket.socket, is_ipv4=True):
     return ip, port
 
 
-async def proxy(r: asyncio.StreamReader, w: asyncio.StreamWriter):
+async def proxy(event: asyncio.Event, r: asyncio.StreamReader, w: asyncio.StreamWriter):
     code = 0b0000
     try:
         s: socket.socket = w.get_extra_info("socket")
         s.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, True)
-        while not w.is_closing() and (data := await asyncio.wait_for(r.read(config.limit), config.timeout)):
+        while not event.is_set() and (data := await asyncio.wait_for(r.read(config.limit), config.timeout)):
             w.write(data)
             del data
             await w.drain()
@@ -46,19 +46,18 @@ async def proxy(r: asyncio.StreamReader, w: asyncio.StreamWriter):
     except Exception:
         code |= 0b0010
     finally:
-        if r.at_eof():
-            try:
-                r.feed_eof()
-            except Exception:
-                code |= 0b0100
-        if not w.is_closing():
-            try:
-                w.write_eof()
-                await w.drain()
-                w.close()
-                await w.wait_closed()
-            except Exception:
-                code |= 0b1000
+        try:
+            r.feed_eof()
+        except Exception:
+            code |= 0b0100
+        try:
+            w.write_eof()
+            await w.drain()
+            w.close()
+            await w.wait_closed()
+        except Exception:
+            code |= 0b1000
+    event.set()
     return code
 
 
@@ -90,8 +89,9 @@ async def client(cr: asyncio.StreamReader, cw: asyncio.StreamWriter):
         return
 
     logging.info(f"Open proxy in {c[0]}@{c[1]} <> {r[0]}@{r[1]} ({round(open_delay * 1000)}ms)")
+    event = asyncio.Event()
     proxy_start = time.perf_counter()
-    codes = await asyncio.gather(proxy(cr, pw), proxy(pr, cw))
+    codes = await asyncio.gather(proxy(event, cr, pw), proxy(event, pr, cw))
     proxy_end = time.perf_counter()
     proxy_duration = proxy_end - proxy_start
     logging.info(f"Close proxy in {c[0]}@{c[1]} ({codes[0]}) <> {r[0]}@{r[1]} ({codes[1]}) in {round(proxy_duration)}s")
