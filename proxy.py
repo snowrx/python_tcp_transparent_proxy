@@ -33,7 +33,7 @@ def get_original_dst(so: socket.socket, is_ipv4=True):
 
 
 async def proxy(event: asyncio.Event, r: asyncio.StreamReader, w: asyncio.StreamWriter):
-    code = 0b0000
+    code = 0
     try:
         s: socket.socket = w.get_extra_info("socket")
         s.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, True)
@@ -41,23 +41,21 @@ async def proxy(event: asyncio.Event, r: asyncio.StreamReader, w: asyncio.Stream
             w.write(data)
             del data
             await w.drain()
-    except asyncio.TimeoutError:
-        code |= 0b0001
-    except Exception:
-        code |= 0b0010
+        r.feed_eof()
+    except Exception as ex:
+        logging.debug(ex)
+        code |= 0b1
     finally:
-        try:
-            r.feed_eof()
-        except Exception:
-            code |= 0b0100
-        try:
-            w.write_eof()
-            await w.drain()
-            w.close()
-            await w.wait_closed()
-        except Exception:
-            code |= 0b1000
-    event.set()
+        if not w.is_closing() and w.can_write_eof():
+            try:
+                w.write_eof()
+                await w.drain()
+                w.close()
+                await w.wait_closed()
+            except Exception as ex:
+                logging.debug(ex)
+                code |= 0b10
+        event.set()
     return code
 
 
