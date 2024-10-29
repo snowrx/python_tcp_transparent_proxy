@@ -45,6 +45,9 @@ async def proxy(event: asyncio.Event, r: asyncio.StreamReader, w: asyncio.Stream
             del data
             await w.drain()
         r.feed_eof()
+    except asyncio.TimeoutError:
+        logging.debug("asyncio.TimeoutError")
+        code |= 0b1
     except Exception as ex:
         logging.debug(ex)
         code |= 0b1
