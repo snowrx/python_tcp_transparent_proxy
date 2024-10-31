@@ -117,6 +117,10 @@ def run(_):
         server = await asyncio.start_server(
             client, port=config.port, reuse_port=True, limit=config.limit
         )
+
+        for s in server.sockets:
+            s.setsockopt(socket.SOL_TCP, socket.TCP_DEFER_ACCEPT, True)
+
         async with server:
             await server.serve_forever()
 
