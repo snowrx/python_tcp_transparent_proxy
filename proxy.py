@@ -33,14 +33,12 @@ def get_original_dst(so: socket.socket, is_ipv4=True):
     return ip, port
 
 
-async def proxy(event: asyncio.Event, r: asyncio.StreamReader, w: asyncio.StreamWriter):
+async def proxy(r: asyncio.StreamReader, w: asyncio.StreamWriter):
     code = 0
     try:
         s: socket.socket = w.get_extra_info("socket")
         s.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, True)
-        while not event.is_set() and (
-            data := await asyncio.wait_for(r.read(config.limit), config.timeout)
-        ):
+        while (data := await asyncio.wait_for(r.read(config.limit), config.timeout)) and not w.is_closing():
             w.write(data)
             del data
             await w.drain()
@@ -61,7 +59,6 @@ async def proxy(event: asyncio.Event, r: asyncio.StreamReader, w: asyncio.Stream
             except Exception as ex:
                 logging.debug(ex)
                 code |= 0b10
-        event.set()
     return code
 
 
@@ -81,13 +78,13 @@ async def client(cr: asyncio.StreamReader, cw: asyncio.StreamWriter):
     try:
         open_start = time.perf_counter()
         if config.bind_local:
-            pr, pw = await asyncio.open_connection(
-                host=r[0], port=r[1], limit=config.limit, local_addr=(sn[0], c[1])
-            )
+            try:
+                pr, pw = await asyncio.open_connection(host=r[0], port=r[1], limit=config.limit, local_addr=(sn[0], c[1]))
+            except Exception as ex:
+                logging.debug(ex)
+                pr, pw = await asyncio.open_connection(host=r[0], port=r[1], limit=config.limit)
         else:
-            pr, pw = await asyncio.open_connection(
-                host=r[0], port=r[1], limit=config.limit
-            )
+            pr, pw = await asyncio.open_connection(host=r[0], port=r[1], limit=config.limit)
         open_finish = time.perf_counter()
         open_delay = open_finish - open_start
     except Exception:
@@ -99,24 +96,17 @@ async def client(cr: asyncio.StreamReader, cw: asyncio.StreamWriter):
         logging.warning(f"Failed proxy in {c[0]}@{c[1]} <> {r[0]}@{r[1]}")
         return
 
-    logging.info(
-        f"Open proxy in {c[0]}@{c[1]} <> {r[0]}@{r[1]} ({round(open_delay * 1000)}ms)"
-    )
-    event = asyncio.Event()
+    logging.info(f"Open proxy in {c[0]}@{c[1]} <> {r[0]}@{r[1]} ({round(open_delay * 1000)}ms)")
     proxy_start = time.perf_counter()
-    codes = await asyncio.gather(proxy(event, cr, pw), proxy(event, pr, cw))
+    codes = await asyncio.gather(proxy(cr, pw), proxy(pr, cw))
     proxy_end = time.perf_counter()
     proxy_duration = proxy_end - proxy_start
-    logging.info(
-        f"Close proxy in {c[0]}@{c[1]} ({codes[0]}) <> {r[0]}@{r[1]} ({codes[1]}) in {round(proxy_duration)}s"
-    )
+    logging.info(f"Close proxy in {c[0]}@{c[1]} ({codes[0]}) <> {r[0]}@{r[1]} ({codes[1]}) in {round(proxy_duration)}s")
 
 
 def run(_):
     async def server():
-        server = await asyncio.start_server(
-            client, port=config.port, reuse_port=True, limit=config.limit
-        )
+        server = await asyncio.start_server(client, port=config.port, reuse_port=True, limit=config.limit)
 
         for s in server.sockets:
             s.setsockopt(socket.SOL_TCP, socket.TCP_DEFER_ACCEPT, True)
