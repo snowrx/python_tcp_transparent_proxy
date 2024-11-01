@@ -5,8 +5,6 @@ import multiprocessing
 import socket
 import struct
 import time
-import ipaddress
-from functools import lru_cache
 
 
 class config:
@@ -15,7 +13,6 @@ class config:
     timeout: int = 660
     limit: int = 1 << 20
     bind_local: bool = True
-    block_private: bool = True
 
 
 class consts:
@@ -23,15 +20,6 @@ class consts:
     SOL_IPV6 = 41
     V4_LEN = 16
     V6_LEN = 28
-
-
-@lru_cache
-def is_private(addr: str, is_ipv4=True) -> bool:
-    if is_ipv4:
-        ip = ipaddress.IPv4Address(addr)
-    else:
-        ip = ipaddress.IPv6Address(addr)
-    return ip.is_private
 
 
 def get_original_dst(so: socket.socket, is_ipv4=True):
@@ -83,14 +71,6 @@ async def client(cr: asyncio.StreamReader, cw: asyncio.StreamWriter):
 
     if r[0] == sn[0] and r[1] == sn[1]:
         logging.error(f"Blocked direct access from {c[0]}@{c[1]}")
-        try:
-            cw.close()
-            await cw.wait_closed()
-        except:
-            pass
-        return
-    if config.block_private and is_private(r[0], is_ipv4):
-        logging.warning(f"Blocked private in {c[0]}@{c[1]} <> {r[0]}@{r[1]}")
         try:
             cw.close()
             await cw.wait_closed()
