@@ -38,7 +38,7 @@ async def proxy(r: asyncio.StreamReader, w: asyncio.StreamWriter):
     try:
         s: socket.socket = w.get_extra_info("socket")
         s.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, True)
-        while (data := await asyncio.wait_for(r.read(config.limit), config.timeout)) and not w.is_closing():
+        while not w.is_closing() and (data := await asyncio.wait_for(r.read(config.limit), config.timeout)) and not w.is_closing():
             w.write(data)
             del data
             await w.drain()
