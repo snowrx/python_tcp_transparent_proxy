@@ -101,11 +101,7 @@ async def client(cr: asyncio.StreamReader, cw: asyncio.StreamWriter):
     try:
         open_start = time.perf_counter()
         if config.bind_local:
-            try:
-                pr, pw = await asyncio.open_connection(host=r[0], port=r[1], limit=config.limit, local_addr=(sn[0], c[1]))
-            except Exception as ex:
-                logging.debug(ex)
-                pr, pw = await asyncio.open_connection(host=r[0], port=r[1], limit=config.limit)
+            pr, pw = await asyncio.open_connection(host=r[0], port=r[1], limit=config.limit, local_addr=(sn[0], c[1]))
         else:
             pr, pw = await asyncio.open_connection(host=r[0], port=r[1], limit=config.limit)
         open_finish = time.perf_counter()
