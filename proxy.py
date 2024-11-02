@@ -9,7 +9,7 @@ import time
 
 class config:
     port: int = 8081
-    timeout: int = 660
+    timeout: int = 3660
     limit: int = 1 << 20
     bind_local: bool = True
 
