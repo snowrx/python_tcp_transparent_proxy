@@ -8,7 +8,6 @@ import time
 
 
 class config:
-    verbosity: int = 2
     port: int = 8081
     timeout: int = 660
     limit: int = 1 << 20
@@ -106,10 +105,6 @@ async def client(cr: asyncio.StreamReader, cw: asyncio.StreamWriter):
 def run(_):
     async def server():
         server = await asyncio.start_server(client, port=config.port, reuse_port=True, limit=config.limit)
-
-        for s in server.sockets:
-            s.setsockopt(socket.SOL_TCP, socket.TCP_DEFER_ACCEPT, True)
-
         async with server:
             await server.serve_forever()
 
@@ -117,17 +112,7 @@ def run(_):
 
 
 if __name__ == "__main__":
-    if config.verbosity < 1:
-        logging.basicConfig(level=logging.CRITICAL)
-    elif config.verbosity == 1:
-        logging.basicConfig(level=logging.ERROR)
-    elif config.verbosity == 2:
-        logging.basicConfig(level=logging.WARNING)
-    elif config.verbosity == 3:
-        logging.basicConfig(level=logging.INFO)
-    elif config.verbosity > 3:
-        logging.basicConfig(level=logging.DEBUG)
-
+    logging.basicConfig(level=logging.DEBUG)
     nproc = multiprocessing.cpu_count() << 1
     logging.debug(f"{config.port=}, {config.timeout=}, {config.limit=}, {nproc=}")
     with ProcessPoolExecutor(nproc) as ex:
