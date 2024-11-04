@@ -24,6 +24,7 @@ class consts:
 class v:
     pid = 0
     cid = 0
+    active = 0
 
 
 def get_original_dst(so: socket.socket, is_ipv4=True):
@@ -46,8 +47,9 @@ async def proxy(cid: int, r_state: asyncio.Event, w_state: asyncio.Event, r: asy
         while data := await asyncio.wait_for(r.read(config.limit), config.timeout):
             w.write(data)
             await w.drain()
-        w.write_eof()
-        await w.drain()
+        if w.can_write_eof():
+            w.write_eof()
+            await w.drain()
     except asyncio.TimeoutError:
         logging.debug(f"[{v.pid}:{cid}] read timeout")
         code |= 0b1
@@ -99,18 +101,22 @@ async def client(cr: asyncio.StreamReader, cw: asyncio.StreamWriter):
         return
 
     logging.info(f"[{v.pid}:{cid}] Open proxy in {c[0]}@{c[1]} <> {r[0]}@{r[1]} ({round(open_delay * 1000)}ms)")
+    logging.debug(f"[{v.pid}:{cid}] active: {v.active} -> {v.active + 1}")
+    v.active += 1
     proxy_start = time.perf_counter()
     c_state = asyncio.Event()
     p_state = asyncio.Event()
     codes = await asyncio.gather(proxy(cid, c_state, p_state, cr, pw), proxy(cid, p_state, c_state, pr, cw))
     proxy_duration = time.perf_counter() - proxy_start
     logging.info(f"[{v.pid}:{cid}] Close proxy in {c[0]}@{c[1]} ({codes[0]}) <> {r[0]}@{r[1]} ({codes[1]}) in {round(proxy_duration)}s")
+    v.active -= 1
+    logging.debug(f"[{v.pid}:{cid}] active: {v.active + 1} -> {v.active}")
 
 
 def run(pid):
     async def server():
         v.pid = pid
-        server = await asyncio.start_server(client, port=config.port, reuse_port=True, limit=config.limit)
+        server = await asyncio.start_server(client, port=config.port, reuse_port=True, backlog=3, limit=config.limit)
         async with server:
             await server.serve_forever()
 
