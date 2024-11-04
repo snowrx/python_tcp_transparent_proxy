@@ -38,7 +38,7 @@ def get_original_dst(so: socket.socket, is_ipv4=True):
     return ip, port
 
 
-async def proxy(r_state: asyncio.Event, w_state: asyncio.Event, r: asyncio.StreamReader, w: asyncio.StreamWriter):
+async def proxy(cid: int, r_state: asyncio.Event, w_state: asyncio.Event, r: asyncio.StreamReader, w: asyncio.StreamWriter):
     code = 0
     try:
         s: socket.socket = w.get_extra_info("socket")
@@ -49,10 +49,10 @@ async def proxy(r_state: asyncio.Event, w_state: asyncio.Event, r: asyncio.Strea
         w.write_eof()
         await w.drain()
     except asyncio.TimeoutError:
-        logging.debug("read timeout")
+        logging.debug(f"[{v.pid}:{cid}] read timeout")
         code |= 0b1
     except Exception as ex:
-        logging.debug(f"error in loop: {ex}")
+        logging.debug(f"[{v.pid}:{cid}] error in loop: {ex}")
         code |= 0b1
     finally:
         r_state.set()
@@ -62,7 +62,7 @@ async def proxy(r_state: asyncio.Event, w_state: asyncio.Event, r: asyncio.Strea
                 w.close()
                 await w.wait_closed()
             except Exception as ex:
-                logging.debug(f"error in close: {ex}")
+                logging.debug(f"[{v.pid}:{cid}] error in close: {ex}")
                 code |= 0b10
     return code
 
@@ -102,7 +102,7 @@ async def client(cr: asyncio.StreamReader, cw: asyncio.StreamWriter):
     proxy_start = time.perf_counter()
     c_state = asyncio.Event()
     p_state = asyncio.Event()
-    codes = await asyncio.gather(proxy(c_state, p_state, cr, pw), proxy(p_state, c_state, pr, cw))
+    codes = await asyncio.gather(proxy(cid, c_state, p_state, cr, pw), proxy(cid, p_state, c_state, pr, cw))
     proxy_duration = time.perf_counter() - proxy_start
     logging.info(f"[{v.pid}:{cid}] Close proxy in {c[0]}@{c[1]} ({codes[0]}) <> {r[0]}@{r[1]} ({codes[1]}) in {round(proxy_duration)}s")
 
