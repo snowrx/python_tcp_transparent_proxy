@@ -10,8 +10,7 @@ import time
 class config:
     port: int = 8081
     timeout: int = 3660
-    limit: int = 1 << 20
-    bind_local: bool = True
+    limit: int = 1 << 16
 
 
 class consts:
@@ -33,31 +32,31 @@ def get_original_dst(so: socket.socket, is_ipv4=True):
     return ip, port
 
 
-async def proxy(r: asyncio.StreamReader, w: asyncio.StreamWriter):
+async def proxy(r_state: asyncio.Event, w_state: asyncio.Event, r: asyncio.StreamReader, w: asyncio.StreamWriter):
     code = 0
     try:
         s: socket.socket = w.get_extra_info("socket")
         s.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, True)
-        while not w.is_closing() and (data := await asyncio.wait_for(r.read(config.limit), config.timeout)) and not w.is_closing():
+        while data := await asyncio.wait_for(r.read(config.limit), config.timeout):
             w.write(data)
-            del data
             await w.drain()
-        r.feed_eof()
+        w.write_eof()
+        await w.drain()
     except asyncio.TimeoutError:
-        logging.debug("asyncio.TimeoutError")
+        logging.debug("read timeout")
         code |= 0b1
     except Exception as ex:
-        logging.debug(ex)
+        logging.debug(f"error in loop: {ex}")
         code |= 0b1
     finally:
-        if not w.is_closing() and w.can_write_eof():
+        r_state.set()
+        await w_state.wait()
+        if not w.is_closing():
             try:
-                w.write_eof()
-                await w.drain()
                 w.close()
                 await w.wait_closed()
             except Exception as ex:
-                logging.debug(ex)
+                logging.debug(f"error in close: {ex}")
                 code |= 0b10
     return code
 
@@ -79,13 +78,10 @@ async def client(cr: asyncio.StreamReader, cw: asyncio.StreamWriter):
 
     try:
         open_start = time.perf_counter()
-        if config.bind_local:
-            pr, pw = await asyncio.open_connection(host=r[0], port=r[1], limit=config.limit, local_addr=(sn[0], c[1]))
-        else:
-            pr, pw = await asyncio.open_connection(host=r[0], port=r[1], limit=config.limit)
-        open_finish = time.perf_counter()
-        open_delay = open_finish - open_start
-    except Exception:
+        pr, pw = await asyncio.open_connection(host=r[0], port=r[1], limit=config.limit)
+        open_delay = time.perf_counter() - open_start
+    except Exception as ex:
+        logging.debug(f"error in open: {ex}")
         try:
             cw.close()
             await cw.wait_closed()
@@ -96,9 +92,10 @@ async def client(cr: asyncio.StreamReader, cw: asyncio.StreamWriter):
 
     logging.info(f"Open proxy in {c[0]}@{c[1]} <> {r[0]}@{r[1]} ({round(open_delay * 1000)}ms)")
     proxy_start = time.perf_counter()
-    codes = await asyncio.gather(proxy(cr, pw), proxy(pr, cw))
-    proxy_end = time.perf_counter()
-    proxy_duration = proxy_end - proxy_start
+    c_state = asyncio.Event()
+    p_state = asyncio.Event()
+    codes = await asyncio.gather(proxy(c_state, p_state, cr, pw), proxy(p_state, c_state, pr, cw))
+    proxy_duration = time.perf_counter() - proxy_start
     logging.info(f"Close proxy in {c[0]}@{c[1]} ({codes[0]}) <> {r[0]}@{r[1]} ({codes[1]}) in {round(proxy_duration)}s")
 
 
@@ -113,7 +110,7 @@ def run(_):
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.DEBUG)
-    nproc = multiprocessing.cpu_count() << 1
+    nproc = multiprocessing.cpu_count()
     logging.debug(f"{config.port=}, {config.timeout=}, {config.limit=}, {nproc=}")
     with ProcessPoolExecutor(nproc) as ex:
         ex.map(run, range(nproc))
