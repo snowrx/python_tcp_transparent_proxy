@@ -10,7 +10,7 @@ import time
 class config:
     port = 8081
     timeout = 3660
-    limit = 1 << 16
+    limit = 1 << 18
     cid_rotate = 1000000
 
 
@@ -39,33 +39,42 @@ def get_original_dst(so: socket.socket, is_ipv4=True):
     return ip, port
 
 
-async def proxy(cid: int, r_state: asyncio.Event, w_state: asyncio.Event, r: asyncio.StreamReader, w: asyncio.StreamWriter):
+async def proxy(cid: int, fid: int, r_state: asyncio.Event, w_state: asyncio.Event, r: asyncio.StreamReader, w: asyncio.StreamWriter):
     code = 0
     try:
         s: socket.socket = w.get_extra_info("socket")
         s.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, True)
+        logging.debug(f"[{v.pid}:{cid}:{fid}] start loop")
         while data := await asyncio.wait_for(r.read(config.limit), config.timeout):
             w.write(data)
             await w.drain()
-        if w.can_write_eof():
-            w.write_eof()
-            await w.drain()
+        r.feed_eof()
+        logging.debug(f"[{v.pid}:{cid}:{fid}] feed eof")
     except asyncio.TimeoutError:
-        logging.debug(f"[{v.pid}:{cid}] read timeout")
+        logging.debug(f"[{v.pid}:{cid}:{fid}] read timeout")
         code |= 0b1
     except Exception as ex:
-        logging.debug(f"[{v.pid}:{cid}] error in loop: {ex}")
-        code |= 0b1
+        logging.debug(f"[{v.pid}:{cid}:{fid}] error in loop: {ex}")
+        code |= 0b10
     finally:
+        if w.can_write_eof():
+            logging.debug(f"[{v.pid}:{cid}:{fid}] write eof")
+            try:
+                w.write_eof()
+                await w.drain()
+            except Exception as ex:
+                logging.debug(f"[{v.pid}:{cid}:{fid}] error in write eof: {ex}")
+                code |= 0b100
         r_state.set()
         await w_state.wait()
         if not w.is_closing():
+            logging.debug(f"[{v.pid}:{cid}:{fid}] closing")
             try:
                 w.close()
                 await w.wait_closed()
             except Exception as ex:
-                logging.debug(f"[{v.pid}:{cid}] error in close: {ex}")
-                code |= 0b10
+                logging.debug(f"[{v.pid}:{cid}:{fid}] error in close: {ex}")
+                code |= 0b1000
     return code
 
 
@@ -106,7 +115,7 @@ async def client(cr: asyncio.StreamReader, cw: asyncio.StreamWriter):
     proxy_start = time.perf_counter()
     c_state = asyncio.Event()
     p_state = asyncio.Event()
-    codes = await asyncio.gather(proxy(cid, c_state, p_state, cr, pw), proxy(cid, p_state, c_state, pr, cw))
+    codes = await asyncio.gather(proxy(cid, 0, c_state, p_state, cr, pw), proxy(cid, 1, p_state, c_state, pr, cw))
     proxy_duration = time.perf_counter() - proxy_start
     logging.info(f"[{v.pid}:{cid}] Close proxy in {c[0]}@{c[1]} ({codes[0]}) <> {r[0]}@{r[1]} ({codes[1]}) in {round(proxy_duration)}s")
     v.active -= 1
