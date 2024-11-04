@@ -66,6 +66,8 @@ async def proxy(cid: int, fid: int, r_state: asyncio.Event, w_state: asyncio.Eve
                 logging.debug(f"[{v.pid}:{cid}:{fid}] error in write eof: {ex}")
                 code |= 0b100
         r_state.set()
+        if not w_state.is_set():
+            logging.debug(f"[{v.pid}:{cid}:{fid}] waiting other side")
         await w_state.wait()
         if not w.is_closing():
             logging.debug(f"[{v.pid}:{cid}:{fid}] closing")
