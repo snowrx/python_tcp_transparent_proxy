@@ -44,7 +44,6 @@ async def proxy(cid: int, fid: int, r_state: asyncio.Event, w_state: asyncio.Eve
     try:
         s: socket.socket = w.get_extra_info("socket")
         s.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, True)
-        w.transport.set_write_buffer_limits(config.limit)
         logging.debug(f"[{v.pid}:{cid}:{fid}] start loop")
         while data := await asyncio.wait_for(r.read(config.limit), config.timeout):
             w.write(data)
@@ -56,8 +55,9 @@ async def proxy(cid: int, fid: int, r_state: asyncio.Event, w_state: asyncio.Eve
         code |= 0b1
     except Exception as ex:
         logging.debug(f"[{v.pid}:{cid}:{fid}] error in loop: {ex}")
-        code |= 0b10
+        code |= 0b1
     finally:
+        r_state.set()
         if not w.is_closing():
             logging.debug(f"[{v.pid}:{cid}:{fid}] write eof")
             try:
@@ -65,8 +65,7 @@ async def proxy(cid: int, fid: int, r_state: asyncio.Event, w_state: asyncio.Eve
                 await w.drain()
             except Exception as ex:
                 logging.debug(f"[{v.pid}:{cid}:{fid}] error in write eof: {ex}")
-                code |= 0b100
-        r_state.set()
+                code |= 0b10
         if not w_state.is_set():
             logging.debug(f"[{v.pid}:{cid}:{fid}] waiting other side")
         await w_state.wait()
@@ -77,7 +76,7 @@ async def proxy(cid: int, fid: int, r_state: asyncio.Event, w_state: asyncio.Eve
                 await w.wait_closed()
             except Exception as ex:
                 logging.debug(f"[{v.pid}:{cid}:{fid}] error in close: {ex}")
-                code |= 0b1000
+                code |= 0b10
     return code
 
 
