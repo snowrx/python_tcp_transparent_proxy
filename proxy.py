@@ -128,6 +128,8 @@ def run(pid):
     async def server():
         v.pid = pid
         server = await asyncio.start_server(client, port=config.port, reuse_port=True, backlog=3, limit=config.limit)
+        for s in server.sockets:
+            s.setsockopt(socket.SOL_TCP, socket.TCP_DEFER_ACCEPT, True)
         async with server:
             await server.serve_forever()
 
