@@ -9,7 +9,6 @@ import time
 
 class config:
     port = 8081
-    timeout = 3660
     limit = 1 << 14
     cid_rotate = 1000000
 
@@ -43,14 +42,12 @@ async def proxy(cid: int, fid: int, r_state: asyncio.Event, w_state: asyncio.Eve
     try:
         s: socket.socket = w.get_extra_info("socket")
         s.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, True)
-        while data := await asyncio.wait_for(r.read(config.limit), config.timeout):
+        w.transport.set_write_buffer_limits(0)
+        while data := await r.read(config.limit):
             w.write(data)
-            await asyncio.wait_for(w.drain(), 1)
+            await w.drain()
         logging.debug(f"[{v.pid}:{cid}:{fid}] EOF")
         r.feed_eof()
-    except asyncio.TimeoutError:
-        logging.debug(f"[{v.pid}:{cid}:{fid}] timeout")
-        code |= 0b1
     except Exception as ex:
         logging.debug(f"[{v.pid}:{cid}:{fid}] error in loop: {ex}")
         code |= 0b1
@@ -127,6 +124,6 @@ def run(pid):
 if __name__ == "__main__":
     logging.basicConfig(level=logging.DEBUG)
     nproc = multiprocessing.cpu_count()
-    logging.debug(f"{config.port=}, {config.timeout=}, {config.limit=}, {nproc=}")
+    logging.debug(f"{config.port=}, {config.limit=}, {nproc=}")
     with ProcessPoolExecutor(nproc) as ex:
         ex.map(run, range(nproc))
