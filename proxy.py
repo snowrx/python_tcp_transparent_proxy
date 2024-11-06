@@ -5,6 +5,7 @@ import multiprocessing
 import socket
 import struct
 import time
+import os
 
 
 class config:
@@ -114,6 +115,10 @@ async def client(cr: asyncio.StreamReader, cw: asyncio.StreamWriter):
 def run(pid):
     async def server():
         v.pid = pid
+        try:
+            os.sched_setaffinity(0, [pid])
+        except:
+            pass
         server = await asyncio.start_server(client, port=config.port, reuse_port=True, backlog=3, limit=config.limit)
         async with server:
             await server.serve_forever()
@@ -124,6 +129,12 @@ def run(pid):
 if __name__ == "__main__":
     logging.basicConfig(level=logging.DEBUG)
     nproc = multiprocessing.cpu_count()
+    cpus_list = range(nproc)
+    try:
+        cpus_list = os.sched_getaffinity(0)
+        nproc = len(cpus_list)
+    except:
+        pass
     logging.debug(f"{config.port=}, {config.limit=}, {nproc=}")
     with ProcessPoolExecutor(nproc) as ex:
-        ex.map(run, range(nproc))
+        ex.map(run, cpus_list)

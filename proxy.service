@@ -6,7 +6,7 @@ ConditionPathExists=/opt/proxy.py
 [Service]
 DynamicUser=yes
 WorkingDirectory=/opt
-ExecStart=pypy3 /opt/proxy.py
+ExecStart=python3 /opt/proxy.py
 MemoryHigh=50%
 
 [Install]
