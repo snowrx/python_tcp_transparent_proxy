@@ -5,11 +5,11 @@ import multiprocessing
 import socket
 import struct
 import time
+import sys
 
 
 class config:
     port = 8081
-    limit = 1 << 14
     cid_rotate = 1000000
 
 
@@ -42,8 +42,7 @@ async def proxy(cid: int, fid: int, r_state: asyncio.Event, w_state: asyncio.Eve
     try:
         s: socket.socket = w.get_extra_info("socket")
         s.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, True)
-        w.transport.set_write_buffer_limits(0)
-        while data := await r.read(config.limit):
+        while data := await r.read(sys.maxsize):
             w.write(data)
             await w.drain()
         logging.debug(f"[{v.pid}:{cid}:{fid}] EOF")
@@ -90,7 +89,7 @@ async def client(cr: asyncio.StreamReader, cw: asyncio.StreamWriter):
 
     try:
         open_start = time.perf_counter()
-        pr, pw = await asyncio.open_connection(host=r[0], port=r[1], limit=config.limit)
+        pr, pw = await asyncio.open_connection(host=r[0], port=r[1])
         open_delay = time.perf_counter() - open_start
     except Exception as ex:
         logging.debug(f"[{v.pid}:{cid}] error in open: {ex}")
@@ -114,7 +113,7 @@ async def client(cr: asyncio.StreamReader, cw: asyncio.StreamWriter):
 def run(pid):
     async def server():
         v.pid = pid
-        server = await asyncio.start_server(client, port=config.port, reuse_port=True, backlog=3, limit=config.limit)
+        server = await asyncio.start_server(client, port=config.port, reuse_port=True)
         async with server:
             await server.serve_forever()
 
@@ -124,6 +123,6 @@ def run(pid):
 if __name__ == "__main__":
     logging.basicConfig(level=logging.DEBUG)
     nproc = multiprocessing.cpu_count()
-    logging.debug(f"{config.port=}, {config.limit=}, {nproc=}")
+    logging.debug(f"{config.port=}, {nproc=}")
     with ProcessPoolExecutor(nproc) as ex:
         ex.map(run, range(nproc))
