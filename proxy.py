@@ -10,7 +10,7 @@ import time
 class config:
     port = 8081
     timeout = 3660
-    limit = 1 << 18
+    limit = 1 << 14
     cid_rotate = 1000000
 
 
