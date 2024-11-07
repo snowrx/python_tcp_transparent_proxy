@@ -10,6 +10,7 @@ import sys
 
 class config:
     port = 8081
+    timeout = 3660
     cid_rotate = 1000000
 
 
@@ -42,11 +43,14 @@ async def proxy(cid: int, fid: int, r_state: asyncio.Event, w_state: asyncio.Eve
     try:
         s: socket.socket = w.get_extra_info("socket")
         s.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, True)
-        while data := await r.read(sys.maxsize):
+        while data := await asyncio.wait_for(r.read(sys.maxsize), config.timeout):
             w.write(data)
             await w.drain()
         logging.debug(f"[{v.pid}:{cid}:{fid}] EOF")
         r.feed_eof()
+    except asyncio.TimeoutError:
+        logging.debug(f"[{v.pid}:{cid}:{fid}] timeout")
+        code |= 0b1
     except Exception as ex:
         logging.debug(f"[{v.pid}:{cid}:{fid}] error in loop: {ex}")
         code |= 0b1
