@@ -105,9 +105,11 @@ async def client(cr: asyncio.StreamReader, cw: asyncio.StreamWriter):
     c_state = asyncio.Event()
     p_state = asyncio.Event()
     proxy_start = time.perf_counter()
-    codes = await asyncio.gather(proxy(cid, 0, c_state, p_state, cr, pw), proxy(cid, 1, p_state, c_state, pr, cw))
+    async with asyncio.TaskGroup() as tg:
+        r0 = tg.create_task(proxy(cid, 0, c_state, p_state, cr, pw))
+        r1 = tg.create_task(proxy(cid, 1, p_state, c_state, pr, cw))
     proxy_duration = time.perf_counter() - proxy_start
-    logging.info(f"[{v.pid}:{cid}] Close proxy in {c[0]}@{c[1]} ({codes[0]}) <> {r[0]}@{r[1]} ({codes[1]}) in {round(proxy_duration)}s")
+    logging.info(f"[{v.pid}:{cid}] Close proxy in {c[0]}@{c[1]} ({r0.result()}) <> {r[0]}@{r[1]} ({r1.result()}) in {round(proxy_duration)}s")
 
 
 def run(pid):
