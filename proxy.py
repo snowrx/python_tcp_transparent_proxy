@@ -1,11 +1,11 @@
 from concurrent.futures import ProcessPoolExecutor
 import asyncio
 import logging
-import multiprocessing
+import os
 import socket
 import struct
-import time
 import sys
+import time
 
 
 class config:
@@ -19,6 +19,7 @@ class consts:
     SOL_IPV6 = 41
     V4_LEN = 16
     V6_LEN = 28
+    DEFAULT_PROCS = 4
 
 
 class v:
@@ -43,6 +44,7 @@ async def proxy(cid: int, fid: int, r_state: asyncio.Event, w_state: asyncio.Eve
     try:
         s: socket.socket = w.get_extra_info("socket")
         s.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, True)
+        w.transport.set_write_buffer_limits(0)
         while data := await asyncio.wait_for(r.read(sys.maxsize), config.timeout):
             w.write(data)
             await w.drain()
@@ -128,7 +130,7 @@ def run(pid):
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.DEBUG)
-    nproc = multiprocessing.cpu_count()
+    nproc = os.cpu_count() or consts.DEFAULT_PROCS
     logging.debug(f"{config.port=}, {nproc=}")
     with ProcessPoolExecutor(nproc) as ex:
         ex.map(run, range(nproc))
