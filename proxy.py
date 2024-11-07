@@ -44,7 +44,6 @@ async def proxy(cid: int, fid: int, r_state: asyncio.Event, w_state: asyncio.Eve
     try:
         s: socket.socket = w.get_extra_info("socket")
         s.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, True)
-        w.transport.set_write_buffer_limits(0)
         while data := await asyncio.wait_for(r.read(sys.maxsize), config.timeout):
             w.write(data)
             await w.drain()
