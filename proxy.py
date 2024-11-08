@@ -12,6 +12,7 @@ class config:
     port = 8081
     timeout = 3660
     cid_rotate = 1000000
+    workers = 0
 
 
 class consts:
@@ -19,7 +20,6 @@ class consts:
     SOL_IPV6 = 41
     V4_LEN = 16
     V6_LEN = 28
-    DEFAULT_PROCS = 4
 
 
 class v:
@@ -129,7 +129,9 @@ def run(pid):
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.DEBUG)
-    nproc = os.cpu_count() or consts.DEFAULT_PROCS
-    logging.debug(f"{config.port=}, {nproc=}")
-    with ProcessPoolExecutor(nproc) as ex:
-        ex.map(run, range(nproc))
+    workers = os.cpu_count() or 1
+    if config.workers > 0:
+        workers = config.workers
+    logging.debug(f"{config.port=}, {workers=}")
+    with ProcessPoolExecutor(workers) as ex:
+        ex.map(run, range(workers))
