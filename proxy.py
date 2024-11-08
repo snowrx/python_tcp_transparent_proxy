@@ -51,6 +51,7 @@ async def proxy(cid: int, fid: int, barrier: asyncio.Barrier, r: asyncio.StreamR
             await asyncio.wait_for(w.drain(), 1)
             in_read = True
         logging.debug(f"[{v.pid}:{cid}:{fid}] EOF")
+        r.feed_eof()
     except asyncio.TimeoutError:
         logging.debug(f"[{v.pid}:{cid}:{fid}] timeout {in_read=}")
         code |= 0b1
@@ -59,18 +60,24 @@ async def proxy(cid: int, fid: int, barrier: asyncio.Barrier, r: asyncio.StreamR
         code |= 0b1
 
     finally:
-        r.feed_eof()
         if not w.is_closing():
             try:
                 logging.debug(f"[{v.pid}:{cid}:{fid}] write EOF")
                 w.write_eof()
                 await w.drain()
-                if barrier.n_waiting == 0:
-                    logging.debug(f"[{v.pid}:{cid}:{fid}] wait for other")
-                await barrier.wait()
+            except Exception as ex:
+                logging.debug(f"[{v.pid}:{cid}:{fid}] error in write EOF: {ex}")
+                code |= 0b10
+
+        if barrier.n_waiting == 0:
+            logging.debug(f"[{v.pid}:{cid}:{fid}] wait for other")
+        await barrier.wait()
+
+        if not w.is_closing():
+            try:
+                logging.debug(f"[{v.pid}:{cid}:{fid}] closing")
                 w.close()
                 await w.wait_closed()
-                logging.debug(f"[{v.pid}:{cid}:{fid}] closed")
             except Exception as ex:
                 logging.debug(f"[{v.pid}:{cid}:{fid}] error in close: {ex}")
                 code |= 0b10
