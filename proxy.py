@@ -39,7 +39,7 @@ def get_original_dst(so: socket.socket, is_ipv4=True):
     return ip, port
 
 
-async def proxy(cid: int, fid: int, r_state: asyncio.Event, w_state: asyncio.Event, r: asyncio.StreamReader, w: asyncio.StreamWriter):
+async def proxy(cid: int, fid: int, barrier: asyncio.Barrier, r: asyncio.StreamReader, w: asyncio.StreamWriter):
     code = 0
     try:
         s: socket.socket = w.get_extra_info("socket")
@@ -60,16 +60,15 @@ async def proxy(cid: int, fid: int, r_state: asyncio.Event, w_state: asyncio.Eve
         code |= 0b1
 
     finally:
-        r_state.set()
         await asyncio.sleep(0)
         if not w.is_closing():
             try:
                 logging.debug(f"[{v.pid}:{cid}:{fid}] write EOF")
                 w.write_eof()
                 await w.drain()
-                if not w_state.is_set():
-                    logging.debug(f"[{v.pid}:{cid}:{fid}] wait for other side")
-                await w_state.wait()
+                if barrier.n_waiting == 0:
+                    logging.debug(f"[{v.pid}:{cid}:{fid}] wait for other")
+                await barrier.wait()
                 w.close()
                 await w.wait_closed()
                 logging.debug(f"[{v.pid}:{cid}:{fid}] closed")
@@ -111,12 +110,11 @@ async def client(cr: asyncio.StreamReader, cw: asyncio.StreamWriter):
         return
 
     logging.info(f"[{v.pid}:{cid}] Open proxy in {c[0]}@{c[1]} <> {r[0]}@{r[1]} ({round(open_delay * 1000)}ms)")
-    c_state = asyncio.Event()
-    p_state = asyncio.Event()
+    barrier = asyncio.Barrier(2)
     proxy_start = time.perf_counter()
     async with asyncio.TaskGroup() as tg:
-        r0 = tg.create_task(proxy(cid, 0, c_state, p_state, cr, pw))
-        r1 = tg.create_task(proxy(cid, 1, p_state, c_state, pr, cw))
+        r0 = tg.create_task(proxy(cid, 0, barrier, cr, pw))
+        r1 = tg.create_task(proxy(cid, 1, barrier, pr, cw))
     proxy_duration = time.perf_counter() - proxy_start
     logging.info(f"[{v.pid}:{cid}] Close proxy in {c[0]}@{c[1]} ({r0.result()}) <> {r[0]}@{r[1]} ({r1.result()}) in {round(proxy_duration)}s")
 
