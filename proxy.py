@@ -13,6 +13,8 @@ class config:
     timeout = 3660
     cid_rotate = 1000000
     workers = 0
+    backlog = 1
+    deferred = True
 
 
 class consts:
@@ -120,7 +122,10 @@ async def client(cr: asyncio.StreamReader, cw: asyncio.StreamWriter):
 def run(pid):
     async def server():
         v.pid = pid
-        server = await asyncio.start_server(client, port=config.port, reuse_port=True)
+        server = await asyncio.start_server(client, port=config.port, reuse_port=True, backlog=config.backlog)
+        if config.deferred:
+            for s in server.sockets:
+                s.setsockopt(socket.SOL_TCP, socket.TCP_DEFER_ACCEPT, True)
         async with server:
             await server.serve_forever()
 
@@ -132,6 +137,6 @@ if __name__ == "__main__":
     workers = os.cpu_count() or 1
     if config.workers > 0:
         workers = config.workers
-    logging.debug(f"{config.port=}, {workers=}")
+    logging.debug(f"{config.port=}, {config.timeout=}, {config.backlog=}, {config.deferred=}, {workers=}")
     with ProcessPoolExecutor(workers) as ex:
         ex.map(run, range(workers))
