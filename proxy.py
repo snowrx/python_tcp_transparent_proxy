@@ -12,8 +12,6 @@ class config:
     port = 8081
     timeout = 3660
     cid_rotate = 1000000
-    workers = 0
-    backlog = 1
     deferred = True
 
 
@@ -46,19 +44,24 @@ async def proxy(cid: int, fid: int, r_state: asyncio.Event, w_state: asyncio.Eve
     try:
         s: socket.socket = w.get_extra_info("socket")
         s.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, True)
+        in_read = True
         while data := await asyncio.wait_for(r.read(sys.maxsize), config.timeout):
+            in_read = False
             w.write(data)
-            await w.drain()
+            await asyncio.wait_for(w.drain(), 1)
+            in_read = True
+            await asyncio.sleep(0)
         logging.debug(f"[{v.pid}:{cid}:{fid}] EOF")
         r.feed_eof()
     except asyncio.TimeoutError:
-        logging.debug(f"[{v.pid}:{cid}:{fid}] timeout")
+        logging.debug(f"[{v.pid}:{cid}:{fid}] timeout {in_read=}")
         code |= 0b1
     except Exception as ex:
         logging.debug(f"[{v.pid}:{cid}:{fid}] error in loop: {ex}")
         code |= 0b1
 
     finally:
+        await asyncio.sleep(0)
         r_state.set()
         if not w.is_closing():
             try:
@@ -122,7 +125,7 @@ async def client(cr: asyncio.StreamReader, cw: asyncio.StreamWriter):
 def run(pid):
     async def server():
         v.pid = pid
-        server = await asyncio.start_server(client, port=config.port, reuse_port=True, backlog=config.backlog)
+        server = await asyncio.start_server(client, port=config.port, reuse_port=True)
         if config.deferred:
             for s in server.sockets:
                 s.setsockopt(socket.SOL_TCP, socket.TCP_DEFER_ACCEPT, True)
@@ -135,8 +138,6 @@ def run(pid):
 if __name__ == "__main__":
     logging.basicConfig(level=logging.DEBUG)
     workers = os.cpu_count() or 1
-    if config.workers > 0:
-        workers = config.workers
-    logging.debug(f"{config.port=}, {config.timeout=}, {config.backlog=}, {config.deferred=}, {workers=}")
+    logging.debug(f"{config.port=}, {config.timeout=}, {config.deferred=}, {workers=}")
     with ProcessPoolExecutor(workers) as ex:
         ex.map(run, range(workers))
