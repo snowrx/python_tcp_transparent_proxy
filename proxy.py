@@ -79,7 +79,7 @@ async def proxy(cid: int, fid: int, barrier: asyncio.Barrier, r: asyncio.StreamR
                 w.close()
                 await w.wait_closed()
             except Exception as ex:
-                logging.debug(f"[{v.pid}:{cid}:{fid}] error in close: {ex}")
+                logging.debug(f"[{v.pid}:{cid}:{fid}] error in closing: {ex}")
                 code |= 0b10
     return code
 
