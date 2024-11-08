@@ -15,7 +15,6 @@ class config:
     workers = 0
     backlog = 1
     deferred = True
-    pinned = True
 
 
 class consts:
@@ -123,11 +122,6 @@ async def client(cr: asyncio.StreamReader, cw: asyncio.StreamWriter):
 def run(pid):
     async def server():
         v.pid = pid
-        if config.pinned:
-            try:
-                os.sched_setaffinity(0, [pid])
-            except:
-                pass
         server = await asyncio.start_server(client, port=config.port, reuse_port=True, backlog=config.backlog)
         if config.deferred:
             for s in server.sockets:
@@ -143,13 +137,6 @@ if __name__ == "__main__":
     workers = os.cpu_count() or 1
     if config.workers > 0:
         workers = config.workers
-    affinity = range(workers)
-    if config.pinned:
-        try:
-            affinity = os.sched_getaffinity(0)
-            workers = len(affinity)
-        except:
-            pass
-    logging.debug(f"{config.port=}, {config.timeout=}, {config.backlog=}, {config.deferred=}, {config.pinned=}, {workers=}")
+    logging.debug(f"{config.port=}, {config.timeout=}, {config.backlog=}, {config.deferred=}, {workers=}")
     with ProcessPoolExecutor(workers) as ex:
-        ex.map(run, affinity)
+        ex.map(run, range(workers))
