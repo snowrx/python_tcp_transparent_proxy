@@ -45,13 +45,12 @@ async def proxy(cid: int, fid: int, barrier: asyncio.Barrier, r: asyncio.StreamR
         s: socket.socket = w.get_extra_info("socket")
         s.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, True)
         in_read = True
-        while data := await asyncio.wait_for(r.read(sys.maxsize), config.timeout):
+        while not w.is_closing() and (data := await asyncio.wait_for(r.read(sys.maxsize), config.timeout)):
             in_read = False
             w.write(data)
             await asyncio.wait_for(w.drain(), 1)
             in_read = True
         logging.debug(f"[{v.pid}:{cid}:{fid}] EOF")
-        r.feed_eof()
     except asyncio.TimeoutError:
         logging.debug(f"[{v.pid}:{cid}:{fid}] timeout {in_read=}")
         code |= 0b1
@@ -60,7 +59,7 @@ async def proxy(cid: int, fid: int, barrier: asyncio.Barrier, r: asyncio.StreamR
         code |= 0b1
 
     finally:
-        await asyncio.sleep(0)
+        r.feed_eof()
         if not w.is_closing():
             try:
                 logging.debug(f"[{v.pid}:{cid}:{fid}] write EOF")
