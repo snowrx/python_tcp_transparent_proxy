@@ -50,7 +50,6 @@ async def proxy(cid: int, fid: int, r_state: asyncio.Event, w_state: asyncio.Eve
             w.write(data)
             await asyncio.wait_for(w.drain(), 1)
             in_read = True
-            await asyncio.sleep(0)
         logging.debug(f"[{v.pid}:{cid}:{fid}] EOF")
         r.feed_eof()
     except asyncio.TimeoutError:
@@ -61,8 +60,8 @@ async def proxy(cid: int, fid: int, r_state: asyncio.Event, w_state: asyncio.Eve
         code |= 0b1
 
     finally:
-        await asyncio.sleep(0)
         r_state.set()
+        await asyncio.sleep(0)
         if not w.is_closing():
             try:
                 logging.debug(f"[{v.pid}:{cid}:{fid}] write EOF")
