@@ -131,8 +131,7 @@ def run(pid):
         v.pid = pid
         if config.pinned:
             try:
-                l = list(os.sched_getaffinity(0))
-                l.sort()
+                l = sorted(os.sched_getaffinity(0))
                 os.sched_setaffinity(0, [l[pid]])
             except Exception as ex:
                 logging.debug(f"[{pid}] failed set affinity: {ex}")
