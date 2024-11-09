@@ -13,7 +13,6 @@ class config:
     timeout = 3660
     cid_rotate = 1000000
     deferred = True
-    workers = 32
 
 
 class consts:
@@ -143,7 +142,8 @@ def run(pid):
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.DEBUG)
-    workers = max(1, config.workers)
+    c = os.cpu_count()
+    workers = c << 1 if c else 1
     logging.debug(f"{config.port=}, {config.timeout=}, {config.deferred=}, {workers=}")
     with ProcessPoolExecutor(workers) as ex:
         ex.map(run, range(workers))
