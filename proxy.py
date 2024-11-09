@@ -128,7 +128,7 @@ async def client(cr: asyncio.StreamReader, cw: asyncio.StreamWriter):
 def run(pid):
     async def server():
         v.pid = pid
-        server = await asyncio.start_server(client, port=config.port, reuse_port=True)
+        server = await asyncio.start_server(client, port=config.port, reuse_port=True, backlog=1)
         if config.deferred:
             for s in server.sockets:
                 s.setsockopt(socket.SOL_TCP, socket.TCP_DEFER_ACCEPT, True)
@@ -142,8 +142,10 @@ def run(pid):
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.DEBUG)
-    c = os.cpu_count()
-    workers = c << 1 if c else 1
+    try:
+        workers = len(os.sched_getaffinity(0))
+    except:
+        workers = os.cpu_count() or 1
     logging.debug(f"{config.port=}, {config.timeout=}, {config.deferred=}, {workers=}")
     with ProcessPoolExecutor(workers) as ex:
         ex.map(run, range(workers))
