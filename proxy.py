@@ -13,6 +13,7 @@ class config:
     timeout = 3660
     cid_rotate = 1000000
     deferred = True
+    pinned = True
 
 
 class consts:
@@ -128,6 +129,13 @@ async def client(cr: asyncio.StreamReader, cw: asyncio.StreamWriter):
 def run(pid):
     async def server():
         v.pid = pid
+        if config.pinned:
+            try:
+                l = list(os.sched_getaffinity(0))
+                l.sort()
+                os.sched_setaffinity(0, [l[pid]])
+            except Exception as ex:
+                logging.debug(f"[{pid}] failed set affinity: {ex}")
         server = await asyncio.start_server(client, port=config.port, reuse_port=True, backlog=1)
         if config.deferred:
             for s in server.sockets:
