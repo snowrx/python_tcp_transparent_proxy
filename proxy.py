@@ -143,7 +143,7 @@ def run(pid):
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.DEBUG)
-    workers = config.workers if config.workers > 0 else 1
+    workers = max(1, config.workers)
     logging.debug(f"{config.port=}, {config.timeout=}, {config.deferred=}, {workers=}")
     with ProcessPoolExecutor(workers) as ex:
         ex.map(run, range(workers))
