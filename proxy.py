@@ -135,7 +135,7 @@ def run(pid):
                 os.sched_setaffinity(0, [l[pid]])
             except Exception as ex:
                 logging.debug(f"[{pid}] failed set affinity: {ex}")
-        server = await asyncio.start_server(client, port=config.port, reuse_port=True, backlog=1)
+        server = await asyncio.start_server(client, port=config.port, reuse_port=True)
         if config.deferred:
             for s in server.sockets:
                 s.setsockopt(socket.SOL_TCP, socket.TCP_DEFER_ACCEPT, True)
