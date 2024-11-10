@@ -12,8 +12,8 @@ class config:
     port = 8081
     timeout = 3660
     cid_rotate = 1000000
-    deferred = True
-    pinned = True
+    deferred = False
+    pinned = False
 
 
 class consts:
