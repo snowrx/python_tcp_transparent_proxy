@@ -48,6 +48,7 @@ async def proxy(cid: int, fid: int, barrier: asyncio.Barrier, r: asyncio.StreamR
         in_read = True
         while not w.is_closing() and (data := await asyncio.wait_for(r.read(sys.maxsize), config.timeout)):
             in_read = False
+            await asyncio.sleep(0)
             w.write(data)
             await asyncio.wait_for(w.drain(), 1)
             in_read = True
