@@ -13,7 +13,7 @@ class config:
     timeout = 3660
     cid_rotate = 1000000
     deferred = True
-    pinned = False
+    workers = 0
 
 
 class consts:
@@ -130,12 +130,6 @@ async def client(cr: asyncio.StreamReader, cw: asyncio.StreamWriter):
 def run(pid):
     async def server():
         v.pid = pid
-        if config.pinned:
-            try:
-                l = sorted(os.sched_getaffinity(0))
-                os.sched_setaffinity(0, [l[pid]])
-            except Exception as ex:
-                logging.debug(f"[{pid}] failed set affinity: {ex}")
         server = await asyncio.start_server(client, port=config.port, reuse_port=True)
         if config.deferred:
             for s in server.sockets:
@@ -150,10 +144,13 @@ def run(pid):
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.DEBUG)
-    try:
-        workers = len(os.sched_getaffinity(0))
-    except:
-        workers = os.cpu_count() or 1
+    if config.workers > 0:
+        workers = config.workers
+    else:
+        try:
+            workers = len(os.sched_getaffinity(0))
+        except:
+            workers = os.cpu_count() or 1
     logging.debug(f"{config.port=}, {config.timeout=}, {config.deferred=}, {workers=}")
     with ProcessPoolExecutor(workers) as ex:
         ex.map(run, range(workers))
