@@ -12,8 +12,6 @@ class config:
     port = 8081
     timeout = 3660
     cid_rotate = 1000000
-    deferred = True
-    workers = 0
 
 
 class consts:
@@ -45,17 +43,14 @@ async def proxy(cid: int, fid: int, barrier: asyncio.Barrier, r: asyncio.StreamR
     try:
         s: socket.socket = w.get_extra_info("socket")
         s.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, True)
-        in_read = True
         while not w.is_closing() and (data := await asyncio.wait_for(r.read(sys.maxsize), config.timeout)):
-            in_read = False
-            await asyncio.sleep(0)
             w.write(data)
+            del data
             await asyncio.wait_for(w.drain(), 1)
-            in_read = True
         logging.debug(f"[{v.pid}:{cid}:{fid}] EOF")
         r.feed_eof()
     except asyncio.TimeoutError:
-        logging.debug(f"[{v.pid}:{cid}:{fid}] timeout {in_read=}")
+        logging.debug(f"[{v.pid}:{cid}:{fid}] timeout")
         code |= 0b1
     except Exception as ex:
         logging.debug(f"[{v.pid}:{cid}:{fid}] error in loop: {ex}")
@@ -105,7 +100,7 @@ async def client(cr: asyncio.StreamReader, cw: asyncio.StreamWriter):
 
     try:
         open_start = time.perf_counter()
-        pr, pw = await asyncio.open_connection(host=r[0], port=r[1])
+        pr, pw = await asyncio.open_connection(host=r[0], port=r[1], happy_eyeballs_delay=0)
         open_delay = time.perf_counter() - open_start
     except Exception as ex:
         logging.debug(f"[{v.pid}:{cid}] error in open: {ex}")
@@ -131,9 +126,8 @@ def run(pid):
     async def server():
         v.pid = pid
         server = await asyncio.start_server(client, port=config.port, reuse_port=True)
-        if config.deferred:
-            for s in server.sockets:
-                s.setsockopt(socket.SOL_TCP, socket.TCP_DEFER_ACCEPT, True)
+        for s in server.sockets:
+            s.setsockopt(socket.SOL_TCP, socket.TCP_DEFER_ACCEPT, True)
         async with server:
             await server.serve_forever()
         for t in asyncio.all_tasks():
@@ -144,13 +138,10 @@ def run(pid):
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.DEBUG)
-    if config.workers > 0:
-        workers = config.workers
-    else:
-        try:
-            workers = len(os.sched_getaffinity(0))
-        except:
-            workers = os.cpu_count() or 1
-    logging.debug(f"{config.port=}, {config.timeout=}, {config.deferred=}, {workers=}")
+    try:
+        workers = len(os.sched_getaffinity(0))
+    except:
+        workers = os.cpu_count() or 1
+    logging.debug(f"{config.port=}, {config.timeout=}, {workers=}")
     with ProcessPoolExecutor(workers) as ex:
         ex.map(run, range(workers))
