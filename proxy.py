@@ -9,20 +9,21 @@ import time
 
 
 class config:
-    port: int = 8081
-    cid_rotate: int = 1000000
+    port = 8081
+    timeout = 3660
+    cid_rotate = 1000000
 
 
 class consts:
-    SO_ORIGINAL_DST: int = 80
-    SOL_IPV6: int = 41
-    V4_LEN: int = 16
-    V6_LEN: int = 28
+    SO_ORIGINAL_DST = 80
+    SOL_IPV6 = 41
+    V4_LEN = 16
+    V6_LEN = 28
 
 
 class v:
-    pid: int = 0
-    cid: int = 0
+    pid = 0
+    cid = 0
 
 
 def get_original_dst(so: socket.socket, is_ipv4=True):
@@ -42,7 +43,7 @@ async def proxy(cid: int, fid: int, barrier: asyncio.Barrier, r: asyncio.StreamR
     try:
         s: socket.socket = w.get_extra_info("socket")
         s.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, True)
-        while not w.is_closing() and (data := await r.read(sys.maxsize)):
+        while not w.is_closing() and (data := await asyncio.wait_for(r.read(sys.maxsize), config.timeout)):
             w.write(data)
             await w.drain()
         logging.debug(f"[{v.pid}:{cid}:{fid}] EOF")
