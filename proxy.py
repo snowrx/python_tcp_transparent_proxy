@@ -47,9 +47,6 @@ async def proxy(cid: int, fid: int, barrier: asyncio.Barrier, r: asyncio.StreamR
             await w.drain()
         logging.debug(f"[{v.pid}:{cid}:{fid}] EOF")
         r.feed_eof()
-    except asyncio.TimeoutError:
-        logging.debug(f"[{v.pid}:{cid}:{fid}] timeout")
-        code |= 0b1
     except Exception as ex:
         logging.debug(f"[{v.pid}:{cid}:{fid}] error in loop: {ex}")
         code |= 0b1
@@ -98,7 +95,7 @@ async def client(cr: asyncio.StreamReader, cw: asyncio.StreamWriter):
 
     try:
         open_start = time.perf_counter()
-        pr, pw = await asyncio.open_connection(host=r[0], port=r[1], happy_eyeballs_delay=0)
+        pr, pw = await asyncio.open_connection(host=r[0], port=r[1])
         open_delay = time.perf_counter() - open_start
     except Exception as ex:
         logging.debug(f"[{v.pid}:{cid}] error in open: {ex}")
