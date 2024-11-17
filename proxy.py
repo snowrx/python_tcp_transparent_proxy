@@ -46,29 +46,21 @@ async def proxy(cid: int, fid: int, barrier: asyncio.Barrier, r: asyncio.StreamR
         while not w.is_closing() and (data := await asyncio.wait_for(r.read(sys.maxsize), config.timeout)):
             w.write(memoryview(data))
             await w.drain()
-        logging.debug(f"[{v.pid}:{cid}:{fid}] EOF")
+            if barrier.n_waiting > 0:
+                logging.debug(f"[{v.pid}:{cid}:{fid}] {barrier.n_waiting=}")
         r.feed_eof()
     except Exception as ex:
         logging.debug(f"[{v.pid}:{cid}:{fid}] error in loop: {ex}")
         code |= 0b1
 
     finally:
-        if not w.is_closing():
-            try:
-                logging.debug(f"[{v.pid}:{cid}:{fid}] write EOF")
-                w.write_eof()
-                await w.drain()
-            except Exception as ex:
-                logging.debug(f"[{v.pid}:{cid}:{fid}] error in write EOF: {ex}")
-                code |= 0b10
-
-        if barrier.n_waiting == 0:
-            logging.debug(f"[{v.pid}:{cid}:{fid}] wait for other")
+        logging.debug(f"[{v.pid}:{cid}:{fid}] exit")
         await barrier.wait()
-
         if not w.is_closing():
             try:
                 logging.debug(f"[{v.pid}:{cid}:{fid}] closing")
+                w.write_eof()
+                await w.drain()
                 w.close()
                 await w.wait_closed()
             except Exception as ex:
@@ -80,14 +72,16 @@ async def proxy(cid: int, fid: int, barrier: asyncio.Barrier, r: asyncio.StreamR
 async def client(cr: asyncio.StreamReader, cw: asyncio.StreamWriter):
     cid = v.cid
     v.cid = (v.cid + 1) % consts.CID_ROTATE
-    c = cw.get_extra_info("peername")
-    sn = cw.get_extra_info("sockname")
-    is_ipv4 = "." in c[0]
-    r = get_original_dst(cw.get_extra_info("socket"), is_ipv4)
+    src = cw.get_extra_info("peername")
+    srv = cw.get_extra_info("sockname")
+    soc = cw.get_extra_info("socket")
+    is_ipv4 = "." in src[0]
+    dst = await asyncio.to_thread(get_original_dst, soc, is_ipv4)
 
-    if r[0] == sn[0] and r[1] == sn[1]:
-        logging.error(f"[{v.pid}:{cid}] Blocked direct access from {c[0]}@{c[1]}")
+    if dst[0] == srv[0] and dst[1] == srv[1]:
+        logging.error(f"[{v.pid}:{cid}] Blocked direct access from {src[0]}@{src[1]}")
         try:
+            cw.transport.abort()
             cw.close()
             await cw.wait_closed()
         except:
@@ -96,26 +90,27 @@ async def client(cr: asyncio.StreamReader, cw: asyncio.StreamWriter):
 
     try:
         open_start = time.perf_counter()
-        pr, pw = await asyncio.open_connection(host=r[0], port=r[1])
+        pr, pw = await asyncio.open_connection(host=dst[0], port=dst[1])
         open_delay = time.perf_counter() - open_start
     except Exception as ex:
         logging.debug(f"[{v.pid}:{cid}] error in open: {ex}")
         try:
+            cw.transport.abort()
             cw.close()
             await cw.wait_closed()
         except:
             pass
-        logging.warning(f"[{v.pid}:{cid}] Failed proxy in {c[0]}@{c[1]} <> {r[0]}@{r[1]}")
+        logging.warning(f"[{v.pid}:{cid}] Failed proxy in {src[0]}@{src[1]} <> {dst[0]}@{dst[1]}")
         return
 
-    logging.info(f"[{v.pid}:{cid}] Open proxy in {c[0]}@{c[1]} <> {r[0]}@{r[1]} ({round(open_delay * 1000)}ms)")
+    logging.info(f"[{v.pid}:{cid}] Open proxy in {src[0]}@{src[1]} <> {dst[0]}@{dst[1]} ({round(open_delay * 1000)}ms)")
     barrier = asyncio.Barrier(2)
     proxy_start = time.perf_counter()
     async with asyncio.TaskGroup() as tg:
         r0 = tg.create_task(proxy(cid, 0, barrier, cr, pw))
         r1 = tg.create_task(proxy(cid, 1, barrier, pr, cw))
     proxy_duration = time.perf_counter() - proxy_start
-    logging.info(f"[{v.pid}:{cid}] Close proxy in {c[0]}@{c[1]} ({r0.result()}) <> {r[0]}@{r[1]} ({r1.result()}) in {round(proxy_duration)}s")
+    logging.info(f"[{v.pid}:{cid}] Close proxy in {src[0]}@{src[1]} ({r0.result()}) <> {dst[0]}@{dst[1]} ({r1.result()}) in {round(proxy_duration)}s")
 
 
 def run(pid):
