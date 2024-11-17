@@ -11,7 +11,6 @@ import time
 class config:
     port = 8081
     timeout = 3660
-    cid_rotate = 1000000
 
 
 class consts:
@@ -19,6 +18,7 @@ class consts:
     SOL_IPV6 = 41
     V4_LEN = 16
     V6_LEN = 28
+    CID_ROTATE = 1000000
 
 
 class v:
@@ -79,7 +79,7 @@ async def proxy(cid: int, fid: int, barrier: asyncio.Barrier, r: asyncio.StreamR
 
 async def client(cr: asyncio.StreamReader, cw: asyncio.StreamWriter):
     cid = v.cid
-    v.cid = (v.cid + 1) % config.cid_rotate
+    v.cid = (v.cid + 1) % consts.CID_ROTATE
     c = cw.get_extra_info("peername")
     sn = cw.get_extra_info("sockname")
     is_ipv4 = "." in c[0]
