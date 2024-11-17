@@ -46,26 +46,25 @@ async def proxy(cid: int, fid: int, barrier: asyncio.Barrier, r: asyncio.StreamR
         while data := await asyncio.wait_for(r.read(sys.maxsize), config.timeout):
             w.write(memoryview(data))
             await w.drain()
-            if barrier.n_waiting > 0:
-                logging.debug(f"[{v.pid}:{cid}:{fid}] {barrier.n_waiting=}")
-        r.feed_eof()
-        w.write_eof()
-        await w.drain()
-    except Exception as ex:
-        logging.debug(f"[{v.pid}:{cid}:{fid}] error in loop: {ex}")
+    except:
         code |= 0b1
-
     finally:
         logging.debug(f"[{v.pid}:{cid}:{fid}] exit")
+        # before wait
+        try:
+            r.feed_eof()
+            w.write_eof()
+            await w.drain()
+        except:
+            code |= 0b10
+        # wait
         await barrier.wait()
-        if not w.is_closing():
-            try:
-                logging.debug(f"[{v.pid}:{cid}:{fid}] closing")
-                w.close()
-                await w.wait_closed()
-            except Exception as ex:
-                logging.debug(f"[{v.pid}:{cid}:{fid}] error in closing: {ex}")
-                code |= 0b10
+        # after wait
+        try:
+            w.close()
+            await w.wait_closed()
+        except:
+            code |= 0b100
     return code
 
 
@@ -92,8 +91,7 @@ async def client(cr: asyncio.StreamReader, cw: asyncio.StreamWriter):
         open_start = time.perf_counter()
         pr, pw = await asyncio.open_connection(host=dst[0], port=dst[1])
         open_delay = time.perf_counter() - open_start
-    except Exception as ex:
-        logging.debug(f"[{v.pid}:{cid}] error in open: {ex}")
+    except:
         try:
             cw.transport.abort()
             cw.close()
