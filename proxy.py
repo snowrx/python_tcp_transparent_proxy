@@ -49,6 +49,8 @@ async def proxy(cid: int, fid: int, barrier: asyncio.Barrier, r: asyncio.StreamR
             if barrier.n_waiting > 0:
                 logging.debug(f"[{v.pid}:{cid}:{fid}] {barrier.n_waiting=}")
         r.feed_eof()
+        w.write_eof()
+        await w.drain()
     except Exception as ex:
         logging.debug(f"[{v.pid}:{cid}:{fid}] error in loop: {ex}")
         code |= 0b1
@@ -59,8 +61,6 @@ async def proxy(cid: int, fid: int, barrier: asyncio.Barrier, r: asyncio.StreamR
         if not w.is_closing():
             try:
                 logging.debug(f"[{v.pid}:{cid}:{fid}] closing")
-                w.write_eof()
-                await w.drain()
                 w.close()
                 await w.wait_closed()
             except Exception as ex:
