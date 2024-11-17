@@ -43,7 +43,6 @@ async def proxy(cid: int, fid: int, barrier: asyncio.Barrier, r: asyncio.StreamR
     try:
         s: socket.socket = w.get_extra_info("socket")
         s.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, True)
-        w.transport.set_write_buffer_limits(0)
         while not w.is_closing() and (data := await asyncio.wait_for(r.read(sys.maxsize), config.timeout)):
             w.write(memoryview(data))
             await w.drain()
