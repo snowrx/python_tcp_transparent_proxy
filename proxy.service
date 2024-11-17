@@ -4,6 +4,7 @@ After=network-online.target
 ConditionPathExists=/opt/proxy.py
 
 [Service]
+Environment=LD_PRELOAD=/usr/lib/x86_64-linux-gnu/mptcpize/libmptcpwrap.so.0.0.1
 DynamicUser=yes
 WorkingDirectory=/opt
 ExecStart=python3 /opt/proxy.py
