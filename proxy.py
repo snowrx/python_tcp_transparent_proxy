@@ -76,7 +76,7 @@ async def client(cr: asyncio.StreamReader, cw: asyncio.StreamWriter):
     srv = cw.get_extra_info("sockname")
     soc = cw.get_extra_info("socket")
     is_ipv4 = "." in src[0]
-    dst = await asyncio.to_thread(get_original_dst, soc, is_ipv4)
+    dst = get_original_dst(soc, is_ipv4)
 
     if dst[0] == srv[0] and dst[1] == srv[1]:
         logging.error(f"[{v.pid}:{cid}] Blocked direct access from {src[0]}@{src[1]}")
