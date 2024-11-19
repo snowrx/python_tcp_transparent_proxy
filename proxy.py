@@ -47,10 +47,8 @@ async def proxy(cid: int, fid: int, barrier: asyncio.Barrier, r: asyncio.StreamR
         while data := await asyncio.wait_for(r.read(sys.maxsize), config.timeout):
             w.write(memoryview(data))
             await w.drain()
-    except asyncio.TimeoutError:
-        code |= 0b1
-        logging.debug(f"[{v.pid}:{cid}:{fid}] force close quiet connection")
-    except:
+    except Exception as err:
+        logging.debug(f"[{v.pid}:{cid}:{fid}] error in loop: {err=}, {type(err)=}")
         code |= 0b1
     finally:
         logging.debug(f"[{v.pid}:{cid}:{fid}] exit")
