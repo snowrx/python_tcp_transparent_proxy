@@ -10,7 +10,7 @@ import time
 
 class config:
     port = 8081
-    timeout = 3660
+    timeout = 86400
 
 
 class consts:
@@ -47,6 +47,9 @@ async def proxy(cid: int, fid: int, barrier: asyncio.Barrier, r: asyncio.StreamR
         while data := await asyncio.wait_for(r.read(sys.maxsize), config.timeout):
             w.write(memoryview(data))
             await w.drain()
+    except asyncio.TimeoutError:
+        code |= 0b1
+        logging.debug(f"[{v.pid}:{cid}:{fid}] force close quiet connection")
     except:
         code |= 0b1
     finally:
