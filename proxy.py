@@ -47,6 +47,7 @@ async def proxy(cid: int, fid: int, barrier: asyncio.Barrier, r: asyncio.StreamR
         while data := await asyncio.wait_for(r.read(sys.maxsize), config.timeout):
             w.write(memoryview(data))
             await w.drain()
+        r.feed_eof()
     except Exception as err:
         logging.debug(f"[{v.pid}:{cid}:{fid}] error in loop: {err=}, {type(err)=}")
         code |= 0b1
