@@ -62,11 +62,11 @@ async def proxy(cid: int, fid: int, barrier: asyncio.Barrier, r: asyncio.StreamR
         await barrier.wait()
         # after wait
         try:
-            r.feed_eof()
             w.close()
             await w.wait_closed()
         except:
             code |= 0b100
+        r.feed_eof()
     return code
 
 
