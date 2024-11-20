@@ -54,19 +54,21 @@ async def proxy(cid: int, fid: int, barrier: asyncio.Barrier, r: asyncio.StreamR
     finally:
         logging.debug(f"[{v.pid}:{cid}:{fid}] exit")
         # before wait
-        try:
-            w.write_eof()
-            await w.drain()
-        except:
-            code |= 0b10
+        if not w.is_closing():
+            try:
+                w.write_eof()
+                await w.drain()
+            except:
+                code |= 0b10
         # wait
         await barrier.wait()
         # after wait
-        try:
-            w.close()
-            await w.wait_closed()
-        except:
-            code |= 0b100
+        if not w.is_closing():
+            try:
+                w.close()
+                await w.wait_closed()
+            except:
+                code |= 0b100
     return code
 
 
