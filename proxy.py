@@ -136,6 +136,6 @@ if __name__ == "__main__":
         workers = len(os.sched_getaffinity(0))
     except:
         workers = os.cpu_count() or 1
-    logging.debug(f"{config.PORT=}, {config.TIMEOUT=}, {workers=}")
+    logging.debug(f"{config.PORT=}, {config.TIMEOUT=}, {consts.limit=}, {workers=}")
     with ProcessPoolExecutor(workers) as ex:
         ex.map(run, range(workers))
