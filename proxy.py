@@ -8,9 +8,9 @@ import time
 
 
 class config:
-    port = 8081
-    timeout = 86400
-    limit = 0x40000
+    PORT = 8081
+    TIMEOUT = 86400
+    LIMIT = 0x40000
 
 
 class consts:
@@ -43,8 +43,8 @@ async def proxy(cid: int, fid: int, barrier: asyncio.Barrier, r: asyncio.StreamR
     try:
         s: socket.socket = w.get_extra_info("socket")
         s.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, True)
-        w.transport.set_write_buffer_limits(config.limit)
-        while data := await asyncio.wait_for(r.read(config.limit), config.timeout):
+        w.transport.set_write_buffer_limits(config.LIMIT)
+        while data := await asyncio.wait_for(r.read(config.LIMIT), config.TIMEOUT):
             w.write(memoryview(data))
             await w.drain()
         r.feed_eof()
@@ -93,7 +93,7 @@ async def client(cr: asyncio.StreamReader, cw: asyncio.StreamWriter):
 
     try:
         open_start = time.perf_counter()
-        pr, pw = await asyncio.open_connection(host=dst[0], port=dst[1], limit=config.limit)
+        pr, pw = await asyncio.open_connection(host=dst[0], port=dst[1], limit=config.LIMIT)
         open_delay = time.perf_counter() - open_start
     except:
         try:
@@ -118,7 +118,7 @@ async def client(cr: asyncio.StreamReader, cw: asyncio.StreamWriter):
 def run(pid):
     async def server():
         v.pid = pid
-        server = await asyncio.start_server(client, port=config.port, reuse_port=True, limit=config.limit)
+        server = await asyncio.start_server(client, port=config.PORT, reuse_port=True, limit=config.LIMIT)
         async with server:
             await server.serve_forever()
         for t in asyncio.all_tasks():
@@ -133,6 +133,6 @@ if __name__ == "__main__":
         workers = len(os.sched_getaffinity(0))
     except:
         workers = os.cpu_count() or 1
-    logging.debug(f"{config.port=}, {workers=}")
+    logging.debug(f"{config.PORT=}, {config.TIMEOUT=}, {config.LIMIT=}, {workers=}")
     with ProcessPoolExecutor(workers) as ex:
         ex.map(run, range(workers))
