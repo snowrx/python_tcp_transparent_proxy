@@ -10,7 +10,7 @@ import time
 class config:
     port = 8081
     timeout = 86400
-    limit = 0x100000
+    limit = 0x40000
 
 
 class consts:
