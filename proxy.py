@@ -47,11 +47,11 @@ async def proxy(cid: int, fid: int, barrier: asyncio.Barrier, r: asyncio.StreamR
             w.write(memoryview(data))
             await w.drain()
         r.feed_eof()
+        logging.debug(f"[{v.pid}:{cid}:{fid}] EOF")
     except Exception as err:
         logging.debug(f"[{v.pid}:{cid}:{fid}] error in loop: {err=}, {type(err)=}")
         code |= 0b1
     finally:
-        logging.debug(f"[{v.pid}:{cid}:{fid}] exit")
         # before wait
         if not w.is_closing():
             try:
