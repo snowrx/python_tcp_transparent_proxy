@@ -10,12 +10,10 @@ import time
 class config:
     PORT = 8081
     TIMEOUT = 86400
-    RATE = 10**8
 
 
 class consts:
     SO_ORIGINAL_DST = 80
-    SO_MAX_PACING_RATE = 47
     SOL_IPV6 = 41
     V4_LEN = 16
     V6_LEN = 28
@@ -45,7 +43,6 @@ async def proxy(cid: int, fid: int, barrier: asyncio.Barrier, r: asyncio.StreamR
     try:
         s: socket.socket = w.get_extra_info("socket")
         s.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, True)
-        s.setsockopt(socket.SOL_SOCKET, consts.SO_MAX_PACING_RATE, config.RATE)
         while data := await asyncio.wait_for(r.read(consts.LIMIT), config.TIMEOUT):
             w.write(memoryview(data))
             await w.drain()
