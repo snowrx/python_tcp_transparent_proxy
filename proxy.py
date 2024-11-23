@@ -7,18 +7,15 @@ import struct
 import time
 
 
-class config:
-    PORT = 8081
-    TIMEOUT = 86400
+PORT = 8081
+TIMEOUT = 86400
+LIMIT = 0x100000
+CID_ROTATE = 1000000
 
-
-class consts:
-    SO_ORIGINAL_DST = 80
-    SOL_IPV6 = 41
-    V4_LEN = 16
-    V6_LEN = 28
-    CID_ROTATE = 1000000
-    LIMIT = 0x10000
+SO_ORIGINAL_DST = 80
+SOL_IPV6 = 41
+V4_LEN = 16
+V6_LEN = 28
 
 
 class v:
@@ -28,11 +25,11 @@ class v:
 
 def get_original_dst(so: socket.socket, is_ipv4=True):
     if is_ipv4:
-        dst = so.getsockopt(socket.SOL_IP, consts.SO_ORIGINAL_DST, consts.V4_LEN)
+        dst = so.getsockopt(socket.SOL_IP, SO_ORIGINAL_DST, V4_LEN)
         port, raw_ip = struct.unpack_from("!2xH4s", dst)
         ip = socket.inet_ntop(socket.AF_INET, raw_ip)
     else:
-        dst = so.getsockopt(consts.SOL_IPV6, consts.SO_ORIGINAL_DST, consts.V6_LEN)
+        dst = so.getsockopt(SOL_IPV6, SO_ORIGINAL_DST, V6_LEN)
         port, raw_ip = struct.unpack_from("!2xH4x16s", dst)
         ip = socket.inet_ntop(socket.AF_INET6, raw_ip)
     return ip, port
@@ -43,7 +40,8 @@ async def proxy(cid: int, fid: int, barrier: asyncio.Barrier, r: asyncio.StreamR
     try:
         s: socket.socket = w.get_extra_info("socket")
         s.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, True)
-        while data := await asyncio.wait_for(r.read(consts.LIMIT), config.TIMEOUT):
+        w.transport.set_write_buffer_limits(LIMIT)
+        while data := await asyncio.wait_for(r.read(LIMIT), TIMEOUT):
             w.write(memoryview(data))
             await w.drain()
         r.feed_eof()
@@ -73,7 +71,7 @@ async def proxy(cid: int, fid: int, barrier: asyncio.Barrier, r: asyncio.StreamR
 
 async def client(cr: asyncio.StreamReader, cw: asyncio.StreamWriter):
     cid = v.cid
-    v.cid = (v.cid + 1) % consts.CID_ROTATE
+    v.cid = (v.cid + 1) % CID_ROTATE
     src = cw.get_extra_info("peername")
     srv = cw.get_extra_info("sockname")
     soc = cw.get_extra_info("socket")
@@ -92,7 +90,7 @@ async def client(cr: asyncio.StreamReader, cw: asyncio.StreamWriter):
 
     try:
         open_start = time.perf_counter()
-        pr, pw = await asyncio.open_connection(host=dst[0], port=dst[1])
+        pr, pw = await asyncio.open_connection(host=dst[0], port=dst[1], limit=LIMIT)
         open_delay = time.perf_counter() - open_start
     except:
         try:
@@ -117,7 +115,7 @@ async def client(cr: asyncio.StreamReader, cw: asyncio.StreamWriter):
 def run(pid):
     async def server():
         v.pid = pid
-        server = await asyncio.start_server(client, port=config.PORT, reuse_port=True)
+        server = await asyncio.start_server(client, port=PORT, reuse_port=True, limit=LIMIT)
         async with server:
             await server.serve_forever()
         for t in asyncio.all_tasks():
@@ -132,6 +130,6 @@ if __name__ == "__main__":
         workers = len(os.sched_getaffinity(0))
     except:
         workers = os.cpu_count() or 1
-    logging.debug(f"{config.PORT=}, {config.TIMEOUT=}, {workers=}")
+    logging.debug(f"{PORT=}, {TIMEOUT=}, {workers=}")
     with ProcessPoolExecutor(workers) as ex:
         ex.map(run, range(workers))
