@@ -40,9 +40,10 @@ async def proxy(cid: int, fid: int, barrier: asyncio.Barrier, r: asyncio.StreamR
         s: socket.socket = w.get_extra_info("socket")
         s.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, True)
         chunk = max(w.transport.get_write_buffer_limits())
-        while data := await asyncio.wait_for(r.read(chunk), TIMEOUT):
-            w.write(memoryview(data))
-            await w.drain()
+        async with asyncio.timeout(TIMEOUT):
+            while data := await r.read(chunk):
+                w.write(memoryview(data))
+                await w.drain()
         r.feed_eof()
         logging.debug(f"[{v.pid}:{cid}:{fid}] EOF")
     except Exception as err:
