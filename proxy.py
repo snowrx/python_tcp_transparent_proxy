@@ -9,7 +9,6 @@ import time
 
 PORT = 8081
 TIMEOUT = 86400
-LIMIT = 0x100000
 CID_ROTATE = 1000000
 
 SO_ORIGINAL_DST = 80
@@ -40,8 +39,8 @@ async def proxy(cid: int, fid: int, barrier: asyncio.Barrier, r: asyncio.StreamR
     try:
         s: socket.socket = w.get_extra_info("socket")
         s.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, True)
-        w.transport.set_write_buffer_limits(LIMIT)
-        while data := await asyncio.wait_for(r.read(LIMIT), TIMEOUT):
+        chunk = max(w.transport.get_write_buffer_limits())
+        while data := await asyncio.wait_for(r.read(chunk), TIMEOUT):
             w.write(memoryview(data))
             await w.drain()
         r.feed_eof()
@@ -90,7 +89,7 @@ async def client(cr: asyncio.StreamReader, cw: asyncio.StreamWriter):
 
     try:
         open_start = time.perf_counter()
-        pr, pw = await asyncio.open_connection(host=dst[0], port=dst[1], limit=LIMIT)
+        pr, pw = await asyncio.open_connection(host=dst[0], port=dst[1])
         open_delay = time.perf_counter() - open_start
     except:
         try:
@@ -115,7 +114,7 @@ async def client(cr: asyncio.StreamReader, cw: asyncio.StreamWriter):
 def run(pid):
     async def server():
         v.pid = pid
-        server = await asyncio.start_server(client, port=PORT, reuse_port=True, limit=LIMIT)
+        server = await asyncio.start_server(client, port=PORT, reuse_port=True)
         async with server:
             await server.serve_forever()
         for t in asyncio.all_tasks():
