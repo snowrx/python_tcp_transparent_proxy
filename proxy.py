@@ -9,7 +9,8 @@ import time
 
 PORT = 8081
 TIMEOUT = 86400
-LIMIT = 0x40000
+LIMIT = 0x8000000
+CHUNK = 0x40000
 
 SO_ORIGINAL_DST = 80
 SOL_IPV6 = 41
@@ -42,7 +43,7 @@ async def proxy(cid: int, fid: int, barrier: asyncio.Barrier, r: asyncio.StreamR
         s.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, True)
         w.transport.set_write_buffer_limits(LIMIT)
         async with asyncio.timeout(TIMEOUT):
-            while data := await r.read(LIMIT):
+            while data := await r.read(CHUNK):
                 w.write(memoryview(data))
                 await w.drain()
         r.feed_eof()
@@ -131,6 +132,6 @@ if __name__ == "__main__":
         workers = len(os.sched_getaffinity(0))
     except:
         workers = os.cpu_count() or 1
-    logging.debug(f"{PORT=}, {TIMEOUT=}, {LIMIT=}, {workers=}")
+    logging.debug(f"{PORT=}, {TIMEOUT=}, {LIMIT=}, {CHUNK=}, {workers=}")
     with ProcessPoolExecutor(workers) as ex:
         ex.map(run, range(workers))
