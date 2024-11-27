@@ -18,6 +18,56 @@ V6_LEN = 28
 CID_ROTATE = 1000000
 
 
+class Connecter:
+    _cid: int
+    _fid: int
+    _barrier: asyncio.Barrier
+    _r: asyncio.StreamReader
+    _w: asyncio.StreamWriter
+
+    def __init__(self, cid: int, fid: int, barrier: asyncio.Barrier, r: asyncio.StreamReader, w: asyncio.StreamWriter):
+        self._cid = cid
+        self._fid = fid
+        self._barrier = barrier
+        self._r = r
+        self._w = w
+
+    async def proxy(self):
+        code = 0
+        try:
+            s: socket.socket = self._w.get_extra_info("socket")
+            s.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, True)
+            mss = s.getsockopt(socket.SOL_TCP, socket.TCP_MAXSEG)
+            self._w.transport.set_write_buffer_limits(LIMIT)
+            async with asyncio.timeout(TIMEOUT):
+                while data := await self._r.read(mss):
+                    self._w.write(memoryview(data))
+                    await self._w.drain()
+            self._r.feed_eof()
+            logging.debug(f"[{v.pid}:{self._cid}:{self._fid}] EOF")
+        except Exception as err:
+            logging.debug(f"[{v.pid}:{self._cid}:{self._fid}] error in loop: {err=}")
+            code |= 0b1
+        finally:
+            # before wait
+            if not self._w.is_closing():
+                try:
+                    self._w.write_eof()
+                    await self._w.drain()
+                except:
+                    code |= 0b10
+            # wait
+            await self._barrier.wait()
+            # after wait
+            if not self._w.is_closing():
+                try:
+                    self._w.close()
+                    await self._w.wait_closed()
+                except:
+                    code |= 0b100
+        return code
+
+
 class v:
     pid = 0
     cid = 0
@@ -33,42 +83,6 @@ def get_original_dst(so: socket.socket, is_ipv4=True):
         port, raw_ip = struct.unpack_from("!2xH4x16s", dst)
         ip = socket.inet_ntop(socket.AF_INET6, raw_ip)
     return ip, port
-
-
-async def proxy(cid: int, fid: int, barrier: asyncio.Barrier, r: asyncio.StreamReader, w: asyncio.StreamWriter):
-    code = 0
-    try:
-        s: socket.socket = w.get_extra_info("socket")
-        s.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, True)
-        mss = s.getsockopt(socket.SOL_TCP, socket.TCP_MAXSEG)
-        w.transport.set_write_buffer_limits(LIMIT)
-        async with asyncio.timeout(TIMEOUT):
-            while data := await r.read(mss):
-                w.write(memoryview(data))
-                await w.drain()
-        r.feed_eof()
-        logging.debug(f"[{v.pid}:{cid}:{fid}] EOF")
-    except Exception as err:
-        logging.debug(f"[{v.pid}:{cid}:{fid}] error in loop: {err=}")
-        code |= 0b1
-    finally:
-        # before wait
-        if not w.is_closing():
-            try:
-                w.write_eof()
-                await w.drain()
-            except:
-                code |= 0b10
-        # wait
-        await barrier.wait()
-        # after wait
-        if not w.is_closing():
-            try:
-                w.close()
-                await w.wait_closed()
-            except:
-                code |= 0b100
-    return code
 
 
 async def client(cr: asyncio.StreamReader, cw: asyncio.StreamWriter):
@@ -106,10 +120,12 @@ async def client(cr: asyncio.StreamReader, cw: asyncio.StreamWriter):
 
     logging.info(f"[{v.pid}:{cid}] Open proxy in {src[0]}@{src[1]} <> {dst[0]}@{dst[1]} ({round(open_delay * 1000)}ms)")
     barrier = asyncio.Barrier(2)
+    lc = Connecter(cid, 0, barrier, cr, pw)
+    pc = Connecter(cid, 1, barrier, pr, cw)
     proxy_start = time.perf_counter()
     async with asyncio.TaskGroup() as tg:
-        r0 = tg.create_task(proxy(cid, 0, barrier, cr, pw))
-        r1 = tg.create_task(proxy(cid, 1, barrier, pr, cw))
+        r0 = tg.create_task(lc.proxy())
+        r1 = tg.create_task(pc.proxy())
     proxy_duration = time.perf_counter() - proxy_start
     logging.info(f"[{v.pid}:{cid}] Close proxy in {src[0]}@{src[1]} ({r0.result()}) <> {dst[0]}@{dst[1]} ({r1.result()}) in {round(proxy_duration)}s")
 
