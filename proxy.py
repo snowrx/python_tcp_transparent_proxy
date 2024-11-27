@@ -1,4 +1,4 @@
-from concurrent.futures import ProcessPoolExecutor
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 import asyncio
 import logging
 import os
@@ -114,9 +114,9 @@ async def client(cr: asyncio.StreamReader, cw: asyncio.StreamWriter):
 
 
 def run(pid):
-    async def server():
+    async def server(family=socket.AF_UNSPEC):
         v.pid = pid
-        server = await asyncio.start_server(client, port=PORT, reuse_port=True, limit=LIMIT)
+        server = await asyncio.start_server(client, port=PORT, reuse_port=True, limit=LIMIT, family=family)
         for so in server.sockets:
             so.setsockopt(socket.SOL_TCP, socket.TCP_DEFER_ACCEPT, True)
         async with server:
@@ -124,7 +124,12 @@ def run(pid):
         for t in asyncio.all_tasks():
             t.cancel()
 
-    asyncio.run(server())
+    def run_thread(family=socket.AF_UNSPEC):
+        asyncio.run(server(family))
+
+    f = (socket.AF_INET, socket.AF_INET6)
+    with ThreadPoolExecutor(len(f)) as tex:
+        tex.map(run_thread, f)
 
 
 if __name__ == "__main__":
@@ -134,5 +139,5 @@ if __name__ == "__main__":
     except:
         workers = os.cpu_count() or 1
     logging.debug(f"{PORT=}, {TIMEOUT=}, {LIMIT=}, {workers=}")
-    with ProcessPoolExecutor(workers) as ex:
-        ex.map(run, range(workers))
+    with ProcessPoolExecutor(workers) as pex:
+        pex.map(run, range(workers))
