@@ -49,7 +49,7 @@ async def proxy(cid: int, fid: int, barrier: asyncio.Barrier, r: asyncio.StreamR
         r.feed_eof()
         logging.debug(f"[{v.pid}:{cid}:{fid}] EOF")
     except Exception as err:
-        logging.debug(f"[{v.pid}:{cid}:{fid}] error in loop: {err=}, {type(err)=}")
+        logging.debug(f"[{v.pid}:{cid}:{fid}] error in loop: {err=}")
         code |= 0b1
     finally:
         # before wait
