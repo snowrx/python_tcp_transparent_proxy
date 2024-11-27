@@ -18,7 +18,7 @@ V6_LEN = 28
 CID_ROTATE = 1000000
 
 
-class Connecter:
+class Connector:
     _cid: int
     _fid: int
     _barrier: asyncio.Barrier
@@ -120,8 +120,8 @@ async def client(cr: asyncio.StreamReader, cw: asyncio.StreamWriter):
 
     logging.info(f"[{v.pid}:{cid}] Open proxy in {src[0]}@{src[1]} <> {dst[0]}@{dst[1]} ({round(open_delay * 1000)}ms)")
     barrier = asyncio.Barrier(2)
-    lc = Connecter(cid, 0, barrier, cr, pw)
-    pc = Connecter(cid, 1, barrier, pr, cw)
+    lc = Connector(cid, 0, barrier, cr, pw)
+    pc = Connector(cid, 1, barrier, pr, cw)
     proxy_start = time.perf_counter()
     async with asyncio.TaskGroup() as tg:
         r0 = tg.create_task(lc.proxy())
