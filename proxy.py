@@ -9,7 +9,7 @@ import time
 
 PORT = 8081
 TIMEOUT = 86400
-LIMIT = 0x40000
+LIMIT = 0x4000
 
 SO_ORIGINAL_DST = 80
 SOL_IPV6 = 41
@@ -40,9 +40,10 @@ async def proxy(cid: int, fid: int, barrier: asyncio.Barrier, r: asyncio.StreamR
     try:
         s: socket.socket = w.get_extra_info("socket")
         s.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, True)
-        w.transport.set_write_buffer_limits(low=LIMIT)
+        mss = s.getsockopt(socket.SOL_TCP, socket.TCP_MAXSEG)
+        w.transport.set_write_buffer_limits(LIMIT)
         async with asyncio.timeout(TIMEOUT):
-            while data := await r.read(LIMIT):
+            while data := await r.read(mss):
                 w.write(memoryview(data))
                 await w.drain()
         r.feed_eof()
