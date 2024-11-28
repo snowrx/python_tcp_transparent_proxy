@@ -8,7 +8,8 @@ import time
 
 PORT = 8081
 TIMEOUT = 86400
-LIMIT = 0x4000
+
+_COMMON_PAGESIZE = 2**12
 
 
 class Listener:
@@ -27,7 +28,7 @@ class Listener:
 
     def run(self):
         async def _server(family=socket.AF_UNSPEC):
-            server = await asyncio.start_server(self._client, port=PORT, reuse_port=True, limit=LIMIT, family=family)
+            server = await asyncio.start_server(self._client, port=PORT, reuse_port=True, limit=_COMMON_PAGESIZE, family=family)
             for so in server.sockets:
                 so.setsockopt(socket.SOL_TCP, socket.TCP_DEFER_ACCEPT, True)
             async with server:
@@ -62,7 +63,7 @@ class Listener:
 
         try:
             open_start = time.perf_counter()
-            pr, pw = await asyncio.open_connection(host=dst[0], port=dst[1], limit=LIMIT)
+            pr, pw = await asyncio.open_connection(host=dst[0], port=dst[1], limit=_COMMON_PAGESIZE)
             open_delay = time.perf_counter() - open_start
         except:
             try:
@@ -118,9 +119,9 @@ class Connector:
         try:
             s: socket.socket = self._w.get_extra_info("socket")
             s.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, True)
-            self._w.transport.set_write_buffer_limits(LIMIT)
+            self._w.transport.set_write_buffer_limits(_COMMON_PAGESIZE)
             async with asyncio.timeout(TIMEOUT):
-                while data := await self._r.read(LIMIT):
+                while data := await self._r.read(_COMMON_PAGESIZE):
                     self._w.write(memoryview(data))
                     await self._w.drain()
             self._r.feed_eof()
@@ -154,7 +155,7 @@ if __name__ == "__main__":
         workers = len(os.sched_getaffinity(0))
     except:
         workers = os.cpu_count() or 1
-    logging.debug(f"{PORT=}, {TIMEOUT=}, {LIMIT=}, {workers=}")
+    logging.debug(f"{PORT=}, {TIMEOUT=}, {workers=}")
     with ProcessPoolExecutor(workers) as pex:
         listeners = [Listener(pid) for pid in range(workers)]
         pf = [pex.submit(l.run) for l in listeners]
