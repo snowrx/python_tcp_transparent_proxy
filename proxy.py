@@ -118,10 +118,9 @@ class Connector:
         try:
             s: socket.socket = self._w.get_extra_info("socket")
             s.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, True)
-            mss = s.getsockopt(socket.SOL_TCP, socket.TCP_MAXSEG)
             self._w.transport.set_write_buffer_limits(LIMIT)
             async with asyncio.timeout(TIMEOUT):
-                while data := await self._r.read(mss):
+                while data := await self._r.read(LIMIT):
                     self._w.write(memoryview(data))
                     await self._w.drain()
             self._r.feed_eof()
