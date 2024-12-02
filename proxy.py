@@ -8,6 +8,7 @@ import time
 
 PORT = 8081
 TIMEOUT = 86400
+CHUNK_SIZE = 2**18
 
 
 class Listener:
@@ -26,7 +27,7 @@ class Listener:
 
     def run(self):
         async def _server(family=socket.AF_UNSPEC):
-            server = await asyncio.start_server(self._client, port=PORT, reuse_port=True, family=family)
+            server = await asyncio.start_server(self._client, port=PORT, reuse_port=True, limit=CHUNK_SIZE, family=family)
             for so in server.sockets:
                 so.setsockopt(socket.SOL_TCP, socket.TCP_DEFER_ACCEPT, True)
             async with server:
@@ -61,7 +62,7 @@ class Listener:
 
         try:
             open_start = time.perf_counter()
-            pr, pw = await asyncio.open_connection(host=dst[0], port=dst[1])
+            pr, pw = await asyncio.open_connection(host=dst[0], port=dst[1], limit=CHUNK_SIZE)
             open_delay = time.perf_counter() - open_start
         except:
             try:
@@ -117,10 +118,9 @@ class Connector:
         try:
             s: socket.socket = self._w.get_extra_info("socket")
             s.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, True)
-            mss = s.getsockopt(socket.SOL_TCP, socket.TCP_MAXSEG)
-            logging.debug(f"[{self._pid}:{self._cid}:{self._fid}] {mss=}")
+            self._w.transport.set_write_buffer_limits(low=CHUNK_SIZE)
             async with asyncio.timeout(TIMEOUT):
-                while data := await self._r.read(mss):
+                while data := await self._r.read(CHUNK_SIZE):
                     self._w.write(memoryview(data))
                     await self._w.drain()
             self._r.feed_eof()
@@ -154,7 +154,7 @@ if __name__ == "__main__":
         workers = len(os.sched_getaffinity(0))
     except:
         workers = os.cpu_count() or 1
-    logging.debug(f"{PORT=}, {TIMEOUT=}, {workers=}")
+    logging.debug(f"{PORT=}, {TIMEOUT=}, {CHUNK_SIZE=}, {workers=}")
     with ProcessPoolExecutor(workers) as pex:
         listeners = [Listener(pid) for pid in range(workers)]
         pf = [pex.submit(l.run) for l in listeners]
