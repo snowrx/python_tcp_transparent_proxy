@@ -10,6 +10,8 @@ PORT = 8081
 TIMEOUT = 86400
 CHUNK_SIZE = 2**18
 
+_FAMILY = [socket.AF_INET, socket.AF_INET6]
+
 
 class Listener:
     _SO_ORIGINAL_DST = 80
@@ -17,17 +19,18 @@ class Listener:
     _V4_LEN = 16
     _V6_LEN = 28
     _CID_ROTATE = 1000000
-    _FAMILY = [socket.AF_INET, socket.AF_INET6]
 
+    _family = socket.AF_UNSPEC
     _pid = 0
     _cid = 0
 
-    def __init__(self, pid: int):
+    def __init__(self, pid: int, family=socket.AF_UNSPEC):
         self._pid = pid
+        self._family = family
 
     def run(self):
-        async def _server(family=socket.AF_UNSPEC):
-            server = await asyncio.start_server(self._client, port=PORT, reuse_port=True, limit=CHUNK_SIZE, family=family)
+        async def _server():
+            server = await asyncio.start_server(self._client, port=PORT, reuse_port=True, limit=CHUNK_SIZE, family=self._family)
             for so in server.sockets:
                 so.setsockopt(socket.SOL_TCP, socket.TCP_DEFER_ACCEPT, True)
             async with server:
@@ -35,11 +38,7 @@ class Listener:
             for t in asyncio.all_tasks():
                 t.cancel()
 
-        def _run_thread(family=socket.AF_UNSPEC):
-            asyncio.run(_server(family))
-
-        with ThreadPoolExecutor(len(self._FAMILY)) as tex:
-            tex.map(_run_thread, self._FAMILY)
+        asyncio.run(_server())
 
     async def _client(self, cr: asyncio.StreamReader, cw: asyncio.StreamWriter):
         cid = self._cid
@@ -150,11 +149,8 @@ class Connector:
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.DEBUG)
-    try:
-        workers = len(os.sched_getaffinity(0))
-    except:
-        workers = os.cpu_count() or 1
+    workers = os.cpu_count() or 1
     logging.debug(f"{PORT=}, {TIMEOUT=}, {CHUNK_SIZE=}, {workers=}")
-    with ProcessPoolExecutor(workers) as pex:
-        listeners = [Listener(pid) for pid in range(workers)]
-        pf = [pex.submit(l.run) for l in listeners]
+    with ProcessPoolExecutor(workers * len(_FAMILY)) as ex:
+        l = [Listener(pid, family) for pid in range(workers) for family in _FAMILY]
+        h = [ex.submit(p.run) for p in l]
