@@ -149,8 +149,13 @@ class Connector:
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.DEBUG)
-    workers = os.cpu_count() or 1
+    # workers = os.cpu_count() or 1
+    # logging.debug(f"{PORT=}, {TIMEOUT=}, {CHUNK_SIZE=}, {workers=}")
+    # with ProcessPoolExecutor(workers * len(_FAMILY)) as ex:
+    #     l = [Listener(pid, family) for pid in range(workers) for family in _FAMILY]
+    #     h = [ex.submit(p.run) for p in l]
+    workers = len(_FAMILY)
     logging.debug(f"{PORT=}, {TIMEOUT=}, {CHUNK_SIZE=}, {workers=}")
-    with ProcessPoolExecutor(workers * len(_FAMILY)) as ex:
-        l = [Listener(pid, family) for pid in range(workers) for family in _FAMILY]
+    with ProcessPoolExecutor(workers) as ex:
+        l = [Listener(pid, _FAMILY[pid]) for pid in range(workers)]
         h = [ex.submit(p.run) for p in l]
