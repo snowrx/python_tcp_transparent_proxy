@@ -1,16 +1,15 @@
-from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
+from concurrent.futures import ProcessPoolExecutor
 import asyncio
 import logging
-import os
 import socket
 import struct
 import time
 
+_COMMON_PAGESIZE = 2**12
+_FAMILY = [socket.AF_INET, socket.AF_INET6]
+
 PORT = 8081
 TIMEOUT = 86400
-CHUNK_SIZE = 2**18
-
-_FAMILY = [socket.AF_INET, socket.AF_INET6]
 
 
 class Listener:
@@ -30,7 +29,7 @@ class Listener:
 
     def run(self):
         async def _server():
-            server = await asyncio.start_server(self._client, port=PORT, reuse_port=True, limit=CHUNK_SIZE, family=self._family)
+            server = await asyncio.start_server(self._client, port=PORT, reuse_port=True, family=self._family)
             for so in server.sockets:
                 so.setsockopt(socket.SOL_TCP, socket.TCP_DEFER_ACCEPT, True)
             async with server:
@@ -61,7 +60,7 @@ class Listener:
 
         try:
             open_start = time.perf_counter()
-            pr, pw = await asyncio.open_connection(host=dst[0], port=dst[1], limit=CHUNK_SIZE)
+            pr, pw = await asyncio.open_connection(host=dst[0], port=dst[1])
             open_delay = time.perf_counter() - open_start
         except:
             try:
@@ -117,9 +116,8 @@ class Connector:
         try:
             s: socket.socket = self._w.get_extra_info("socket")
             s.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, True)
-            self._w.transport.set_write_buffer_limits(CHUNK_SIZE)
             async with asyncio.timeout(TIMEOUT):
-                while data := await self._r.read(CHUNK_SIZE):
+                while data := await self._r.read(_COMMON_PAGESIZE):
                     self._w.write(memoryview(data))
                     await self._w.drain()
             self._r.feed_eof()
@@ -149,13 +147,8 @@ class Connector:
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.DEBUG)
-    # workers = os.cpu_count() or 1
-    # logging.debug(f"{PORT=}, {TIMEOUT=}, {CHUNK_SIZE=}, {workers=}")
-    # with ProcessPoolExecutor(workers * len(_FAMILY)) as ex:
-    #     l = [Listener(pid, family) for pid in range(workers) for family in _FAMILY]
-    #     h = [ex.submit(p.run) for p in l]
     workers = len(_FAMILY)
-    logging.debug(f"{PORT=}, {TIMEOUT=}, {CHUNK_SIZE=}, {workers=}")
+    logging.debug(f"{PORT=}, {TIMEOUT=}, {workers=}")
     with ProcessPoolExecutor(workers) as ex:
         l = [Listener(pid, _FAMILY[pid]) for pid in range(workers)]
         h = [ex.submit(p.run) for p in l]
