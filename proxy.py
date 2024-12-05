@@ -5,7 +5,6 @@ import socket
 import struct
 import time
 
-_COMMON_PAGESIZE = 2**12
 _FAMILY = [socket.AF_INET, socket.AF_INET6]
 
 PORT = 8081
@@ -116,8 +115,9 @@ class Connector:
         try:
             s: socket.socket = self._w.get_extra_info("socket")
             s.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, True)
+            mss = s.getsockopt(socket.SOL_TCP, socket.TCP_MAXSEG)
             async with asyncio.timeout(TIMEOUT):
-                while data := await self._r.read(_COMMON_PAGESIZE):
+                while data := await self._r.read(mss):
                     self._w.write(memoryview(data))
                     await self._w.drain()
             self._r.feed_eof()
