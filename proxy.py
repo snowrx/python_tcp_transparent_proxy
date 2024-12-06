@@ -116,6 +116,7 @@ class Connector:
             s: socket.socket = self._w.get_extra_info("socket")
             s.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, True)
             mss = s.getsockopt(socket.SOL_TCP, socket.TCP_MAXSEG)
+            logging.debug(f"[{self._pid}:{self._cid}:{self._fid}] {mss=}")
             self._w.transport.set_write_buffer_limits(mss)
             async with asyncio.timeout(TIMEOUT):
                 while data := await self._r.read(mss):
