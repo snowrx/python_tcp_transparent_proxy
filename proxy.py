@@ -8,6 +8,7 @@ import time
 
 PORT = 8081
 TIMEOUT = 86400
+WORKER = 2
 
 
 class Listener:
@@ -144,7 +145,6 @@ class Connector:
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.DEBUG)
-    workers = os.cpu_count() or 1
-    logging.debug(f"{PORT=}, {TIMEOUT=}, {workers=}")
-    with ProcessPoolExecutor(workers) as ex:
-        ex.map(Listener().run, range(workers))
+    logging.debug(f"{PORT=}, {TIMEOUT=}, {WORKER=}")
+    with ProcessPoolExecutor(WORKER) as ex:
+        ex.map(Listener().run, range(WORKER))
