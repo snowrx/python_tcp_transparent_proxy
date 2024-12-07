@@ -1,11 +1,10 @@
 from concurrent.futures import ProcessPoolExecutor
 import asyncio
 import logging
+import os
 import socket
 import struct
 import time
-
-_FAMILY = [socket.AF_INET, socket.AF_INET6]
 
 PORT = 8081
 TIMEOUT = 86400
@@ -18,17 +17,12 @@ class Listener:
     _V6_LEN = 28
     _CID_ROTATE = 1000000
 
-    _family = socket.AF_UNSPEC
     _pid = 0
     _cid = 0
 
-    def __init__(self, pid: int, family=socket.AF_UNSPEC):
-        self._pid = pid
-        self._family = family
-
-    def run(self):
+    def run(self, pid=0):
         async def _server():
-            server = await asyncio.start_server(self._client, port=PORT, reuse_port=True, family=self._family)
+            server = await asyncio.start_server(self._client, port=PORT, reuse_port=True)
             for so in server.sockets:
                 so.setsockopt(socket.SOL_TCP, socket.TCP_DEFER_ACCEPT, True)
             async with server:
@@ -36,11 +30,12 @@ class Listener:
             for t in asyncio.all_tasks():
                 t.cancel()
 
+        self._pid = pid
         asyncio.run(_server())
 
     async def _client(self, cr: asyncio.StreamReader, cw: asyncio.StreamWriter):
         cid = self._cid
-        self._cid = (cid + 1) % self._CID_ROTATE
+        self._cid = (self._cid + 1) % self._CID_ROTATE
         src = cw.get_extra_info("peername")
         srv = cw.get_extra_info("sockname")
         soc = cw.get_extra_info("socket")
@@ -149,8 +144,7 @@ class Connector:
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.DEBUG)
-    workers = len(_FAMILY)
+    workers = os.cpu_count() or 1
     logging.debug(f"{PORT=}, {TIMEOUT=}, {workers=}")
     with ProcessPoolExecutor(workers) as ex:
-        l = [Listener(pid, _FAMILY[pid]) for pid in range(workers)]
-        h = [ex.submit(p.run) for p in l]
+        ex.map(Listener().run, range(workers))
