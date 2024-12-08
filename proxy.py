@@ -107,20 +107,24 @@ class Connector:
 
     async def proxy(self):
         code = 0
+        flow_id = f"{self._pid}:{self._cid}:{self._fid}"
         try:
             s: socket.socket = self._w.get_extra_info("socket")
             s.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, True)
             mss = s.getsockopt(socket.SOL_TCP, socket.TCP_MAXSEG)
-            logging.debug(f"[{self._pid}:{self._cid}:{self._fid}] {mss=}")
+            logging.debug(f"[{flow_id}] {mss=}")
             self._w.transport.set_write_buffer_limits(mss)
             async with asyncio.timeout(TIMEOUT):
                 while data := await self._r.read(mss):
+                    if Misc.rescheduling_hint == flow_id:
+                        await asyncio.sleep(0)
+                    Misc.rescheduling_hint = flow_id
                     self._w.write(memoryview(data))
                     await self._w.drain()
             self._r.feed_eof()
-            logging.debug(f"[{self._pid}:{self._cid}:{self._fid}] EOF")
+            logging.debug(f"[{flow_id}] EOF")
         except Exception as err:
-            logging.debug(f"[{self._pid}:{self._cid}:{self._fid}] error in loop: {err=}")
+            logging.debug(f"[{flow_id}] error in loop: {err=}")
             code |= 0b1
         finally:
             # before wait
@@ -140,6 +144,10 @@ class Connector:
                 except:
                     code |= 0b100
         return code
+
+
+class Misc:
+    rescheduling_hint = ""
 
 
 if __name__ == "__main__":
