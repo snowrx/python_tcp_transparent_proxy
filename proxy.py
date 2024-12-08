@@ -1,7 +1,6 @@
 from concurrent.futures import ProcessPoolExecutor
 import asyncio
 import logging
-import os
 import socket
 import struct
 import time
