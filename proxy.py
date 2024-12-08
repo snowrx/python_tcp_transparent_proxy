@@ -24,7 +24,7 @@ class Listener:
 
     def run(self, pid=0):
         async def _server():
-            server = await asyncio.start_server(self._client, port=PORT, reuse_port=True)
+            server = await asyncio.start_server(self._client, port=PORT, reuse_port=True, backlog=1)
             for so in server.sockets:
                 so.setsockopt(socket.SOL_TCP, socket.TCP_DEFER_ACCEPT, True)
             async with server:
