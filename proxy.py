@@ -5,6 +5,8 @@ import socket
 import struct
 import time
 
+_CHUNK_SIZE = 1200
+
 PORT = 8081
 TIMEOUT = 86400
 WORKER = 2
@@ -111,14 +113,9 @@ class Connector:
         try:
             s: socket.socket = self._w.get_extra_info("socket")
             s.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, True)
-            mss = s.getsockopt(socket.SOL_TCP, socket.TCP_MAXSEG)
-            logging.debug(f"[{flow_id}] {mss=}")
-            self._w.transport.set_write_buffer_limits(mss)
             async with asyncio.timeout(TIMEOUT):
-                while data := await self._r.read(mss):
-                    if Misc.rescheduling_hint == flow_id:
-                        await asyncio.sleep(0)
-                    Misc.rescheduling_hint = flow_id
+                while data := await self._r.read(_CHUNK_SIZE):
+                    await asyncio.sleep(0)
                     self._w.write(memoryview(data))
                     await self._w.drain()
             self._r.feed_eof()
@@ -144,10 +141,6 @@ class Connector:
                 except:
                     code |= 0b100
         return code
-
-
-class Misc:
-    rescheduling_hint = ""
 
 
 if __name__ == "__main__":
