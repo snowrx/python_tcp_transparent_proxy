@@ -5,7 +5,7 @@ import socket
 import struct
 import time
 
-_CHUNK_SIZE = 2**14
+_CHUNK_SIZE = 1200
 
 PORT = 8081
 TIMEOUT = 86400
