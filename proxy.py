@@ -6,6 +6,7 @@ import struct
 import time
 
 _CHUNK_SIZE = 2**14
+_PACING_THRESHOLD = 5 << 8
 
 PORT = 8081
 TIMEOUT = 86400
@@ -114,6 +115,7 @@ class Connector:
             s: socket.socket = self._w.get_extra_info("socket")
             s.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, True)
             s.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, struct.pack("ii", 1, 10))
+            self._w.transport.set_write_buffer_limits(_PACING_THRESHOLD)
             async with asyncio.timeout(TIMEOUT):
                 while data := await self._r.read(_CHUNK_SIZE):
                     await asyncio.sleep(0)
