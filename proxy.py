@@ -114,11 +114,9 @@ class Connector:
         try:
             s: socket.socket = self._w.get_extra_info("socket")
             s.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, True)
-            s.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, struct.pack("ii", 1, 10))
             self._w.transport.set_write_buffer_limits(_PACING_THRESHOLD)
             async with asyncio.timeout(TIMEOUT):
                 while data := await self._r.read(_CHUNK_SIZE):
-                    await asyncio.sleep(0)
                     self._w.write(memoryview(data))
                     await self._w.drain()
             self._r.feed_eof()
