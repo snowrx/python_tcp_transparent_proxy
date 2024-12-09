@@ -9,7 +9,7 @@ _CHUNK_SIZE = 2**14
 
 PORT = 8081
 TIMEOUT = 86400
-WORKER = 2
+WORKER = 4
 
 
 class Listener:
