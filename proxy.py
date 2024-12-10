@@ -5,7 +5,8 @@ import socket
 import struct
 import time
 
-_CHUNK_SIZE = 1200
+_CHUNK_SIZE = 2**14
+_WRITE_BUFFER_LIMIT = 2**23
 
 PORT = 8081
 TIMEOUT = 86400
@@ -113,6 +114,7 @@ class Connector:
         try:
             s: socket.socket = self._w.get_extra_info("socket")
             s.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, True)
+            self._w.transport.set_write_buffer_limits(_WRITE_BUFFER_LIMIT)
             async with asyncio.timeout(TIMEOUT):
                 while data := await self._r.read(_CHUNK_SIZE):
                     self._w.write(memoryview(data))
