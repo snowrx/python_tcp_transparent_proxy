@@ -5,9 +5,6 @@ import socket
 import struct
 import time
 
-_CHUNK_SIZE = 2**14
-_WRITE_BUFFER_LIMIT = 2**23
-
 PORT = 8081
 TIMEOUT = 86400
 WORKER = 4
@@ -25,7 +22,7 @@ class Listener:
 
     def run(self, pid=0):
         async def _server():
-            server = await asyncio.start_server(self._client, port=PORT, reuse_port=True, backlog=1)
+            server = await asyncio.start_server(self._client, port=PORT, reuse_port=True)
             for so in server.sockets:
                 so.setsockopt(socket.SOL_TCP, socket.TCP_DEFER_ACCEPT, True)
             async with server:
@@ -114,9 +111,9 @@ class Connector:
         try:
             s: socket.socket = self._w.get_extra_info("socket")
             s.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, True)
-            self._w.transport.set_write_buffer_limits(_WRITE_BUFFER_LIMIT)
+            mss = s.getsockopt(socket.SOL_TCP, socket.TCP_MAXSEG)
             async with asyncio.timeout(TIMEOUT):
-                while data := await self._r.read(_CHUNK_SIZE):
+                while data := await self._r.read(mss):
                     self._w.write(memoryview(data))
                     await self._w.drain()
             self._r.feed_eof()
