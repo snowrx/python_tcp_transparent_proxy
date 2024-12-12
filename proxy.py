@@ -19,6 +19,8 @@ class Listener:
 
     _pid = 0
     _cid = 0
+    _established = 0
+    _lock = asyncio.Lock()
 
     def run(self, pid=0):
         async def _server():
@@ -34,8 +36,9 @@ class Listener:
         asyncio.run(_server())
 
     async def _client(self, cr: asyncio.StreamReader, cw: asyncio.StreamWriter):
-        cid = self._cid
-        self._cid = (self._cid + 1) % self._CID_ROTATE
+        async with self._lock:
+            cid = self._cid
+            self._cid = (self._cid + 1) % self._CID_ROTATE
         src = cw.get_extra_info("peername")
         srv = cw.get_extra_info("sockname")
         soc = cw.get_extra_info("socket")
@@ -67,6 +70,9 @@ class Listener:
             return
 
         logging.info(f"[{self._pid}:{cid}] Open proxy in {src[0]}@{src[1]} <> {dst[0]}@{dst[1]} ({round(open_delay * 1000)}ms)")
+        async with self._lock:
+            self._established += 1
+            logging.debug(f"[{self._pid}] established={self._established}")
         barrier = asyncio.Barrier(2)
         lc = Connector(self._pid, cid, 0, barrier, cr, pw)
         pc = Connector(self._pid, cid, 1, barrier, pr, cw)
@@ -76,6 +82,9 @@ class Listener:
             r1 = tg.create_task(pc.proxy())
         proxy_duration = time.perf_counter() - proxy_start
         logging.info(f"[{self._pid}:{cid}] Close proxy in {src[0]}@{src[1]} ({r0.result()}) <> {dst[0]}@{dst[1]} ({r1.result()}) in {round(proxy_duration)}s")
+        async with self._lock:
+            self._established -= 1
+            logging.debug(f"[{self._pid}] established={self._established}")
 
     def _get_original_dst(self, so: socket.socket, is_ipv4=True):
         if is_ipv4:
@@ -112,6 +121,7 @@ class Connector:
             s: socket.socket = self._w.get_extra_info("socket")
             s.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, True)
             mss = s.getsockopt(socket.SOL_TCP, socket.TCP_MAXSEG)
+            self._w.transport.set_write_buffer_limits(mss)
             async with asyncio.timeout(TIMEOUT):
                 while data := await self._r.read(mss):
                     self._w.write(memoryview(data))
