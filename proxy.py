@@ -21,8 +21,6 @@ class Listener:
 
     _pid = 0
     _cid = 0
-    _established = 0
-    _lock = asyncio.Lock()
 
     def run(self, pid=0):
         async def _server():
@@ -36,9 +34,8 @@ class Listener:
         asyncio.run(_server())
 
     async def _client(self, cr: asyncio.StreamReader, cw: asyncio.StreamWriter):
-        async with self._lock:
-            cid = self._cid
-            self._cid = (self._cid + 1) % self._CID_ROTATE
+        cid = self._cid
+        self._cid = (self._cid + 1) % self._CID_ROTATE
         src = cw.get_extra_info("peername")
         srv = cw.get_extra_info("sockname")
         soc = cw.get_extra_info("socket")
@@ -68,9 +65,6 @@ class Listener:
             return
 
         logging.info(f"[{self._pid}:{cid}] Open proxy {src[0]}@{src[1]} <> {dst[0]}@{dst[1]} ({round(open_delay * 1000)}ms)")
-        async with self._lock:
-            self._established += 1
-            logging.debug(f"[{self._pid}] established={self._established}")
         lc = Connector(self._pid, cid, 0, cr, pw)
         pc = Connector(self._pid, cid, 1, pr, cw)
         proxy_start = time.perf_counter()
@@ -78,9 +72,6 @@ class Listener:
             _ = (tg.create_task(lc.proxy()), tg.create_task(pc.proxy()))
         proxy_duration = time.perf_counter() - proxy_start
         logging.info(f"[{self._pid}:{cid}] Close proxy {src[0]}@{src[1]} <> {dst[0]}@{dst[1]} {round(proxy_duration)}s")
-        async with self._lock:
-            self._established -= 1
-            logging.debug(f"[{self._pid}] established={self._established}")
 
     def _get_original_dst(self, so: socket.socket, is_ipv4=True):
         if is_ipv4:
