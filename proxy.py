@@ -8,6 +8,7 @@ import time
 PORT = 8081
 TIMEOUT = 86400
 WORKER = 4
+CHUNK_SIZE = 2**14
 
 
 class Listener:
@@ -24,7 +25,7 @@ class Listener:
 
     def run(self, pid=0):
         async def _server():
-            server = await asyncio.start_server(self._client, port=PORT, reuse_port=True)
+            server = await asyncio.start_server(self._client, port=PORT, reuse_port=True, limit=CHUNK_SIZE)
             for so in server.sockets:
                 so.setsockopt(socket.SOL_TCP, socket.TCP_DEFER_ACCEPT, True)
             async with server:
@@ -57,7 +58,7 @@ class Listener:
 
         try:
             open_start = time.perf_counter()
-            pr, pw = await asyncio.open_connection(host=dst[0], port=dst[1])
+            pr, pw = await asyncio.open_connection(host=dst[0], port=dst[1], limit=CHUNK_SIZE)
             open_delay = time.perf_counter() - open_start
         except:
             try:
@@ -120,10 +121,9 @@ class Connector:
         try:
             s: socket.socket = self._w.get_extra_info("socket")
             s.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, True)
-            mss = s.getsockopt(socket.SOL_TCP, socket.TCP_MAXSEG)
-            self._w.transport.set_write_buffer_limits(mss)
+            self._w.transport.set_write_buffer_limits(CHUNK_SIZE)
             async with asyncio.timeout(TIMEOUT):
-                while data := await self._r.read(mss):
+                while data := await self._r.read(CHUNK_SIZE):
                     self._w.write(memoryview(data))
                     await self._w.drain()
             self._r.feed_eof()
