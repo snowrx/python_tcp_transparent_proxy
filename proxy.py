@@ -6,7 +6,8 @@ import struct
 import time
 
 PORT = 8081
-TIMEOUT = 86400
+CONNECTION_LIFETIME = 86400
+CLOSE_WAIT = 60
 WORKER = 4
 CHUNK_SIZE = 2**14
 
@@ -120,7 +121,7 @@ class Connector:
             s: socket.socket = self._w.get_extra_info("socket")
             s.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, True)
             self._w.transport.set_write_buffer_limits(CHUNK_SIZE)
-            async with asyncio.timeout(TIMEOUT):
+            async with asyncio.timeout(CONNECTION_LIFETIME):
                 while data := await self._r.read(CHUNK_SIZE):
                     self._w.write(memoryview(data))
                     await self._w.drain()
@@ -138,7 +139,12 @@ class Connector:
                 except:
                     code |= 0b10
             # wait
-            await self._barrier.wait()
+            try:
+                async with asyncio.timeout(CLOSE_WAIT):
+                    await self._barrier.wait()
+            except:
+                await self._barrier.abort()
+                logging.debug(f"[{flow_id}] Barrier broken")
             # after wait
             if not self._w.is_closing():
                 try:
@@ -151,6 +157,6 @@ class Connector:
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.DEBUG)
-    logging.debug(f"{PORT=}, {TIMEOUT=}, {WORKER=}")
+    logging.debug(f"{PORT=}, {CONNECTION_LIFETIME=}, {WORKER=}")
     with ProcessPoolExecutor(WORKER) as ex:
         ex.map(Listener().run, range(WORKER))
