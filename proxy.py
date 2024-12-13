@@ -48,7 +48,6 @@ class Listener:
         if dst[0] == srv[0] and dst[1] == srv[1]:
             logging.error(f"[{self._pid}:{cid}] Blocked direct access from {src[0]}@{src[1]}")
             try:
-                cw.transport.abort()
                 cw.close()
                 await cw.wait_closed()
             except:
@@ -61,27 +60,24 @@ class Listener:
             open_delay = time.perf_counter() - open_start
         except:
             try:
-                cw.transport.abort()
                 cw.close()
                 await cw.wait_closed()
             except:
                 pass
-            logging.warning(f"[{self._pid}:{cid}] Failed proxy in {src[0]}@{src[1]} <> {dst[0]}@{dst[1]}")
+            logging.warning(f"[{self._pid}:{cid}] Failed proxy {src[0]}@{src[1]} <> {dst[0]}@{dst[1]}")
             return
 
-        logging.info(f"[{self._pid}:{cid}] Open proxy in {src[0]}@{src[1]} <> {dst[0]}@{dst[1]} ({round(open_delay * 1000)}ms)")
+        logging.info(f"[{self._pid}:{cid}] Open proxy {src[0]}@{src[1]} <> {dst[0]}@{dst[1]} ({round(open_delay * 1000)}ms)")
         async with self._lock:
             self._established += 1
             logging.debug(f"[{self._pid}] established={self._established}")
-        barrier = asyncio.Barrier(2)
-        lc = Connector(self._pid, cid, 0, barrier, cr, pw)
-        pc = Connector(self._pid, cid, 1, barrier, pr, cw)
+        lc = Connector(self._pid, cid, 0, cr, pw)
+        pc = Connector(self._pid, cid, 1, pr, cw)
         proxy_start = time.perf_counter()
         async with asyncio.TaskGroup() as tg:
-            r0 = tg.create_task(lc.proxy())
-            r1 = tg.create_task(pc.proxy())
+            _ = (tg.create_task(lc.proxy()), tg.create_task(pc.proxy()))
         proxy_duration = time.perf_counter() - proxy_start
-        logging.info(f"[{self._pid}:{cid}] Close proxy in {src[0]}@{src[1]} ({r0.result()}) <> {dst[0]}@{dst[1]} ({r1.result()}) in {round(proxy_duration)}s")
+        logging.info(f"[{self._pid}:{cid}] Close proxy {src[0]}@{src[1]} <> {dst[0]}@{dst[1]} {round(proxy_duration)}s")
         async with self._lock:
             self._established -= 1
             logging.debug(f"[{self._pid}] established={self._established}")
@@ -99,24 +95,16 @@ class Listener:
 
 
 class Connector:
-    _pid: int
-    _cid: int
-    _fid: int
-    _barrier: asyncio.Barrier
+    _flow_id: str
     _r: asyncio.StreamReader
     _w: asyncio.StreamWriter
 
-    def __init__(self, pid: int, cid: int, fid: int, barrier: asyncio.Barrier, r: asyncio.StreamReader, w: asyncio.StreamWriter):
-        self._pid = pid
-        self._cid = cid
-        self._fid = fid
-        self._barrier = barrier
+    def __init__(self, pid: int, cid: int, fid: int, r: asyncio.StreamReader, w: asyncio.StreamWriter):
+        self._flow_id = f"{pid}:{cid}:{fid}"
         self._r = r
         self._w = w
 
     async def proxy(self):
-        code = 0
-        flow_id = f"{self._pid}:{self._cid}:{self._fid}"
         try:
             s: socket.socket = self._w.get_extra_info("socket")
             s.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, True)
@@ -125,34 +113,19 @@ class Connector:
                 while data := await self._r.read(CHUNK_SIZE):
                     self._w.write(memoryview(data))
                     await self._w.drain()
+            logging.debug(f"[{self._flow_id}] EOF")
             self._r.feed_eof()
-            logging.debug(f"[{flow_id}] EOF")
+            self._w.write_eof()
+            await self._w.drain()
         except Exception as err:
-            logging.debug(f"[{flow_id}] error in loop: {err=}")
-            code |= 0b1
+            logging.debug(f"[{self._flow_id}] error in loop: {err=}")
         finally:
-            # before wait
-            if not self._w.is_closing():
-                try:
-                    self._w.write_eof()
-                    await self._w.drain()
-                except:
-                    code |= 0b10
-            # wait
-            try:
-                async with asyncio.timeout(CLOSE_WAIT):
-                    await self._barrier.wait()
-            except:
-                await self._barrier.abort()
-                logging.debug(f"[{flow_id}] Barrier broken")
-            # after wait
             if not self._w.is_closing():
                 try:
                     self._w.close()
                     await self._w.wait_closed()
-                except:
-                    code |= 0b100
-        return code
+                except Exception as err:
+                    logging.debug(f"[{self._flow_id}] error in close: {err=}")
 
 
 if __name__ == "__main__":
