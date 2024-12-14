@@ -104,19 +104,20 @@ class Connector:
                 while data := await self._r.read(mss):
                     self._w.write(memoryview(data))
                     await self._w.drain()
-            logging.debug(f"[{self._flow_id}] EOF")
             self._r.feed_eof()
             self._w.write_eof()
             await self._w.drain()
+            logging.debug(f"[{self._flow_id}] EOF")
         except Exception as err:
-            logging.debug(f"[{self._flow_id}] error in loop: {err=}")
+            logging.debug(f"[{self._flow_id}] Error in loop: {err=}")
         finally:
             if not self._w.is_closing():
                 try:
                     self._w.close()
                     await self._w.wait_closed()
+                    logging.debug(f"[{self._flow_id}] Closed")
                 except Exception as err:
-                    logging.debug(f"[{self._flow_id}] error in close: {err=}")
+                    logging.debug(f"[{self._flow_id}] Error in close: {err=}")
 
 
 if __name__ == "__main__":
