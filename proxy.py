@@ -53,7 +53,7 @@ class Listener:
         try:
             open_start = time.perf_counter()
             pr, pw = await asyncio.open_connection(host=dst[0], port=dst[1])
-            open_delay = time.perf_counter() - open_start
+            rtt = round((time.perf_counter() - open_start) * 1000)
         except:
             try:
                 cw.close()
@@ -63,14 +63,14 @@ class Listener:
             logging.warning(f"[{self._pid}:{cid}] Failed proxy {src[0]}@{src[1]} <> {dst[0]}@{dst[1]}")
             return
 
-        logging.info(f"[{self._pid}:{cid}] Established proxy {src[0]}@{src[1]} <> {dst[0]}@{dst[1]} ({round(open_delay * 1000)}ms)")
+        logging.info(f"[{self._pid}:{cid}] Established proxy {src[0]}@{src[1]} <> {dst[0]}@{dst[1]} ({rtt=}ms)")
         lc = Connector(self._pid, cid, 0, cr, pw)
         pc = Connector(self._pid, cid, 1, pr, cw)
         proxy_start = time.perf_counter()
         async with asyncio.TaskGroup() as tg:
             _ = (tg.create_task(lc.proxy()), tg.create_task(pc.proxy()))
-        proxy_duration = time.perf_counter() - proxy_start
-        logging.info(f"[{self._pid}:{cid}] Closed proxy {src[0]}@{src[1]} <> {dst[0]}@{dst[1]} {round(proxy_duration)}s")
+        proxy_duration = round(time.perf_counter() - proxy_start)
+        logging.info(f"[{self._pid}:{cid}] Closed proxy {src[0]}@{src[1]} <> {dst[0]}@{dst[1]} {proxy_duration=}s")
 
     def _get_original_dst(self, so: socket.socket, is_ipv4=True):
         if is_ipv4:
