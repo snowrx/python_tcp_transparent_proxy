@@ -33,6 +33,7 @@ class Listener:
         asyncio.run(_server())
 
     async def _client(self, cr: asyncio.StreamReader, cw: asyncio.StreamWriter):
+        prepare_start = time.perf_counter()
         cid = self._cid
         self._cid = (self._cid + 1) % self._CID_ROTATE
         src = cw.get_extra_info("peername")
@@ -51,9 +52,7 @@ class Listener:
             return
 
         try:
-            open_start = time.perf_counter()
             pr, pw = await asyncio.open_connection(host=dst[0], port=dst[1])
-            rtt = round((time.perf_counter() - open_start) * 1000)
         except:
             try:
                 cw.close()
@@ -63,15 +62,17 @@ class Listener:
             logging.warning(f"[{self._pid}:{cid}] Failed proxy {src[0]}@{src[1]} <> {dst[0]}@{dst[1]}")
             return
 
-        logging.info(f"[{self._pid}:{cid}] Established proxy {src[0]}@{src[1]} <> {dst[0]}@{dst[1]} ({rtt=}ms)")
         barrier = asyncio.Barrier(2)
         lc = Connector(self._pid, cid, 0, barrier, cr, pw)
         pc = Connector(self._pid, cid, 1, barrier, pr, cw)
+        prepare_time = round((time.perf_counter() - prepare_start) * 1000)
+        logging.info(f"[{self._pid}:{cid}] Established proxy {src[0]}@{src[1]} <> {dst[0]}@{dst[1]} ({prepare_time=}ms)")
+
         proxy_start = time.perf_counter()
         async with asyncio.TaskGroup() as tg:
             _ = (tg.create_task(lc.proxy()), tg.create_task(pc.proxy()))
-        proxy_duration = round(time.perf_counter() - proxy_start)
-        logging.info(f"[{self._pid}:{cid}] Closed proxy {src[0]}@{src[1]} <> {dst[0]}@{dst[1]} {proxy_duration=}s")
+        proxy_time = round(time.perf_counter() - proxy_start)
+        logging.info(f"[{self._pid}:{cid}] Closed proxy {src[0]}@{src[1]} <> {dst[0]}@{dst[1]} {proxy_time=}s")
 
     def _get_original_dst(self, so: socket.socket, is_ipv4=True):
         if is_ipv4:
