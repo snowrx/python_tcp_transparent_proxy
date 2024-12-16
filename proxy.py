@@ -64,8 +64,9 @@ class Listener:
             return
 
         logging.info(f"[{self._pid}:{cid}] Established proxy {src[0]}@{src[1]} <> {dst[0]}@{dst[1]} ({rtt=}ms)")
-        lc = Connector(self._pid, cid, 0, cr, pw)
-        pc = Connector(self._pid, cid, 1, pr, cw)
+        barrier = asyncio.Barrier(2)
+        lc = Connector(self._pid, cid, 0, barrier, cr, pw)
+        pc = Connector(self._pid, cid, 1, barrier, pr, cw)
         proxy_start = time.perf_counter()
         async with asyncio.TaskGroup() as tg:
             _ = (tg.create_task(lc.proxy()), tg.create_task(pc.proxy()))
@@ -88,9 +89,11 @@ class Connector:
     _flow_id: str
     _r: asyncio.StreamReader
     _w: asyncio.StreamWriter
+    _barrier: asyncio.Barrier
 
-    def __init__(self, pid: int, cid: int, fid: int, r: asyncio.StreamReader, w: asyncio.StreamWriter):
+    def __init__(self, pid: int, cid: int, fid: int, barrier: asyncio.Barrier, r: asyncio.StreamReader, w: asyncio.StreamWriter):
         self._flow_id = f"{pid}:{cid}:{fid}"
+        self._barrier = barrier
         self._r = r
         self._w = w
 
@@ -111,6 +114,7 @@ class Connector:
         except Exception as err:
             logging.debug(f"[{self._flow_id}] Error in loop: {err=}")
         finally:
+            await self._barrier.wait()
             if not self._w.is_closing():
                 try:
                     self._w.close()
