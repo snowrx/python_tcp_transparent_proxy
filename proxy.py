@@ -7,8 +7,8 @@ import time
 
 PORT = 8081
 LIFETIME = 86400
-CLOSE_WAIT = 60
 WORKER = 4
+LIMIT = 2**18
 
 
 class Listener:
@@ -23,7 +23,7 @@ class Listener:
 
     def run(self, pid=0):
         async def _server():
-            server = await asyncio.start_server(self._client, port=PORT, reuse_port=True)
+            server = await asyncio.start_server(self._client, port=PORT, reuse_port=True, limit=LIMIT)
             async with server:
                 await server.serve_forever()
             for t in asyncio.all_tasks():
@@ -52,7 +52,7 @@ class Listener:
             return
 
         try:
-            pr, pw = await asyncio.open_connection(host=dst[0], port=dst[1])
+            pr, pw = await asyncio.open_connection(host=dst[0], port=dst[1], limit=LIMIT)
         except:
             try:
                 cw.close()
@@ -102,10 +102,9 @@ class Connector:
         try:
             s: socket.socket = self._w.get_extra_info("socket")
             s.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, True)
-            mss = s.getsockopt(socket.SOL_TCP, socket.TCP_MAXSEG)
-            self._w.transport.set_write_buffer_limits(mss)
+            self._w.transport.set_write_buffer_limits(LIMIT)
             async with asyncio.timeout(LIFETIME):
-                while data := await self._r.read(mss):
+                while data := await self._r.read(LIMIT):
                     self._w.write(memoryview(data))
                     await self._w.drain()
             self._r.feed_eof()
@@ -127,6 +126,6 @@ class Connector:
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.DEBUG)
-    logging.debug(f"{PORT=}, {LIFETIME=}, {WORKER=}")
+    logging.debug(f"{PORT=}, {LIFETIME=}, {WORKER=}, {LIMIT=}")
     with ProcessPoolExecutor(WORKER) as ex:
         ex.map(Listener().run, range(WORKER))
