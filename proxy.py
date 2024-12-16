@@ -9,6 +9,7 @@ PORT = 8081
 LIFETIME = 86400
 WORKER = 4
 LIMIT = 2**18
+WRITE_LIMIT = 2**23
 
 
 class Listener:
@@ -102,7 +103,7 @@ class Connector:
         try:
             s: socket.socket = self._w.get_extra_info("socket")
             s.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, True)
-            self._w.transport.set_write_buffer_limits(LIMIT)
+            self._w.transport.set_write_buffer_limits(WRITE_LIMIT)
             async with asyncio.timeout(LIFETIME):
                 while data := await self._r.read(LIMIT):
                     self._w.write(memoryview(data))
