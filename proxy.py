@@ -7,7 +7,7 @@ import time
 
 PORT = 8081
 LIFETIME = 86400
-WORKER = 4
+WORKER = 1
 LIMIT = 2**18
 WRITE_LIMIT = 2**23
 
@@ -128,5 +128,8 @@ class Connector:
 if __name__ == "__main__":
     logging.basicConfig(level=logging.DEBUG)
     logging.debug(f"{PORT=}, {LIFETIME=}, {WORKER=}, {LIMIT=}")
-    with ProcessPoolExecutor(WORKER) as ex:
-        ex.map(Listener().run, range(WORKER))
+    if WORKER > 1:
+        with ProcessPoolExecutor(WORKER) as ex:
+            ex.map(Listener().run, range(WORKER))
+    else:
+        Listener().run()
