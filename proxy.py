@@ -73,7 +73,7 @@ class Listener:
         async with asyncio.TaskGroup() as tg:
             _ = (tg.create_task(lc.proxy()), tg.create_task(pc.proxy()))
         proxy_time = round(time.perf_counter() - proxy_start)
-        logging.info(f"[{self._pid}:{cid}] Closed proxy {src[0]}@{src[1]} <> {dst[0]}@{dst[1]} {proxy_time=}s")
+        logging.info(f"[{self._pid}:{cid}] Closed proxy {src[0]}@{src[1]} <> {dst[0]}@{dst[1]} ({proxy_time=}s)")
 
     def _get_original_dst(self, so: socket.socket, is_ipv4=True):
         if is_ipv4:
