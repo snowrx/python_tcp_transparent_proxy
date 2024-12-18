@@ -7,8 +7,9 @@ import time
 
 PORT = 8081
 LIFETIME = 86400
-WORKER = 1
+CLOSE_WAIT = 60
 LIMIT = 2**18
+FAMILY = [socket.AF_INET, socket.AF_INET6]
 
 
 class Listener:
@@ -21,9 +22,9 @@ class Listener:
     _pid = 0
     _cid = 0
 
-    def run(self, pid=0):
+    def run(self, pid=0, family=socket.AF_UNSPEC):
         async def _server():
-            server = await asyncio.start_server(self._client, port=PORT, reuse_port=True, limit=LIMIT)
+            server = await asyncio.start_server(self._client, port=PORT, reuse_port=True, limit=LIMIT, family=family)
             async with server:
                 await server.serve_forever()
             for t in asyncio.all_tasks():
@@ -114,7 +115,12 @@ class Connector:
         except Exception as err:
             logging.debug(f"[{self._flow_id}] Error in loop: {err=}")
         finally:
-            await self._barrier.wait()
+            try:
+                async with asyncio.timeout(CLOSE_WAIT):
+                    await self._barrier.wait()
+            except:
+                await self._barrier.abort()
+                logging.debug(f"[{self._flow_id}] Barrier broken")
             if not self._w.is_closing():
                 try:
                     self._w.close()
@@ -126,9 +132,6 @@ class Connector:
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.DEBUG)
-    logging.debug(f"{PORT=}, {LIFETIME=}, {WORKER=}, {LIMIT=}")
-    if WORKER > 1:
-        with ProcessPoolExecutor(WORKER) as ex:
-            ex.map(Listener().run, range(WORKER))
-    else:
-        Listener().run()
+    logging.debug(f"{PORT=}, {LIFETIME=}, {LIMIT=}")
+    with ProcessPoolExecutor(len(FAMILY)) as ex:
+        h = [ex.submit(Listener().run, pid, FAMILY[pid]) for pid in range(len(FAMILY))]
