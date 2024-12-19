@@ -109,11 +109,12 @@ class Connector:
 
             async with asyncio.timeout(CLOSE_WAIT):
                 await self._barrier.wait()
-            await writer_close(self._w)
 
         except Exception as err:
             logging.debug(f"[{self._flow_id}] Error in loop: {err=}")
             await self._barrier.abort()
+
+        finally:
             await writer_close(self._w)
 
         logging.debug(f"[{self._flow_id}] Closed")
