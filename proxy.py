@@ -102,10 +102,10 @@ class Connector:
                     self._w.write(memoryview(data))
                     await self._w.drain()
 
+            logging.debug(f"[{self._flow_id}] EOF")
             self._r.feed_eof()
             self._w.write_eof()
             await self._w.drain()
-            logging.debug(f"[{self._flow_id}] EOF")
 
             async with asyncio.timeout(CLOSE_WAIT):
                 await self._barrier.wait()
