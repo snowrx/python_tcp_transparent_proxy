@@ -45,22 +45,14 @@ class Listener:
 
         if dst[0] == srv[0] and dst[1] == srv[1]:
             logging.error(f"[{self._pid}:{cid}] Blocked direct access from {src[0]}@{src[1]}")
-            try:
-                cw.close()
-                await cw.wait_closed()
-            except:
-                pass
+            await writer_close(cw)
             return
 
         try:
             pr, pw = await asyncio.open_connection(host=dst[0], port=dst[1], limit=LIMIT)
         except:
-            try:
-                cw.close()
-                await cw.wait_closed()
-            except:
-                pass
             logging.warning(f"[{self._pid}:{cid}] Failed proxy {src[0]}@{src[1]} <> {dst[0]}@{dst[1]}")
+            await writer_close(cw)
             return
 
         barrier = asyncio.Barrier(2)
@@ -104,30 +96,36 @@ class Connector:
             s: socket.socket = self._w.get_extra_info("socket")
             s.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, True)
             self._w.transport.set_write_buffer_limits(LIMIT)
+
             async with asyncio.timeout(LIFETIME):
                 while data := await self._r.read(LIMIT):
                     self._w.write(memoryview(data))
                     await self._w.drain()
+
             self._r.feed_eof()
             self._w.write_eof()
             await self._w.drain()
             logging.debug(f"[{self._flow_id}] EOF")
+
+            async with asyncio.timeout(CLOSE_WAIT):
+                await self._barrier.wait()
+            await writer_close(self._w)
+
         except Exception as err:
             logging.debug(f"[{self._flow_id}] Error in loop: {err=}")
-        finally:
-            try:
-                async with asyncio.timeout(CLOSE_WAIT):
-                    await self._barrier.wait()
-            except:
-                await self._barrier.abort()
-                logging.debug(f"[{self._flow_id}] Barrier broken")
-            if not self._w.is_closing():
-                try:
-                    self._w.close()
-                    await self._w.wait_closed()
-                    logging.debug(f"[{self._flow_id}] Closed")
-                except Exception as err:
-                    logging.debug(f"[{self._flow_id}] Error in close: {err=}")
+            await self._barrier.abort()
+            await writer_close(self._w)
+
+        logging.debug(f"[{self._flow_id}] Closed")
+
+
+async def writer_close(writer: asyncio.StreamWriter):
+    try:
+        if not writer.is_closing():
+            writer.close()
+            await writer.wait_closed()
+    except Exception as err:
+        logging.debug(f"Error in close: {err=}")
 
 
 if __name__ == "__main__":
