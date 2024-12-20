@@ -103,7 +103,7 @@ class Connector:
                     await self._w.drain()
                     write_time = round((time.perf_counter() - write_start) * 1000)
                     if write_time > 100:
-                        logging.warning(f"[{self._flow_id}] Slow write {write_time=}ms")
+                        logging.warning(f"[{self._flow_id}] Slow write {write_time=}ms {len(data)=}")
 
             logging.debug(f"[{self._flow_id}] EOF")
             self._w.write_eof()
