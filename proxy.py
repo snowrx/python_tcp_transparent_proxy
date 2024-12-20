@@ -105,9 +105,9 @@ class Connector:
                         logging.warning(f"[{self._flow_id}] Slow write {write_time=}ms")
 
             logging.debug(f"[{self._flow_id}] EOF")
-            self._r.feed_eof()
             self._w.write_eof()
             await self._w.drain()
+            self._r.feed_eof()
 
         except Exception as err:
             logging.debug(f"[{self._flow_id}] Error in loop: {err=}")
