@@ -56,9 +56,8 @@ class Listener:
             await writer_close(cw)
             return
 
-        barrier = asyncio.Barrier(2)
-        reader = Connector(self._pid, cid, flow_dir.R, barrier, pr, cw)
-        writer = Connector(self._pid, cid, flow_dir.W, barrier, cr, pw)
+        reader = Connector(self._pid, cid, flow_dir.R, pr, cw)
+        writer = Connector(self._pid, cid, flow_dir.W, cr, pw)
         prepare_time = round((time.perf_counter() - prepare_start) * 1000)
         logging.info(f"[{self._pid}:{cid}] Established proxy {src[0]}@{src[1]} <> {dst[0]}@{dst[1]} ({prepare_time=}ms)")
 
@@ -84,11 +83,9 @@ class Connector:
     _flow_id: str
     _r: asyncio.StreamReader
     _w: asyncio.StreamWriter
-    _barrier: asyncio.Barrier
 
-    def __init__(self, pid: int, cid: int, fid: int, barrier: asyncio.Barrier, r: asyncio.StreamReader, w: asyncio.StreamWriter):
+    def __init__(self, pid: int, cid: int, fid: int, r: asyncio.StreamReader, w: asyncio.StreamWriter):
         self._flow_id = f"{pid}:{cid}:{flow_dir(fid).name}"
-        self._barrier = barrier
         self._r = r
         self._w = w
 
@@ -112,12 +109,8 @@ class Connector:
             self._w.write_eof()
             await self._w.drain()
 
-            async with asyncio.timeout(CLOSE_WAIT):
-                await self._barrier.wait()
-
         except Exception as err:
             logging.debug(f"[{self._flow_id}] Error in loop: {err=}")
-            await self._barrier.abort()
 
         finally:
             await writer_close(self._w)
