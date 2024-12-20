@@ -9,7 +9,6 @@ import time
 PORT = 8081
 LIFETIME = 86400
 CLOSE_WAIT = 60
-LIMIT = 2**18
 FAMILY = [socket.AF_INET, socket.AF_INET6]
 
 
@@ -25,7 +24,7 @@ class Listener:
 
     def run(self, pid=0, family=socket.AF_UNSPEC):
         async def _server():
-            server = await asyncio.start_server(self._client, port=PORT, reuse_port=True, limit=LIMIT, family=family)
+            server = await asyncio.start_server(self._client, port=PORT, reuse_port=True, family=family)
             async with server:
                 await server.serve_forever()
             for t in asyncio.all_tasks():
@@ -50,7 +49,7 @@ class Listener:
             return
 
         try:
-            pr, pw = await asyncio.open_connection(host=dst[0], port=dst[1], limit=LIMIT)
+            pr, pw = await asyncio.open_connection(host=dst[0], port=dst[1])
         except:
             logging.warning(f"[{self._pid}:{cid}] Failed proxy {src[0]}@{src[1]} <> {dst[0]}@{dst[1]}")
             await writer_close(cw)
@@ -94,16 +93,17 @@ class Connector:
             s: socket.socket = self._w.get_extra_info("socket")
             s.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, True)
             s.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, struct.pack("ii", 1, CLOSE_WAIT))
+            mss = s.getsockopt(socket.SOL_TCP, socket.TCP_MAXSEG)
             self._w.transport.set_write_buffer_limits(0)
 
             async with asyncio.timeout(LIFETIME):
-                while data := await self._r.read(LIMIT):
+                while data := await self._r.read(mss):
                     write_start = time.perf_counter()
                     self._w.write(memoryview(data))
                     await self._w.drain()
                     write_time = round((time.perf_counter() - write_start) * 1000)
                     if write_time > 100:
-                        logging.warning(f"[{self._flow_id}] Slow write {write_time=}ms {len(data)=}")
+                        logging.warning(f"[{self._flow_id}] Slow write {write_time=}ms")
 
             logging.debug(f"[{self._flow_id}] EOF")
             self._w.write_eof()
@@ -135,6 +135,6 @@ async def writer_close(writer: asyncio.StreamWriter):
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.DEBUG)
-    logging.debug(f"{PORT=}, {LIFETIME=}, {LIMIT=}")
+    logging.debug(f"{PORT=}, {LIFETIME=}")
     with ProcessPoolExecutor(len(FAMILY)) as ex:
         h = [ex.submit(Listener().run, pid, FAMILY[pid]) for pid in range(len(FAMILY))]
