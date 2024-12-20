@@ -94,7 +94,6 @@ class Connector:
             s.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, True)
             s.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, struct.pack("ii", 1, CLOSE_WAIT))
             mss = s.getsockopt(socket.SOL_TCP, socket.TCP_MAXSEG)
-            self._w.transport.set_write_buffer_limits(0)
 
             async with asyncio.timeout(LIFETIME):
                 while data := await self._r.read(mss):
