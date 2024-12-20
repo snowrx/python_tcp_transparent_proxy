@@ -1,5 +1,6 @@
 from concurrent.futures import ProcessPoolExecutor
 import asyncio
+from enum import IntEnum
 import logging
 import socket
 import struct
@@ -56,14 +57,14 @@ class Listener:
             return
 
         barrier = asyncio.Barrier(2)
-        lc = Connector(self._pid, cid, 0, barrier, cr, pw)
-        pc = Connector(self._pid, cid, 1, barrier, pr, cw)
+        reader = Connector(self._pid, cid, flow_dir.IN, barrier, pr, cw)
+        writer = Connector(self._pid, cid, flow_dir.OUT, barrier, cr, pw)
         prepare_time = round((time.perf_counter() - prepare_start) * 1000)
         logging.info(f"[{self._pid}:{cid}] Established proxy {src[0]}@{src[1]} <> {dst[0]}@{dst[1]} ({prepare_time=}ms)")
 
         proxy_start = time.perf_counter()
         async with asyncio.TaskGroup() as tg:
-            _ = (tg.create_task(lc.proxy()), tg.create_task(pc.proxy()))
+            _ = (tg.create_task(reader.proxy()), tg.create_task(writer.proxy()))
         proxy_time = round(time.perf_counter() - proxy_start)
         logging.info(f"[{self._pid}:{cid}] Closed proxy {src[0]}@{src[1]} <> {dst[0]}@{dst[1]} ({proxy_time=}s)")
 
@@ -86,7 +87,7 @@ class Connector:
     _barrier: asyncio.Barrier
 
     def __init__(self, pid: int, cid: int, fid: int, barrier: asyncio.Barrier, r: asyncio.StreamReader, w: asyncio.StreamWriter):
-        self._flow_id = f"{pid}:{cid}:{fid}"
+        self._flow_id = f"{pid}:{cid}:{flow_dir(fid).name}"
         self._barrier = barrier
         self._r = r
         self._w = w
@@ -95,12 +96,16 @@ class Connector:
         try:
             s: socket.socket = self._w.get_extra_info("socket")
             s.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, True)
-            self._w.transport.set_write_buffer_limits(LIMIT)
+            self._w.transport.set_write_buffer_limits(0)
 
             async with asyncio.timeout(LIFETIME):
                 while data := await self._r.read(LIMIT):
+                    write_start = time.perf_counter()
                     self._w.write(memoryview(data))
                     await self._w.drain()
+                    write_time = round((time.perf_counter() - write_start) * 1000)
+                    if write_time > 100:
+                        logging.warning(f"[{self._flow_id}] Slow write {write_time=}ms")
 
             logging.debug(f"[{self._flow_id}] EOF")
             self._r.feed_eof()
@@ -118,6 +123,11 @@ class Connector:
             await writer_close(self._w)
 
         logging.debug(f"[{self._flow_id}] Closed")
+
+
+class flow_dir(IntEnum):
+    IN = 0
+    OUT = 1
 
 
 async def writer_close(writer: asyncio.StreamWriter):
