@@ -1,6 +1,6 @@
 from concurrent.futures import ProcessPoolExecutor
-import asyncio
 from enum import IntEnum
+import asyncio
 import logging
 import socket
 import struct
@@ -57,8 +57,8 @@ class Listener:
             return
 
         barrier = asyncio.Barrier(2)
-        reader = Connector(self._pid, cid, flow_dir.IN, barrier, pr, cw)
-        writer = Connector(self._pid, cid, flow_dir.OUT, barrier, cr, pw)
+        reader = Connector(self._pid, cid, flow_dir.R, barrier, pr, cw)
+        writer = Connector(self._pid, cid, flow_dir.W, barrier, cr, pw)
         prepare_time = round((time.perf_counter() - prepare_start) * 1000)
         logging.info(f"[{self._pid}:{cid}] Established proxy {src[0]}@{src[1]} <> {dst[0]}@{dst[1]} ({prepare_time=}ms)")
 
@@ -126,8 +126,8 @@ class Connector:
 
 
 class flow_dir(IntEnum):
-    IN = 0
-    OUT = 1
+    R = 0
+    W = 1
 
 
 async def writer_close(writer: asyncio.StreamWriter):
