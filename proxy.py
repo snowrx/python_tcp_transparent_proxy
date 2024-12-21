@@ -8,8 +8,7 @@ import time
 
 PORT = 8081
 LIFETIME = 86400
-CLOSE_WAIT = 60
-FAMILY = [socket.AF_INET, socket.AF_INET6]
+WORKERS = 4
 
 
 class Listener:
@@ -22,9 +21,9 @@ class Listener:
     _pid = 0
     _cid = 0
 
-    def run(self, pid=0, family=socket.AF_UNSPEC):
+    def run(self, pid=0):
         async def _server():
-            server = await asyncio.start_server(self._client, port=PORT, reuse_port=True, family=family)
+            server = await asyncio.start_server(self._client, port=PORT, reuse_port=True)
             async with server:
                 await server.serve_forever()
             for t in asyncio.all_tasks():
@@ -92,7 +91,6 @@ class Connector:
         try:
             s: socket.socket = self._w.get_extra_info("socket")
             s.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, True)
-            s.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, struct.pack("ii", 1, CLOSE_WAIT))
             mss = s.getsockopt(socket.SOL_TCP, socket.TCP_MAXSEG)
             self._w.transport.set_write_buffer_limits(mss)
             logging.debug(f"[{self._flow_id}] {mss=}")
@@ -136,6 +134,6 @@ async def writer_close(writer: asyncio.StreamWriter):
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.DEBUG)
-    logging.debug(f"{PORT=}, {LIFETIME=}")
-    with ProcessPoolExecutor(len(FAMILY)) as ex:
-        h = [ex.submit(Listener().run, pid, FAMILY[pid]) for pid in range(len(FAMILY))]
+    logging.debug(f"{PORT=}, {LIFETIME=}, {WORKERS=}")
+    with ProcessPoolExecutor(WORKERS) as executor:
+        executor.map(Listener().run, range(WORKERS))
