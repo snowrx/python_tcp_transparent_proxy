@@ -88,6 +88,8 @@ class Connector:
         self._w = w
 
     async def proxy(self):
+        total_bytes = 0
+
         try:
             s: socket.socket = self._w.get_extra_info("socket")
             s.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, True)
@@ -99,6 +101,7 @@ class Connector:
                 while data := await self._r.read(mss):
                     write_start = time.perf_counter()
                     self._w.write(memoryview(data))
+                    total_bytes += len(data)
                     await self._w.drain()
                     write_time = round((time.perf_counter() - write_start) * 1000)
                     if write_time > 100:
@@ -115,7 +118,7 @@ class Connector:
         finally:
             await writer_close(self._w)
 
-        logging.debug(f"[{self._flow_id}] Closed")
+        logging.debug(f"[{self._flow_id}] Closed {total_bytes=}")
 
 
 class flow_dir(IntEnum):
