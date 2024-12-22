@@ -1,5 +1,4 @@
 from concurrent.futures import ProcessPoolExecutor
-from enum import IntEnum
 import asyncio
 import logging
 import socket
@@ -9,6 +8,7 @@ import time
 PORT = 8081
 LIFETIME = 86400
 WORKERS = 4
+CHUNK_SIZE = 2**14
 
 
 class Listener:
@@ -31,7 +31,6 @@ class Listener:
         asyncio.run(_server())
 
     async def _client(self, cr: asyncio.StreamReader, cw: asyncio.StreamWriter):
-        prepare_start = time.perf_counter()
         src = cw.get_extra_info("peername")
         srv = cw.get_extra_info("sockname")
         soc = cw.get_extra_info("socket")
@@ -41,27 +40,26 @@ class Listener:
         r_label = f"{dst[0]}@{dst[1]} -> {src[0]}@{src[1]}"
 
         if dst[0] == srv[0] and dst[1] == srv[1]:
-            logging.warning(f"[{self._pid}] {w_label} Blocked loopback")
+            logging.warning(f"[{self._pid}] Blocked {w_label}")
             await writer_close(cw)
             return
 
         try:
             pr, pw = await asyncio.open_connection(host=dst[0], port=dst[1])
         except:
-            logging.warning(f"[{self._pid}] {w_label} Connection failed")
+            logging.warning(f"[{self._pid}] Connection Failed {w_label}")
             await writer_close(cw)
             return
 
         reader = Connector(self._pid, r_label, pr, cw)
         writer = Connector(self._pid, w_label, cr, pw)
-        prepare_time = round((time.perf_counter() - prepare_start) * 1000)
-        logging.info(f"[{self._pid}] {w_label} Established {prepare_time=}ms")
+        logging.info(f"[{self._pid}] Established {w_label}")
 
         proxy_start = time.perf_counter()
         async with asyncio.TaskGroup() as tg:
             _ = (tg.create_task(reader.proxy()), tg.create_task(writer.proxy()))
         proxy_time = round(time.perf_counter() - proxy_start)
-        logging.info(f"[{self._pid}] {w_label} Closed {proxy_time=}s")
+        logging.info(f"[{self._pid}] Closed {w_label} {proxy_time=}")
 
     def _get_original_dst(self, so: socket.socket, is_ipv4=True):
         if is_ipv4:
@@ -93,32 +91,30 @@ class Connector:
         try:
             s: socket.socket = self._w.get_extra_info("socket")
             s.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, True)
-            mss = s.getsockopt(socket.SOL_TCP, socket.TCP_MAXSEG)
-            self._w.transport.set_write_buffer_limits(mss)
-            logging.debug(f"[{self._pid}] {self._label} {mss=}")
+            self._w.transport.set_write_buffer_limits(0)
 
             async with asyncio.timeout(LIFETIME):
-                while data := await self._r.read(mss):
+                while data := await self._r.read(CHUNK_SIZE):
                     write_start = time.perf_counter()
                     self._w.write(memoryview(data))
                     total_bytes += len(data)
                     await self._w.drain()
-                    write_time = round((time.perf_counter() - write_start) * 1000)
-                    if write_time > 100:
-                        logging.warning(f"[{self._pid}] {self._label} Slow write {write_time=}ms")
+                    write_time = round((time.perf_counter() - write_start) * 1000000) / 1000
+                    if write_time > 10:
+                        logging.debug(f"[{self._pid}] Slow Write {self._label} {write_time=}ms")
 
-            logging.debug(f"[{self._pid}] {self._label} EOF")
+            logging.debug(f"[{self._pid}] EOF {self._label}")
             self._w.write_eof()
             await self._w.drain()
             self._r.feed_eof()
 
         except Exception as err:
-            logging.debug(f"[{self._pid}] {self._label} Error: {err=}")
+            logging.debug(f"[{self._pid}] Error {self._label} {err=}")
 
         finally:
             await writer_close(self._w)
 
-        logging.debug(f"[{self._pid}] {self._label} Closed {total_bytes=}")
+        logging.debug(f"[{self._pid}] Closed {self._label} {total_bytes=}")
 
 
 async def writer_close(writer: asyncio.StreamWriter):
@@ -127,11 +123,11 @@ async def writer_close(writer: asyncio.StreamWriter):
             writer.close()
             await writer.wait_closed()
     except Exception as err:
-        logging.debug(f"Error in close: {err=}")
+        logging.debug(f"Error {err=}")
 
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.DEBUG)
-    logging.debug(f"{PORT=}, {LIFETIME=}, {WORKERS=}")
+    logging.debug(f"Start {PORT=}")
     with ProcessPoolExecutor(WORKERS) as executor:
         executor.map(Listener().run, range(WORKERS))
