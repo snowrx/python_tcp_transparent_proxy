@@ -5,6 +5,7 @@ import socket
 import struct
 import time
 
+
 PORT = 8081
 LIFETIME = 86400
 WORKERS = 4
@@ -36,8 +37,8 @@ class Listener:
         soc = cw.get_extra_info("socket")
         is_ipv4 = "." in src[0]
         dst = self._get_original_dst(soc, is_ipv4)
-        w_label = f"{src[0]}@{src[1]} -> {dst[0]}@{dst[1]}"
-        r_label = f"{dst[0]}@{dst[1]} -> {src[0]}@{src[1]}"
+        w_label = f"{src[0]}@{src[1]} > {dst[0]}@{dst[1]}"
+        r_label = f"{dst[0]}@{dst[1]} > {src[0]}@{src[1]}"
 
         if dst[0] == srv[0] and dst[1] == srv[1]:
             logging.warning(f"[{self._pid}] Blocked {w_label}")
@@ -47,19 +48,20 @@ class Listener:
         try:
             pr, pw = await asyncio.open_connection(host=dst[0], port=dst[1])
         except:
-            logging.warning(f"[{self._pid}] Connection Failed {w_label}")
+            logging.warning(f"[{self._pid}] Connection failed {w_label}")
             await writer_close(cw)
             return
 
-        reader = Connector(self._pid, r_label, pr, cw)
-        writer = Connector(self._pid, w_label, cr, pw)
+        barrier = asyncio.Barrier(2)
+        writer = Connector(self._pid, w_label, cr, pw, barrier)
+        reader = Connector(self._pid, r_label, pr, cw, barrier)
         logging.info(f"[{self._pid}] Established {w_label}")
 
         proxy_start = time.perf_counter()
         async with asyncio.TaskGroup() as tg:
-            _ = (tg.create_task(reader.proxy()), tg.create_task(writer.proxy()))
+            _ = (tg.create_task(writer.proxy()), tg.create_task(reader.proxy()))
         proxy_time = round(time.perf_counter() - proxy_start)
-        logging.info(f"[{self._pid}] Closed {w_label} {proxy_time=}s")
+        logging.info(f"[{self._pid}] Closed {w_label} {proxy_time}s")
 
     def _get_original_dst(self, so: socket.socket, is_ipv4=True):
         if is_ipv4:
@@ -78,12 +80,14 @@ class Connector:
     _label: str
     _r: asyncio.StreamReader
     _w: asyncio.StreamWriter
+    _barrier: asyncio.Barrier
 
-    def __init__(self, pid: int, label: str, r: asyncio.StreamReader, w: asyncio.StreamWriter):
+    def __init__(self, pid: int, label: str, r: asyncio.StreamReader, w: asyncio.StreamWriter, barrier: asyncio.Barrier):
         self._pid = pid
         self._label = label
         self._r = r
         self._w = w
+        self._barrier = barrier
 
     async def proxy(self):
         total_bytes = 0
@@ -99,22 +103,24 @@ class Connector:
                     self._w.write(memoryview(data))
                     total_bytes += len(data)
                     await self._w.drain()
-                    write_time = round((time.perf_counter() - write_start) * 1000000) / 1000
+                    write_time = round((time.perf_counter() - write_start) * 1000)
                     if write_time > 10:
-                        logging.debug(f"[{self._pid}] Slow Write {self._label} {write_time=}ms")
+                        logging.debug(f"[{self._pid}] Slow write {self._label} {write_time}ms")
 
             logging.debug(f"[{self._pid}] EOF {self._label}")
             self._w.write_eof()
             await self._w.drain()
             self._r.feed_eof()
+            await self._barrier.wait()
 
         except Exception as err:
-            logging.debug(f"[{self._pid}] Error {self._label} {err=}")
+            logging.debug(f"[{self._pid}] Error {self._label} {err}")
+            await self._barrier.abort()
 
         finally:
             await writer_close(self._w)
 
-        logging.debug(f"[{self._pid}] Closed {self._label} {total_bytes=}")
+        logging.debug(f"[{self._pid}] Closed {self._label} {round(total_bytes / 1024)}KB")
 
 
 async def writer_close(writer: asyncio.StreamWriter):
@@ -123,7 +129,7 @@ async def writer_close(writer: asyncio.StreamWriter):
             writer.close()
             await writer.wait_closed()
     except Exception as err:
-        logging.debug(f"Error {err=}")
+        logging.debug(f"Error {err}")
 
 
 if __name__ == "__main__":
