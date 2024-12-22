@@ -10,7 +10,6 @@ PORT = 8081
 LIFETIME = 86400
 WORKERS = 4
 CHUNK_SIZE = 2**14
-WRITE_BUFFER_LIMIT = 2**10
 
 
 class Listener:
@@ -91,22 +90,14 @@ class Connector:
         self._barrier = barrier
 
     async def proxy(self):
-        total_bytes = 0
-
         try:
             s: socket.socket = self._w.get_extra_info("socket")
             s.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, True)
-            self._w.transport.set_write_buffer_limits(WRITE_BUFFER_LIMIT)
 
             async with asyncio.timeout(LIFETIME):
                 while data := await self._r.read(CHUNK_SIZE):
-                    write_start = time.perf_counter()
                     self._w.write(memoryview(data))
-                    total_bytes += len(data)
                     await self._w.drain()
-                    write_time = round((time.perf_counter() - write_start) * 1000)
-                    if write_time > 100:
-                        logging.warning(f"[{self._pid}] Slow write {self._label} {write_time}ms")
 
             logging.debug(f"[{self._pid}] EOF {self._label}")
             self._w.write_eof()
@@ -121,15 +112,7 @@ class Connector:
         finally:
             await writer_close(self._w)
 
-        with_unit = f"{total_bytes}B"
-        if total_bytes > 1024:
-            with_unit = f"{round(total_bytes / 1024)}KB"
-        if total_bytes > 1024**2:
-            with_unit = f"{round(total_bytes / 1024**2)}MB"
-        if total_bytes > 1024**3:
-            with_unit = f"{round(total_bytes / 1024**3)}GB"
-
-        logging.debug(f"[{self._pid}] Closed {self._label} {with_unit}")
+        logging.debug(f"[{self._pid}] Closed {self._label}")
 
 
 async def writer_close(writer: asyncio.StreamWriter):
