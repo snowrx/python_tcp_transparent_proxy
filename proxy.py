@@ -16,10 +16,8 @@ class Listener:
     _SOL_IPV6 = 41
     _V4_LEN = 16
     _V6_LEN = 28
-    _CID_ROTATE = 1000000
 
     _pid = 0
-    _cid = 0
 
     def run(self, pid=0):
         async def _server():
@@ -34,36 +32,36 @@ class Listener:
 
     async def _client(self, cr: asyncio.StreamReader, cw: asyncio.StreamWriter):
         prepare_start = time.perf_counter()
-        cid = self._cid
-        self._cid = (self._cid + 1) % self._CID_ROTATE
         src = cw.get_extra_info("peername")
         srv = cw.get_extra_info("sockname")
         soc = cw.get_extra_info("socket")
         is_ipv4 = "." in src[0]
         dst = self._get_original_dst(soc, is_ipv4)
+        w_label = f"{src[0]}@{src[1]}->{dst[0]}@{dst[1]}"
+        r_label = f"{dst[0]}@{dst[1]}->{src[0]}@{src[1]}"
 
         if dst[0] == srv[0] and dst[1] == srv[1]:
-            logging.error(f"[{self._pid}:{cid}] Blocked direct access from {src[0]}@{src[1]}")
+            logging.warning(f"[{self._pid}] {w_label} Blocked loopback")
             await writer_close(cw)
             return
 
         try:
             pr, pw = await asyncio.open_connection(host=dst[0], port=dst[1])
         except:
-            logging.warning(f"[{self._pid}:{cid}] Failed proxy {src[0]}@{src[1]} <> {dst[0]}@{dst[1]}")
+            logging.warning(f"[{self._pid}] {w_label} Connection failed")
             await writer_close(cw)
             return
 
-        reader = Connector(self._pid, cid, flow_dir.R, pr, cw)
-        writer = Connector(self._pid, cid, flow_dir.W, cr, pw)
+        reader = Connector(self._pid, r_label, pr, cw)
+        writer = Connector(self._pid, w_label, cr, pw)
         prepare_time = round((time.perf_counter() - prepare_start) * 1000)
-        logging.info(f"[{self._pid}:{cid}] Established proxy {src[0]}@{src[1]} <> {dst[0]}@{dst[1]} ({prepare_time=}ms)")
+        logging.info(f"[{self._pid}] {w_label} Established {prepare_time=}ms")
 
         proxy_start = time.perf_counter()
         async with asyncio.TaskGroup() as tg:
             _ = (tg.create_task(reader.proxy()), tg.create_task(writer.proxy()))
         proxy_time = round(time.perf_counter() - proxy_start)
-        logging.info(f"[{self._pid}:{cid}] Closed proxy {src[0]}@{src[1]} <> {dst[0]}@{dst[1]} ({proxy_time=}s)")
+        logging.info(f"[{self._pid}] {w_label} Closed {proxy_time=}s")
 
     def _get_original_dst(self, so: socket.socket, is_ipv4=True):
         if is_ipv4:
@@ -78,12 +76,14 @@ class Listener:
 
 
 class Connector:
-    _flow_id: str
+    _pid: int
+    _label: str
     _r: asyncio.StreamReader
     _w: asyncio.StreamWriter
 
-    def __init__(self, pid: int, cid: int, fid: int, r: asyncio.StreamReader, w: asyncio.StreamWriter):
-        self._flow_id = f"{pid}:{cid}:{flow_dir(fid).name}"
+    def __init__(self, pid: int, label: str, r: asyncio.StreamReader, w: asyncio.StreamWriter):
+        self._pid = pid
+        self._label = label
         self._r = r
         self._w = w
 
@@ -95,7 +95,7 @@ class Connector:
             s.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, True)
             mss = s.getsockopt(socket.SOL_TCP, socket.TCP_MAXSEG)
             self._w.transport.set_write_buffer_limits(mss)
-            logging.debug(f"[{self._flow_id}] {mss=}")
+            logging.debug(f"[{self._pid}] {self._label} {mss=}")
 
             async with asyncio.timeout(LIFETIME):
                 while data := await self._r.read(mss):
@@ -105,25 +105,20 @@ class Connector:
                     await self._w.drain()
                     write_time = round((time.perf_counter() - write_start) * 1000)
                     if write_time > 100:
-                        logging.warning(f"[{self._flow_id}] Slow write {write_time=}ms")
+                        logging.warning(f"[{self._pid}] {self._label} Slow write {write_time=}ms")
 
-            logging.debug(f"[{self._flow_id}] EOF")
+            logging.debug(f"[{self._pid}] {self._label} EOF")
             self._w.write_eof()
             await self._w.drain()
             self._r.feed_eof()
 
         except Exception as err:
-            logging.debug(f"[{self._flow_id}] Error in loop: {err=}")
+            logging.debug(f"[{self._pid}] {self._label} Error: {err=}")
 
         finally:
             await writer_close(self._w)
 
-        logging.debug(f"[{self._flow_id}] Closed {total_bytes=}")
-
-
-class flow_dir(IntEnum):
-    R = 0
-    W = 1
+        logging.debug(f"[{self._pid}] {self._label} Closed {total_bytes=}")
 
 
 async def writer_close(writer: asyncio.StreamWriter):
