@@ -124,9 +124,9 @@ class Connector:
         with_unit = f"{total_bytes}B"
         if total_bytes > 1024:
             with_unit = f"{round(total_bytes / 1024)}KB"
-        elif total_bytes > 1024**2:
+        if total_bytes > 1024**2:
             with_unit = f"{round(total_bytes / 1024**2)}MB"
-        elif total_bytes > 1024**3:
+        if total_bytes > 1024**3:
             with_unit = f"{round(total_bytes / 1024**3)}GB"
 
         logging.debug(f"[{self._pid}] Closed {self._label} {with_unit}")
