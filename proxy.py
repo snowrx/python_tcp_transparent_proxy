@@ -5,11 +5,9 @@ import socket
 import struct
 import time
 
-
 PORT = 8081
 LIFETIME = 86400
 WORKERS = 4
-CHUNK_SIZE = 2**14
 
 
 class Listener:
@@ -93,9 +91,12 @@ class Connector:
         try:
             s: socket.socket = self._w.get_extra_info("socket")
             s.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, True)
+            mss = s.getsockopt(socket.SOL_TCP, socket.TCP_MAXSEG)
+            self._w.transport.set_write_buffer_limits(mss)
 
             async with asyncio.timeout(LIFETIME):
-                while data := await self._r.read(CHUNK_SIZE):
+                while data := await self._r.read(mss):
+                    await asyncio.sleep(0)
                     self._w.write(memoryview(data))
                     await self._w.drain()
 
