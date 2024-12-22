@@ -10,6 +10,7 @@ PORT = 8081
 LIFETIME = 86400
 WORKERS = 4
 CHUNK_SIZE = 2**14
+WRITE_BUFFER_LIMIT = 2**10
 
 
 class Listener:
@@ -38,7 +39,7 @@ class Listener:
         is_ipv4 = "." in src[0]
         dst = self._get_original_dst(soc, is_ipv4)
         w_label = f"{src[0]}@{src[1]} > {dst[0]}@{dst[1]}"
-        r_label = f"{src[0]}@{src[1]} < {dst[0]}@{dst[1]}"
+        r_label = f"{dst[0]}@{dst[1]} > {src[0]}@{src[1]}"
 
         if dst[0] == srv[0] and dst[1] == srv[1]:
             logging.warning(f"[{self._pid}] Blocked {w_label}")
@@ -95,7 +96,7 @@ class Connector:
         try:
             s: socket.socket = self._w.get_extra_info("socket")
             s.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, True)
-            self._w.transport.set_write_buffer_limits(0)
+            self._w.transport.set_write_buffer_limits(WRITE_BUFFER_LIMIT)
 
             async with asyncio.timeout(LIFETIME):
                 while data := await self._r.read(CHUNK_SIZE):
@@ -104,8 +105,8 @@ class Connector:
                     total_bytes += len(data)
                     await self._w.drain()
                     write_time = round((time.perf_counter() - write_start) * 1000)
-                    if write_time > 10:
-                        logging.debug(f"[{self._pid}] Slow write {self._label} {write_time}ms")
+                    if write_time > 100:
+                        logging.warning(f"[{self._pid}] Slow write {self._label} {write_time}ms")
 
             logging.debug(f"[{self._pid}] EOF {self._label}")
             self._w.write_eof()
