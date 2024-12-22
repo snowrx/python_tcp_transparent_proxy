@@ -38,7 +38,7 @@ class Listener:
         is_ipv4 = "." in src[0]
         dst = self._get_original_dst(soc, is_ipv4)
         w_label = f"{src[0]}@{src[1]} > {dst[0]}@{dst[1]}"
-        r_label = f"{dst[0]}@{dst[1]} > {src[0]}@{src[1]}"
+        r_label = f"{src[0]}@{src[1]} < {dst[0]}@{dst[1]}"
 
         if dst[0] == srv[0] and dst[1] == srv[1]:
             logging.warning(f"[{self._pid}] Blocked {w_label}")
