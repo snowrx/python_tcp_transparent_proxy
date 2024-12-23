@@ -28,7 +28,7 @@ class Listener:
                     s.setsockopt(socket.SOL_TCP, socket.TCP_FASTOPEN, TCP_FASTOPEN)
                     logging.debug(f"[{self._pid}] {TCP_FASTOPEN=}")
                 if TCP_DEFER_ACCEPT:
-                    s.setsockopt(socket.SOL_TCP, socket.TCP_DEFER_ACCEPT, TCP_DEFER_ACCEPT)
+                    s.setsockopt(socket.SOL_TCP, socket.TCP_DEFER_ACCEPT, True)
                     logging.debug(f"[{self._pid}] {TCP_DEFER_ACCEPT=}")
             async with server:
                 await server.serve_forever()
