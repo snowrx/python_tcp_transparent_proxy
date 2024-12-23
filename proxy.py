@@ -8,6 +8,8 @@ import time
 PORT = 8081
 LIFETIME = 86400
 WORKERS = 4
+TCP_FASTOPEN = 10
+TCP_DEFER_ACCEPT = True
 
 
 class Listener:
@@ -21,6 +23,13 @@ class Listener:
     def run(self, pid=0):
         async def _server():
             server = await asyncio.start_server(self._client, port=PORT, reuse_port=True)
+            for s in server.sockets:
+                if TCP_FASTOPEN > 0:
+                    s.setsockopt(socket.SOL_TCP, socket.TCP_FASTOPEN, TCP_FASTOPEN)
+                    logging.debug(f"[{self._pid}] {TCP_FASTOPEN=}")
+                if TCP_DEFER_ACCEPT:
+                    s.setsockopt(socket.SOL_TCP, socket.TCP_DEFER_ACCEPT, TCP_DEFER_ACCEPT)
+                    logging.debug(f"[{self._pid}] {TCP_DEFER_ACCEPT=}")
             async with server:
                 await server.serve_forever()
             for t in asyncio.all_tasks():
