@@ -60,13 +60,13 @@ class Listener:
             return
 
         barrier = asyncio.Barrier(2)
-        writer = Connector(self._pid, w_label, cr, pw, barrier)
-        reader = Connector(self._pid, r_label, pr, cw, barrier)
+        writer = Channel(self._pid, w_label, cr, pw, barrier)
+        reader = Channel(self._pid, r_label, pr, cw, barrier)
         logging.info(f"[{self._pid}] Established {w_label}")
 
         proxy_start = time.perf_counter()
         async with asyncio.TaskGroup() as tg:
-            _ = (tg.create_task(writer.proxy()), tg.create_task(reader.proxy()))
+            _ = (tg.create_task(writer.run()), tg.create_task(reader.run()))
         proxy_time = round(time.perf_counter() - proxy_start)
         logging.info(f"[{self._pid}] Closed {w_label} {proxy_time}s")
 
@@ -82,7 +82,7 @@ class Listener:
         return ip, port
 
 
-class Connector:
+class Channel:
     _pid: int
     _label: str
     _r: asyncio.StreamReader
@@ -96,11 +96,12 @@ class Connector:
         self._w = w
         self._barrier = barrier
 
-    async def proxy(self):
+    async def run(self):
         try:
             s: socket.socket = self._w.get_extra_info("socket")
             s.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, True)
             mss = s.getsockopt(socket.SOL_TCP, socket.TCP_MAXSEG)
+            self._w.transport.set_write_buffer_limits(mss)
 
             async with asyncio.timeout(LIFETIME):
                 while data := await self._r.read(mss):
@@ -110,12 +111,11 @@ class Connector:
                     write_time = round((time.perf_counter() - write_start) * 1000)
                     if write_time > 100:
                         logging.warning(f"[{self._pid}] Slow write {self._label} {write_time}ms")
-
-            logging.debug(f"[{self._pid}] EOF {self._label}")
-            self._w.write_eof()
-            await self._w.drain()
-            self._r.feed_eof()
-            await self._barrier.wait()
+                logging.debug(f"[{self._pid}] EOF {self._label}")
+                self._w.write_eof()
+                await self._w.drain()
+                self._r.feed_eof()
+                await self._barrier.wait()
 
         except Exception as err:
             logging.debug(f"[{self._pid}] Error {self._label} {err}")
@@ -124,7 +124,7 @@ class Connector:
         finally:
             await writer_close(self._w)
 
-        logging.debug(f"[{self._pid}] Closed {self._label}")
+        logging.debug(f"[{self._pid}] Closed channel {self._label}")
 
 
 async def writer_close(writer: asyncio.StreamWriter):
