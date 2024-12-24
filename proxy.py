@@ -110,7 +110,7 @@ class Channel:
                     self._w.write(memoryview(data))
                     await self._w.drain()
                     write_time = round((time.perf_counter() - write_start) * 1000)
-                    if write_time:
+                    if write_time > 100:
                         logging.warning(f"[{self._pid}] Slow write {self._label} {write_time}ms")
                 logging.debug(f"[{self._pid}] EOF {self._label}")
                 self._w.write_eof()
