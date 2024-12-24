@@ -7,9 +7,8 @@ import time
 
 PORT = 8081
 LIFETIME = 86400
-WORKERS = 4
-TCP_FASTOPEN = 10
-TCP_DEFER_ACCEPT = True
+WORKERS = 1
+TCP_FASTOPEN = 1
 
 
 class Listener:
@@ -23,19 +22,21 @@ class Listener:
     def run(self, pid=0):
         async def _server():
             server = await asyncio.start_server(self._client, port=PORT, reuse_port=True)
-            for s in server.sockets:
-                if TCP_FASTOPEN > 0:
-                    s.setsockopt(socket.SOL_TCP, socket.TCP_FASTOPEN, TCP_FASTOPEN)
-                    logging.debug(f"[{self._pid}] {TCP_FASTOPEN=}")
-                if TCP_DEFER_ACCEPT:
-                    s.setsockopt(socket.SOL_TCP, socket.TCP_DEFER_ACCEPT, True)
-                    logging.debug(f"[{self._pid}] {TCP_DEFER_ACCEPT=}")
+            if TCP_FASTOPEN > 0:
+                for s in server.sockets:
+                    try:
+                        s.setsockopt(socket.SOL_TCP, socket.TCP_FASTOPEN, TCP_FASTOPEN)
+                        s.setsockopt(socket.SOL_TCP, socket.TCP_DEFER_ACCEPT, 1)
+                    except:
+                        logging.warning(f"[{self._pid}] Failed to set TCP_FASTOPEN")
             async with server:
                 await server.serve_forever()
             for t in asyncio.all_tasks():
                 t.cancel()
+                logging.debug(f"[{self._pid}] Cancelled {t.get_name()}")
 
         self._pid = pid
+        logging.info(f"[{self._pid}] Listening {PORT=}")
         asyncio.run(_server())
 
     async def _client(self, cr: asyncio.StreamReader, cw: asyncio.StreamWriter):
@@ -138,6 +139,8 @@ async def writer_close(writer: asyncio.StreamWriter):
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.DEBUG)
-    logging.debug(f"Start {PORT=}")
-    with ProcessPoolExecutor(WORKERS) as executor:
-        executor.map(Listener().run, range(WORKERS))
+    if WORKERS > 1:
+        with ProcessPoolExecutor(WORKERS) as executor:
+            executor.map(Listener().run, range(WORKERS))
+    else:
+        Listener().run()
