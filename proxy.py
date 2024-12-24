@@ -9,6 +9,7 @@ PORT = 8081
 LIFETIME = 86400
 WORKERS = 1
 TCP_FASTOPEN = 1
+MSS = 1280
 
 
 class Listener:
@@ -101,16 +102,15 @@ class Channel:
         try:
             s: socket.socket = self._w.get_extra_info("socket")
             s.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, True)
-            mss = s.getsockopt(socket.SOL_TCP, socket.TCP_MAXSEG)
-            self._w.transport.set_write_buffer_limits(mss)
+            self._w.transport.set_write_buffer_limits(MSS)
 
             async with asyncio.timeout(LIFETIME):
-                while data := await self._r.read(mss):
+                while data := await self._r.read(MSS):
                     write_start = time.perf_counter()
                     self._w.write(memoryview(data))
                     await self._w.drain()
                     write_time = round((time.perf_counter() - write_start) * 1000)
-                    if write_time > 100:
+                    if write_time:
                         logging.warning(f"[{self._pid}] Slow write {self._label} {write_time}ms")
                 logging.debug(f"[{self._pid}] EOF {self._label}")
                 self._w.write_eof()
