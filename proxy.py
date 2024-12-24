@@ -6,9 +6,9 @@ import struct
 import time
 
 PORT = 8081
+BACKLOG = 10
 LIFETIME = 86400
 WORKERS = 1
-TCP_FASTOPEN = 1
 MSS = 1280
 
 
@@ -22,14 +22,10 @@ class Listener:
 
     def run(self, pid=0):
         async def _server():
-            server = await asyncio.start_server(self._client, port=PORT, reuse_port=True)
-            if TCP_FASTOPEN > 0:
-                for s in server.sockets:
-                    try:
-                        s.setsockopt(socket.SOL_TCP, socket.TCP_FASTOPEN, TCP_FASTOPEN)
-                        s.setsockopt(socket.SOL_TCP, socket.TCP_DEFER_ACCEPT, 1)
-                    except:
-                        logging.warning(f"[{self._pid}] Failed to set TCP_FASTOPEN")
+            server = await asyncio.start_server(self._client, port=PORT, reuse_port=True, backlog=BACKLOG)
+            for s in server.sockets:
+                s.setsockopt(socket.SOL_TCP, socket.TCP_FASTOPEN, BACKLOG)
+                s.setsockopt(socket.SOL_TCP, socket.TCP_DEFER_ACCEPT, 1)
             async with server:
                 await server.serve_forever()
             for t in asyncio.all_tasks():
