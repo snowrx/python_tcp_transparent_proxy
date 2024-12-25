@@ -1,4 +1,4 @@
-from concurrent.futures import ProcessPoolExecutor
+from concurrent.futures import ThreadPoolExecutor
 import asyncio
 import logging
 import socket
@@ -6,10 +6,9 @@ import struct
 import time
 
 PORT = 8081
-BACKLOG = 10
 LIFETIME = 86400
-WORKERS = 1
-MSS = 1280
+WORKERS = 4
+LIMIT = 2**18
 
 
 class Listener:
@@ -22,10 +21,7 @@ class Listener:
 
     def run(self, pid=0):
         async def _server():
-            server = await asyncio.start_server(self._client, port=PORT, reuse_port=True, backlog=BACKLOG)
-            for s in server.sockets:
-                s.setsockopt(socket.SOL_TCP, socket.TCP_FASTOPEN, BACKLOG)
-                s.setsockopt(socket.SOL_TCP, socket.TCP_DEFER_ACCEPT, 1)
+            server = await asyncio.start_server(self._client, port=PORT, reuse_port=True, limit=LIMIT)
             async with server:
                 await server.serve_forever()
             for t in asyncio.all_tasks():
@@ -51,7 +47,7 @@ class Listener:
             return
 
         try:
-            pr, pw = await asyncio.open_connection(host=dst[0], port=dst[1])
+            pr, pw = await asyncio.open_connection(host=dst[0], port=dst[1], limit=LIMIT)
         except:
             logging.warning(f"[{self._pid}] Connection failed {w_label}")
             await writer_close(cw)
@@ -98,10 +94,10 @@ class Channel:
         try:
             s: socket.socket = self._w.get_extra_info("socket")
             s.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, True)
-            self._w.transport.set_write_buffer_limits(MSS)
+            self._w.transport.set_write_buffer_limits(LIMIT)
 
             async with asyncio.timeout(LIFETIME):
-                while data := await self._r.read(MSS):
+                while data := await self._r.read(LIMIT):
                     write_start = time.perf_counter()
                     self._w.write(memoryview(data))
                     await self._w.drain()
@@ -133,10 +129,14 @@ async def writer_close(writer: asyncio.StreamWriter):
         logging.debug(f"Error {err}")
 
 
-if __name__ == "__main__":
+def main():
     logging.basicConfig(level=logging.DEBUG)
     if WORKERS > 1:
-        with ProcessPoolExecutor(WORKERS) as executor:
+        with ThreadPoolExecutor(WORKERS) as executor:
             executor.map(Listener().run, range(WORKERS))
     else:
         Listener().run()
+
+
+if __name__ == "__main__":
+    main()
