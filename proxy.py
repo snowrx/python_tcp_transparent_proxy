@@ -1,4 +1,4 @@
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ProcessPoolExecutor
 import asyncio
 import logging
 import socket
@@ -7,7 +7,7 @@ import time
 
 PORT = 8081
 LIFETIME = 86400
-WORKERS = 4
+WORKERS = 1
 READ_LIMIT = 2**18
 WRITE_LIMIT = 2**10
 
@@ -133,7 +133,7 @@ async def writer_close(writer: asyncio.StreamWriter):
 def main():
     logging.basicConfig(level=logging.DEBUG)
     if WORKERS > 1:
-        with ThreadPoolExecutor(WORKERS) as executor:
+        with ProcessPoolExecutor(WORKERS) as executor:
             executor.map(Listener().run, range(WORKERS))
     else:
         Listener().run()
