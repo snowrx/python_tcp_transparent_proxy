@@ -8,7 +8,8 @@ import time
 PORT = 8081
 LIFETIME = 86400
 WORKERS = 4
-LIMIT = 2**18
+READ_LIMIT = 2**18
+WRITE_LIMIT = 2**10
 
 
 class Listener:
@@ -21,7 +22,7 @@ class Listener:
 
     def run(self, pid=0):
         async def _server():
-            server = await asyncio.start_server(self._client, port=PORT, reuse_port=True, limit=LIMIT)
+            server = await asyncio.start_server(self._client, port=PORT, reuse_port=True, limit=READ_LIMIT)
             async with server:
                 await server.serve_forever()
             for t in asyncio.all_tasks():
@@ -47,7 +48,7 @@ class Listener:
             return
 
         try:
-            pr, pw = await asyncio.open_connection(host=dst[0], port=dst[1], limit=LIMIT)
+            pr, pw = await asyncio.open_connection(host=dst[0], port=dst[1], limit=READ_LIMIT)
         except:
             logging.warning(f"[{self._pid}] Connection failed {w_label}")
             await writer_close(cw)
@@ -94,12 +95,12 @@ class Channel:
         try:
             s: socket.socket = self._w.get_extra_info("socket")
             s.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, True)
-            self._w.transport.set_write_buffer_limits(LIMIT)
+            self._w.transport.set_write_buffer_limits(WRITE_LIMIT)
 
             async with asyncio.timeout(LIFETIME):
-                while data := await self._r.read(LIMIT):
+                while data := await self._r.read(READ_LIMIT):
                     write_start = time.perf_counter()
-                    self._w.write(memoryview(data))
+                    self._w.write(data)
                     await self._w.drain()
                     write_time = round((time.perf_counter() - write_start) * 1000)
                     if write_time > 100:
