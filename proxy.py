@@ -48,15 +48,14 @@ class Listener:
             return
 
         try:
-            pr, pw = await asyncio.open_connection(host=dst[0], port=dst[1], limit=READ_LIMIT)
-        except:
-            logging.warning(f"[{self._pid}] Connection failed {w_label}")
+            pr, pw = await asyncio.open_connection(host=dst[0], port=dst[1], limit=READ_LIMIT, local_addr=(srv[0], src[1]))
+        except Exception as err:
+            logging.warning(f"[{self._pid}] Connection failed {w_label} {err=}")
             await writer_close(cw)
             return
 
-        barrier = asyncio.Barrier(2)
-        writer = Channel(self._pid, w_label, cr, pw, barrier)
-        reader = Channel(self._pid, r_label, pr, cw, barrier)
+        writer = Channel(self._pid, w_label, cr, pw)
+        reader = Channel(self._pid, r_label, pr, cw)
         logging.info(f"[{self._pid}] Established {w_label}")
 
         proxy_start = time.perf_counter()
@@ -82,14 +81,12 @@ class Channel:
     _label: str
     _r: asyncio.StreamReader
     _w: asyncio.StreamWriter
-    _barrier: asyncio.Barrier
 
-    def __init__(self, pid: int, label: str, r: asyncio.StreamReader, w: asyncio.StreamWriter, barrier: asyncio.Barrier):
+    def __init__(self, pid: int, label: str, r: asyncio.StreamReader, w: asyncio.StreamWriter):
         self._pid = pid
         self._label = label
         self._r = r
         self._w = w
-        self._barrier = barrier
 
     async def run(self):
         try:
@@ -106,19 +103,16 @@ class Channel:
                     if write_time > 100:
                         logging.warning(f"[{self._pid}] Slow write {self._label} {write_time}ms")
                 logging.debug(f"[{self._pid}] EOF {self._label}")
+                self._r.feed_eof()
                 self._w.write_eof()
                 await self._w.drain()
-                self._r.feed_eof()
-                await self._barrier.wait()
 
         except Exception as err:
             logging.debug(f"[{self._pid}] Error {self._label} {err}")
-            await self._barrier.abort()
 
         finally:
             await writer_close(self._w)
-
-        logging.debug(f"[{self._pid}] Closed channel {self._label}")
+            logging.debug(f"[{self._pid}] Closed channel {self._label}")
 
 
 async def writer_close(writer: asyncio.StreamWriter):
