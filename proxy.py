@@ -49,8 +49,8 @@ class Listener:
 
         try:
             pr, pw = await asyncio.open_connection(host=dst[0], port=dst[1], limit=READ_LIMIT, local_addr=(srv[0], src[1]))
-        except Exception as err:
-            logging.warning(f"[{self._pid}] Connection failed {w_label} {err=}")
+        except:
+            logging.warning(f"[{self._pid}] Connection failed {w_label}")
             await writer_close(cw)
             return
 
@@ -100,8 +100,8 @@ class Channel:
                     self._w.write(data)
                     await self._w.drain()
                     write_time = round((time.perf_counter() - write_start) * 1000)
-                    if write_time > 100:
-                        logging.warning(f"[{self._pid}] Slow write {self._label} {write_time}ms")
+                    if write_time > 10:
+                        logging.debug(f"[{self._pid}] Slow write {self._label} {write_time}ms")
                 logging.debug(f"[{self._pid}] EOF {self._label}")
                 self._r.feed_eof()
                 self._w.write_eof()
