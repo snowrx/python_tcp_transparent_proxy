@@ -19,6 +19,7 @@ class Listener:
     _V6_LEN = 28
 
     _pid = 0
+    _live = 0
 
     def run(self, pid=0):
         async def _server():
@@ -54,15 +55,19 @@ class Listener:
             await writer_close(cw)
             return
 
+        self._live += 1
         writer = Channel(self._pid, w_label, cr, pw)
         reader = Channel(self._pid, r_label, pr, cw)
         logging.info(f"[{self._pid}] Established {w_label}")
+        logging.debug(f"[{self._pid}] live={self._live}")
 
         proxy_start = time.perf_counter()
         async with asyncio.TaskGroup() as tg:
             _ = (tg.create_task(writer.run()), tg.create_task(reader.run()))
         proxy_time = round(time.perf_counter() - proxy_start)
+        self._live -= 1
         logging.info(f"[{self._pid}] Closed {w_label} {proxy_time}s")
+        logging.debug(f"[{self._pid}] live={self._live}")
 
     def _get_original_dst(self, so: socket.socket, is_ipv4=True):
         if is_ipv4:
