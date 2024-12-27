@@ -7,9 +7,9 @@ import time
 
 PORT = 8081
 LIFETIME = 86400
-WORKERS = 1
 READ_LIMIT = 2**18
 WRITE_LIMIT = 2**10
+FAMILY = [socket.AF_INET, socket.AF_INET6]
 
 
 class Listener:
@@ -21,9 +21,9 @@ class Listener:
     _pid = 0
     _live = 0
 
-    def run(self, pid=0):
+    def run(self, pid=0, family=socket.AF_UNSPEC):
         async def _server():
-            server = await asyncio.start_server(self._client, port=PORT, reuse_port=True, limit=READ_LIMIT)
+            server = await asyncio.start_server(self._client, port=PORT, family=family, reuse_port=True, limit=READ_LIMIT)
             async with server:
                 await server.serve_forever()
             for t in asyncio.all_tasks():
@@ -131,11 +131,8 @@ async def writer_close(writer: asyncio.StreamWriter):
 
 def main():
     logging.basicConfig(level=logging.DEBUG)
-    if WORKERS > 1:
-        with ProcessPoolExecutor(WORKERS) as executor:
-            executor.map(Listener().run, range(WORKERS))
-    else:
-        Listener().run()
+    with ProcessPoolExecutor(len(FAMILY)) as executor:
+        _ = [executor.submit(Listener().run, pid, FAMILY[pid]) for pid in range(len(FAMILY))]
 
 
 if __name__ == "__main__":
