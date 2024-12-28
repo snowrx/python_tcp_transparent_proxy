@@ -101,12 +101,13 @@ class Channel:
 
             async with asyncio.timeout(LIFETIME):
                 while data := await self._r.read(CHUNK_SIZE):
+                    await asyncio.sleep(0)
                     write_start = time.perf_counter()
                     self._w.write(data)
                     await self._w.drain()
                     write_time = round((time.perf_counter() - write_start) * 1000)
                     if write_time > 100:
-                        logging.warning(f"[{self._pid}] Slow write {self._label} {write_time}ms")
+                        logging.warning(f"[{self._pid}] Slow write {write_time}ms {self._label}")
                 logging.debug(f"[{self._pid}] EOF {self._label}")
                 self._r.feed_eof()
                 self._w.write_eof()
