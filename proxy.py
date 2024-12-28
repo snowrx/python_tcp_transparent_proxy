@@ -7,8 +7,7 @@ import time
 
 PORT = 8081
 LIFETIME = 86400
-READ_LIMIT = 2**18
-WRITE_LIMIT = 2**10
+CHUNK_SIZE = 2**14
 FAMILY = [socket.AF_INET, socket.AF_INET6]
 
 
@@ -23,7 +22,7 @@ class Listener:
 
     def run(self, pid=0, family=socket.AF_UNSPEC):
         async def _server():
-            server = await asyncio.start_server(self._client, port=PORT, family=family, reuse_port=True, limit=READ_LIMIT)
+            server = await asyncio.start_server(self._client, port=PORT, family=family, reuse_port=True)
             async with server:
                 await server.serve_forever()
             for t in asyncio.all_tasks():
@@ -49,7 +48,7 @@ class Listener:
             return
 
         try:
-            pr, pw = await asyncio.open_connection(host=dst[0], port=dst[1], limit=READ_LIMIT, local_addr=(srv[0], src[1]))
+            pr, pw = await asyncio.open_connection(host=dst[0], port=dst[1], local_addr=(srv[0], src[1]))
         except:
             logging.warning(f"[{self._pid}] Connection failed {w_label}")
             await writer_close(cw)
@@ -97,16 +96,16 @@ class Channel:
         try:
             s: socket.socket = self._w.get_extra_info("socket")
             s.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, True)
-            self._w.transport.set_write_buffer_limits(WRITE_LIMIT)
+            self._w.transport.set_write_buffer_limits(0)
 
             async with asyncio.timeout(LIFETIME):
-                while data := await self._r.read(READ_LIMIT):
+                while data := await self._r.read(CHUNK_SIZE):
                     write_start = time.perf_counter()
                     self._w.write(data)
                     await self._w.drain()
                     write_time = round((time.perf_counter() - write_start) * 1000)
-                    if write_time > 10:
-                        logging.debug(f"[{self._pid}] Slow write {self._label} {write_time}ms")
+                    if write_time > 100:
+                        logging.warning(f"[{self._pid}] Slow write {self._label} {write_time}ms")
                 logging.debug(f"[{self._pid}] EOF {self._label}")
                 self._r.feed_eof()
                 self._w.write_eof()
