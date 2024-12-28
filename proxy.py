@@ -96,7 +96,8 @@ class Channel:
         try:
             s: socket.socket = self._w.get_extra_info("socket")
             s.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, True)
-            self._w.transport.set_write_buffer_limits(0)
+            mss = s.getsockopt(socket.SOL_TCP, socket.TCP_MAXSEG)
+            self._w.transport.set_write_buffer_limits(low=mss)
 
             async with asyncio.timeout(LIFETIME):
                 while data := await self._r.read(CHUNK_SIZE):
