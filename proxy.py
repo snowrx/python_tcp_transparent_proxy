@@ -5,10 +5,10 @@ import socket
 import struct
 import time
 
+FAMILY = [socket.AF_INET, socket.AF_INET6]
 PORT = 8081
 LIFETIME = 86400
-CHUNK_SIZE = 2**14
-FAMILY = [socket.AF_INET, socket.AF_INET6]
+MSS = 1280
 
 
 class Listener:
@@ -63,9 +63,11 @@ class Listener:
         proxy_start = time.perf_counter()
         async with asyncio.TaskGroup() as tg:
             _ = (tg.create_task(writer.run()), tg.create_task(reader.run()))
+        await writer_close(pw)
+        await writer_close(cw)
         proxy_time = round(time.perf_counter() - proxy_start)
         self._live -= 1
-        logging.info(f"[{self._pid}] Closed {w_label} {proxy_time}s")
+        logging.info(f"[{self._pid}] Closed {proxy_time}s {w_label}")
         logging.debug(f"[{self._pid}] live={self._live}")
 
     def _get_original_dst(self, so: socket.socket, is_ipv4=True):
@@ -96,12 +98,10 @@ class Channel:
         try:
             s: socket.socket = self._w.get_extra_info("socket")
             s.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, True)
-            mss = s.getsockopt(socket.SOL_TCP, socket.TCP_MAXSEG)
-            self._w.transport.set_write_buffer_limits(low=mss)
+            self._w.transport.set_write_buffer_limits(MSS)
 
             async with asyncio.timeout(LIFETIME):
-                while data := await self._r.read(CHUNK_SIZE):
-                    await asyncio.sleep(0)
+                while data := await self._r.read(MSS):
                     write_start = time.perf_counter()
                     self._w.write(data)
                     await self._w.drain()
@@ -114,11 +114,7 @@ class Channel:
                 await self._w.drain()
 
         except Exception as err:
-            logging.debug(f"[{self._pid}] Error {self._label} {err}")
-
-        finally:
-            await writer_close(self._w)
-            logging.debug(f"[{self._pid}] Closed channel {self._label}")
+            logging.debug(f"[{self._pid}] Error {err} {self._label}")
 
 
 async def writer_close(writer: asyncio.StreamWriter):
