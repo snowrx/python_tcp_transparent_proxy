@@ -48,7 +48,7 @@ class Listener:
             return
 
         try:
-            pr, pw = await asyncio.open_connection(host=dst[0], port=dst[1], local_addr=(srv[0], src[1]))
+            pr, pw = await asyncio.open_connection(host=dst[0], port=dst[1])
         except:
             logging.warning(f"[{self._pid}] Connection failed {w_label}")
             await writer_close(cw)
@@ -104,6 +104,8 @@ class Channel:
                 while data := await self._r.read(MSS):
                     write_start = time.perf_counter()
                     self._w.write(data)
+                    if wbs := self._w.transport.get_write_buffer_size():
+                        logging.debug(f"[{self._pid}] {wbs=} {self._label}")
                     await self._w.drain()
                     write_time = round((time.perf_counter() - write_start) * 1000)
                     if write_time > 100:
