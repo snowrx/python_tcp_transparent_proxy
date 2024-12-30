@@ -1,11 +1,11 @@
 from concurrent.futures import ProcessPoolExecutor
 import asyncio
 import logging
+import os
 import socket
 import struct
 import time
 
-FAMILY = [socket.AF_INET, socket.AF_INET6]
 PORT = 8081
 LIFETIME = 86400
 MSS = 1280
@@ -20,9 +20,9 @@ class Listener:
     _pid = 0
     _live = 0
 
-    def run(self, pid=0, family=socket.AF_UNSPEC):
+    def run(self, pid=0):
         async def _server():
-            server = await asyncio.start_server(self._client, port=PORT, family=family, reuse_port=True)
+            server = await asyncio.start_server(self._client, port=PORT, reuse_port=True)
             async with server:
                 await server.serve_forever()
             for t in asyncio.all_tasks():
@@ -128,8 +128,12 @@ async def writer_close(writer: asyncio.StreamWriter):
 
 def main():
     logging.basicConfig(level=logging.DEBUG)
-    with ProcessPoolExecutor(len(FAMILY)) as executor:
-        _ = [executor.submit(Listener().run, pid, FAMILY[pid]) for pid in range(len(FAMILY))]
+    cpu_count = os.cpu_count() or 1
+    if cpu_count > 1:
+        with ProcessPoolExecutor(cpu_count) as executor:
+            executor.map(Listener().run, range(cpu_count))
+    else:
+        Listener().run()
 
 
 if __name__ == "__main__":
