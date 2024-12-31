@@ -8,6 +8,7 @@ import time
 
 PORT = 8081
 LIFETIME = 86400
+CHUNK_SIZE = 2**14
 
 
 class Listener:
@@ -97,20 +98,21 @@ class Channel:
         try:
             s: socket.socket = self._w.get_extra_info("socket")
             s.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, True)
-            mss = s.getsockopt(socket.SOL_TCP, socket.TCP_MAXSEG)
 
             async with asyncio.timeout(LIFETIME):
-                while data := await self._r.read(mss):
+                while data := await self._r.read(CHUNK_SIZE):
                     write_start = time.perf_counter()
                     self._w.write(data)
                     await self._w.drain()
                     write_time = round((time.perf_counter() - write_start) * 1000)
                     if write_time > 100:
                         logging.warning(f"[{self._pid}] Slow write {write_time}ms {self._label}")
-                logging.debug(f"[{self._pid}] EOF {self._label}")
+                    await asyncio.sleep(0)
+
                 self._r.feed_eof()
                 self._w.write_eof()
                 await self._w.drain()
+                logging.debug(f"[{self._pid}] EOF {self._label}")
 
         except Exception as err:
             logging.debug(f"[{self._pid}] Error {err} {self._label}")
