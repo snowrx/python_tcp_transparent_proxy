@@ -9,6 +9,7 @@ import time
 PORT = 8081
 LIFETIME = 86400
 CHUNK_SIZE = 2**14
+ENABLE_MP = False
 
 
 class Listener:
@@ -101,13 +102,8 @@ class Channel:
 
             async with asyncio.timeout(LIFETIME):
                 while data := await self._r.read(CHUNK_SIZE):
-                    write_start = time.perf_counter()
                     self._w.write(data)
                     await self._w.drain()
-                    write_time = round((time.perf_counter() - write_start) * 1000)
-                    if write_time > 100:
-                        logging.warning(f"[{self._pid}] Slow write {write_time}ms {self._label}")
-                    await asyncio.sleep(0)
 
                 self._r.feed_eof()
                 self._w.write_eof()
@@ -130,7 +126,7 @@ async def writer_close(writer: asyncio.StreamWriter):
 def main():
     logging.basicConfig(level=logging.DEBUG)
     cpu_count = os.cpu_count() or 1
-    if cpu_count > 1:
+    if ENABLE_MP and cpu_count > 1:
         with ProcessPoolExecutor(cpu_count) as executor:
             executor.map(Listener().run, range(cpu_count))
     else:
