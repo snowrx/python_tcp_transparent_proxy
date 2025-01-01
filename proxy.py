@@ -40,13 +40,19 @@ class Listener:
 
         if dst[0] == srv[0] and dst[1] == srv[1]:
             logging.warning(f"Blocked {w_label}")
+            cw.write(b"HTTP/1.1 403 Forbidden\r\n\r\n")
+            cw.write_eof()
+            await cw.drain()
             await writer_close(cw)
             return
 
         try:
             pr, pw = await asyncio.open_connection(host=dst[0], port=dst[1])
         except:
-            logging.warning(f"Connection failed {w_label}")
+            logging.warning(f"Failed {w_label}")
+            cw.write(b"HTTP/1.1 502 Bad Gateway\r\n\r\n")
+            cw.write_eof()
+            await cw.drain()
             await writer_close(cw)
             return
 
