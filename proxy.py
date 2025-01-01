@@ -59,8 +59,6 @@ class Listener:
         proxy_start = time.perf_counter()
         async with asyncio.TaskGroup() as tg:
             _ = (tg.create_task(writer.run()), tg.create_task(reader.run()))
-        await writer_close(pw)
-        await writer_close(cw)
         proxy_time = round(time.perf_counter() - proxy_start)
         self._live -= 1
         logging.info(f"Closed {proxy_time}s {w_label}")
@@ -109,6 +107,10 @@ class Channel:
 
         except Exception as err:
             logging.debug(f"Error {err} {self._label}")
+
+        finally:
+            await writer_close(self._w)
+            logging.debug(f"Closed channel {self._label}")
 
 
 async def writer_close(writer: asyncio.StreamWriter):
