@@ -6,8 +6,7 @@ import time
 
 PORT = 8081
 LIFETIME = 86400
-CHUNK_SIZE = 2**14
-LIMIT = 2**20
+LIMIT = 2**16
 
 
 class Listener:
@@ -20,7 +19,7 @@ class Listener:
 
     def run(self):
         async def _server():
-            server = await asyncio.start_server(self._client, port=PORT, limit=LIMIT)
+            server = await asyncio.start_server(self._client, port=PORT)
             async with server:
                 await server.serve_forever()
             for t in asyncio.all_tasks():
@@ -45,7 +44,7 @@ class Listener:
             return
 
         try:
-            pr, pw = await asyncio.open_connection(host=dst[0], port=dst[1], limit=LIMIT)
+            pr, pw = await asyncio.open_connection(host=dst[0], port=dst[1])
         except:
             logging.warning(f"Connection failed {w_label}")
             await writer_close(cw)
