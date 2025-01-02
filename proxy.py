@@ -4,10 +4,9 @@ import socket
 import struct
 import time
 
-_DEFAULT_LIMIT = 2**16
-
 PORT = 8081
 LIFETIME = 86400
+MSS = 1280
 
 
 class Listener:
@@ -97,15 +96,12 @@ class Channel:
         try:
             s: socket.socket = self._w.get_extra_info("socket")
             s.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, True)
+            self._w.transport.set_write_buffer_limits(MSS)
 
             async with asyncio.timeout(LIFETIME):
-                while data := await self._r.read(_DEFAULT_LIMIT):
-                    t = time.perf_counter_ns()
+                while data := await self._r.read(MSS):
                     self._w.write(data)
                     await self._w.drain()
-                    write_time = round((time.perf_counter_ns() - t) / 1000000)
-                    if write_time > 100:
-                        logging.warning(f"Slow write {write_time=}ms {self._label}")
 
                 self._r.feed_eof()
                 self._w.write_eof()
