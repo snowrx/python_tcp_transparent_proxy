@@ -4,9 +4,10 @@ import socket
 import struct
 import time
 
+_DEFAULT_LIMIT = 2**16
+
 PORT = 8081
 LIFETIME = 86400
-LIMIT = 2**14
 
 
 class Listener:
@@ -98,7 +99,7 @@ class Channel:
             s.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, True)
 
             async with asyncio.timeout(LIFETIME):
-                while data := await self._r.read(LIMIT):
+                while data := await self._r.read(_DEFAULT_LIMIT):
                     t = time.perf_counter_ns()
                     self._w.write(data)
                     await self._w.drain()
