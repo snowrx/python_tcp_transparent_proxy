@@ -6,7 +6,7 @@ import time
 
 PORT = 8081
 LIFETIME = 86400
-MSS = 1280
+MSS = 2**16
 
 
 class Listener:
