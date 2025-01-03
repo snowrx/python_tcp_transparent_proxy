@@ -19,7 +19,7 @@ class Listener:
 
     def run(self):
         async def _server():
-            server = await asyncio.start_server(self._client, port=PORT)
+            server = await asyncio.start_server(self._client, port=PORT, reuse_port=True)
             async with server:
                 await server.serve_forever()
             for t in asyncio.all_tasks():
