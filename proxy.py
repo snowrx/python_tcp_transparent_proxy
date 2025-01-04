@@ -6,7 +6,7 @@ import time
 
 PORT = 8081
 LIFETIME = 86400
-MSS = 2**16
+MSS = 1 << 14
 
 
 class Listener:
@@ -124,10 +124,6 @@ async def writer_close(writer: asyncio.StreamWriter):
         logging.debug(f"Error {err}")
 
 
-def main():
+if __name__ == "__main__":
     logging.basicConfig(level=logging.DEBUG)
     Listener().run()
-
-
-if __name__ == "__main__":
-    main()
