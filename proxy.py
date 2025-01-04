@@ -1,12 +1,15 @@
+from concurrent.futures import ProcessPoolExecutor
 import asyncio
 import logging
+import os
 import socket
 import struct
 import time
 
+_DEFAULT_LIMIT = 2**16
+
 PORT = 8081
 LIFETIME = 86400
-MSS = 1 << 14
 
 
 class Listener:
@@ -17,7 +20,7 @@ class Listener:
 
     _live = 0
 
-    def run(self):
+    def run(self, cpu=None):
         async def _server():
             server = await asyncio.start_server(self._client, port=PORT, reuse_port=True)
             async with server:
@@ -27,6 +30,9 @@ class Listener:
                 logging.debug(f"Cancelled {t.get_name()}")
 
         logging.info(f"Listening {PORT=}")
+        if cpu is not None:
+            os.sched_setaffinity(0, {cpu})
+            logging.info(f"CPU affinity {cpu=}")
         asyncio.run(_server())
 
     async def _client(self, cr: asyncio.StreamReader, cw: asyncio.StreamWriter):
@@ -98,7 +104,7 @@ class Channel:
             s.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, True)
 
             async with asyncio.timeout(LIFETIME):
-                while data := await self._r.read(MSS):
+                while data := await self._r.read(_DEFAULT_LIMIT):
                     self._w.write(data)
                     await self._w.drain()
 
@@ -126,4 +132,6 @@ async def writer_close(writer: asyncio.StreamWriter):
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.DEBUG)
-    Listener().run()
+    cpu_list = os.sched_getaffinity(0)
+    with ProcessPoolExecutor(len(cpu_list)) as executor:
+        executor.map(Listener().run, cpu_list)
