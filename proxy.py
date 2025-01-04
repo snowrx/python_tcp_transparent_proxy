@@ -105,6 +105,7 @@ class Channel:
 
             async with asyncio.timeout(LIFETIME):
                 while data := await self._r.read(_DEFAULT_LIMIT):
+                    await asyncio.sleep(0)
                     self._w.write(data)
                     await self._w.drain()
 
