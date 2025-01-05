@@ -96,7 +96,7 @@ class Channel:
         try:
             s: socket.socket = self._w.get_extra_info("socket")
             s.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, True)
-            self._w.transport.set_write_buffer_limits(LIMIT, LIMIT)
+            self._w.transport.set_write_buffer_limits(0)
 
             async with asyncio.timeout(LIFETIME):
                 while data := await self._r.read(LIMIT):
