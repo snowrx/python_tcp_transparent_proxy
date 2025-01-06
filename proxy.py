@@ -4,9 +4,10 @@ import socket
 import struct
 import time
 
+_DEFAULT_LIMIT = 2**16
+
 PORT = 8081
 LIFETIME = 86400
-LIMIT = 2**14
 
 
 class Listener:
@@ -36,7 +37,7 @@ class Listener:
         is_ipv4 = "." in src[0]
         dst = self._get_original_dst(soc, is_ipv4)
         w_label = f"{src[0]}@{src[1]} > {dst[0]}@{dst[1]}"
-        r_label = f"{dst[0]}@{dst[1]} > {src[0]}@{src[1]}"
+        r_label = f"{src[0]}@{src[1]} < {dst[0]}@{dst[1]}"
 
         if dst[0] == srv[0] and dst[1] == srv[1]:
             logging.warning(f"Blocked {w_label}")
@@ -96,10 +97,11 @@ class Channel:
         try:
             s: socket.socket = self._w.get_extra_info("socket")
             s.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, True)
-            self._w.transport.set_write_buffer_limits(0)
+            mss = s.getsockopt(socket.SOL_TCP, socket.TCP_MAXSEG)
+            self._w.transport.set_write_buffer_limits(mss, 0)
 
             async with asyncio.timeout(LIFETIME):
-                while data := await self._r.read(LIMIT):
+                while data := await self._r.read(_DEFAULT_LIMIT):
                     self._w.write(data)
                     await self._w.drain()
 
