@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import os
 import socket
 import struct
 import time
@@ -19,7 +20,7 @@ class Listener:
 
     def run(self):
         async def _server():
-            server = await asyncio.start_server(self._client, port=PORT, reuse_port=True)
+            server = await asyncio.start_server(self._client, port=PORT)
             async with server:
                 await server.serve_forever()
             for t in asyncio.all_tasks():
@@ -126,4 +127,10 @@ async def writer_close(writer: asyncio.StreamWriter):
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.DEBUG)
+    try:
+        cpu = sorted(os.sched_getaffinity(0))[-2:]
+        os.sched_setaffinity(0, cpu)
+        logging.debug(f"{cpu=}")
+    except:
+        pass
     Listener().run()
