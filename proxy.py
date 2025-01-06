@@ -128,7 +128,7 @@ async def writer_close(writer: asyncio.StreamWriter):
 if __name__ == "__main__":
     logging.basicConfig(level=logging.DEBUG)
     try:
-        cpu = sorted(os.sched_getaffinity(0))[-2:]
+        cpu = sorted(os.sched_getaffinity(0))[-4:]
         os.sched_setaffinity(0, cpu)
         logging.debug(f"{cpu=}")
     except:
