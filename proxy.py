@@ -16,8 +16,6 @@ class Listener:
     _V4_LEN = 16
     _V6_LEN = 28
 
-    _live = 0
-
     def run(self):
         async def _server():
             server = await asyncio.start_server(self._client, port=PORT)
@@ -57,19 +55,15 @@ class Listener:
             await writer_close(cw)
             return
 
-        self._live += 1
         writer = Channel(w_label, cr, pw)
         reader = Channel(r_label, pr, cw)
         logging.info(f"Established {w_label}")
-        logging.debug(f"live={self._live}")
 
         proxy_start = time.perf_counter()
         async with asyncio.TaskGroup() as tg:
             _ = (tg.create_task(writer.run()), tg.create_task(reader.run()))
         proxy_time = round(time.perf_counter() - proxy_start)
-        self._live -= 1
         logging.info(f"Closed {proxy_time}s {w_label}")
-        logging.debug(f"live={self._live}")
 
     def _get_original_dst(self, so: socket.socket, is_ipv4=True):
         if is_ipv4:
@@ -106,14 +100,12 @@ class Channel:
                 self._r.feed_eof()
                 self._w.write_eof()
                 await self._w.drain()
-                logging.debug(f"EOF {self._label}")
 
-        except Exception as err:
-            logging.debug(f"Error {err} {self._label}")
+        except* Exception as err:
+            logging.debug(f"{err.exceptions} {self._label}")
 
         finally:
             await writer_close(self._w)
-            logging.debug(f"Closed channel {self._label}")
 
 
 async def writer_close(writer: asyncio.StreamWriter):
@@ -121,8 +113,8 @@ async def writer_close(writer: asyncio.StreamWriter):
         if not writer.is_closing():
             writer.close()
             await writer.wait_closed()
-    except Exception as err:
-        logging.debug(f"Error {err}")
+    except* Exception as err:
+        logging.debug(f"{err.exceptions}")
 
 
 if __name__ == "__main__":
