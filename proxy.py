@@ -1,7 +1,5 @@
-from concurrent.futures import ProcessPoolExecutor
 import asyncio
 import logging
-import os
 import socket
 import struct
 import time
@@ -17,7 +15,7 @@ class Listener:
     _V4_LEN = 16
     _V6_LEN = 28
 
-    def run(self, cpu=None):
+    def run(self):
         async def _server():
             server = await asyncio.start_server(self._client, port=PORT, reuse_port=True)
             async with server:
@@ -26,8 +24,6 @@ class Listener:
                 t.cancel()
                 logging.debug(f"Cancelled {t.get_name()}")
 
-        if cpu is not None:
-            os.sched_setaffinity(0, [cpu])
         logging.info(f"Listening {PORT=}")
         asyncio.run(_server())
 
@@ -122,9 +118,4 @@ async def writer_close(writer: asyncio.StreamWriter):
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.DEBUG)
-    cpu = sorted(os.sched_getaffinity(0))
-    if len(cpu) > 1:
-        with ProcessPoolExecutor(len(cpu)) as ex:
-            ex.map(Listener().run, cpu)
-    else:
-        Listener().run()
+    Listener().run()
