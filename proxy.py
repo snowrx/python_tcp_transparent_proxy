@@ -1,6 +1,5 @@
 import asyncio
 import logging
-import os
 import socket
 import struct
 import time
@@ -121,10 +120,4 @@ async def writer_close(writer: asyncio.StreamWriter):
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.DEBUG)
-    try:
-        cpu = sorted(os.sched_getaffinity(0))[-4:]
-        os.sched_setaffinity(0, cpu)
-        logging.debug(f"{cpu=}")
-    except:
-        pass
     Listener().run()
