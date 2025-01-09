@@ -90,12 +90,11 @@ class Channel:
             s: socket.socket = self._w.get_extra_info("socket")
             s.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, True)
             mss = s.getsockopt(socket.SOL_TCP, socket.TCP_MAXSEG)
+            self._w.transport.set_write_buffer_limits(low=mss)
 
             async with asyncio.timeout(LIFETIME):
                 while data := await self._r.read(mss):
                     await asyncio.create_task(write(self._w, data))
-                    if wbs := self._w.transport.get_write_buffer_size():
-                        logging.debug(f"{wbs=} {self._label}")
 
                 self._r.feed_eof()
                 self._w.write_eof()
