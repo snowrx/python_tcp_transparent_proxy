@@ -8,6 +8,7 @@ import time
 PORT = 8081
 LIFETIME = 86400
 CHUNK = 2**16
+FLOW_CONTROL = 2**10
 
 
 class Listener:
@@ -91,6 +92,7 @@ class Channel:
         try:
             s: socket.socket = self._w.get_extra_info("socket")
             s.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, True)
+            self._w.transport.set_write_buffer_limits(FLOW_CONTROL)
 
             async with asyncio.timeout(LIFETIME):
                 while data := await self._r.read(CHUNK):
