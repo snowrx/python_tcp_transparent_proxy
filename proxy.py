@@ -6,8 +6,6 @@ import time
 
 PORT = 8081
 LIFETIME = 86400
-CHUNK = 2**16
-BUFFER = 2**11
 
 
 class Listener:
@@ -18,7 +16,7 @@ class Listener:
 
     def run(self):
         async def _server():
-            server = await asyncio.start_server(self._client, port=PORT, reuse_port=True)
+            server = await asyncio.start_server(self._client, port=PORT)
             async with server:
                 await server.serve_forever()
             for t in asyncio.all_tasks():
@@ -91,11 +89,13 @@ class Channel:
         try:
             s: socket.socket = self._w.get_extra_info("socket")
             s.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, True)
-            self._w.transport.set_write_buffer_limits(BUFFER)
+            mss = s.getsockopt(socket.SOL_TCP, socket.TCP_MAXSEG)
 
             async with asyncio.timeout(LIFETIME):
-                while data := await self._r.read(CHUNK):
+                while data := await self._r.read(mss):
                     await asyncio.create_task(write(self._w, data))
+                    if wbs := self._w.transport.get_write_buffer_size():
+                        logging.debug(f"{wbs=} {self._label}")
 
                 self._r.feed_eof()
                 self._w.write_eof()
