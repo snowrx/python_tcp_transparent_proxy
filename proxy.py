@@ -93,8 +93,7 @@ class Channel:
 
             async with asyncio.timeout(LIFETIME):
                 while data := await self._r.read(CHUNK):
-                    self._w.write(data)
-                    await self._w.drain()
+                    await asyncio.create_task(write(self._w, data))
 
                 self._r.feed_eof()
                 self._w.write_eof()
@@ -105,6 +104,11 @@ class Channel:
 
         finally:
             await writer_close(self._w)
+
+
+async def write(writer: asyncio.StreamWriter, data: bytes):
+    writer.write(data)
+    await writer.drain()
 
 
 async def writer_close(writer: asyncio.StreamWriter):
