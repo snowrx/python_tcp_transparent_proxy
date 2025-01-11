@@ -15,7 +15,7 @@ class proxy:
     _V4_LEN = 16
     _V6_LEN = 28
 
-    async def get_original_dst(self, so: socket.socket, is_ipv4=True):
+    def get_original_dst(self, so: socket.socket, is_ipv4=True):
         if is_ipv4:
             dst = so.getsockopt(socket.SOL_IP, self._SO_ORIGINAL_DST, self._V4_LEN)
             port, raw_ip = struct.unpack_from("!2xH4s", dst)
@@ -58,7 +58,7 @@ class proxy:
         src: tuple[str, int] = cw.get_extra_info("peername")
         is_ipv4 = "." in src[0]
 
-        dst: tuple[str, int] = await self.get_original_dst(soc, is_ipv4)
+        dst: tuple[str, int] = await asyncio.to_thread(self.get_original_dst, soc, is_ipv4)
         w_label = f"{src[0]}@{src[1]} > {dst[0]}@{dst[1]}"
         r_label = f"{src[0]}@{src[1]} < {dst[0]}@{dst[1]}"
 
