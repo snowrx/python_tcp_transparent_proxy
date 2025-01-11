@@ -34,6 +34,10 @@ class proxy:
         except* Exception as err:
             logging.debug(f"{err.exceptions}")
 
+    async def write(self, w: asyncio.StreamWriter, data: bytes):
+        w.write(data)
+        await w.drain()
+
     async def proxy(self, label: str, r: asyncio.StreamReader, w: asyncio.StreamWriter):
         status = "setsockopt"
         try:
@@ -44,8 +48,7 @@ class proxy:
             async with asyncio.timeout(LIFETIME):
                 while (data := await r.read(self._LIMIT)) and not w.is_closing():
                     status = "write"
-                    w.write(data)
-                    await w.drain()
+                    await asyncio.create_task(self.write(w, data))
                     status = "read"
 
             status = "write_eof"
