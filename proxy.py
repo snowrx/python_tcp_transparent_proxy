@@ -96,9 +96,10 @@ class Channel:
                 while data := await self._r.read(CHUNK):
                     await asyncio.create_task(write(self._w, data))
 
-                self._r.feed_eof()
-                self._w.write_eof()
-                await self._w.drain()
+            logging.debug(f"EOF {self._label}")
+            self._r.feed_eof()
+            self._w.write_eof()
+            await self._w.drain()
 
         except* Exception as err:
             logging.debug(f"{err.exceptions} {self._label}")
