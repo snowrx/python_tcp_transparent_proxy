@@ -9,7 +9,7 @@ LIFETIME = 43200
 
 
 class proxy:
-    _LIMIT = 2**14
+    _DEFAULT_LIMIT = 2**16
     _SO_ORIGINAL_DST = 80
     _SOL_IPV6 = 41
     _V4_LEN = 16
@@ -46,7 +46,7 @@ class proxy:
 
             status = "read"
             async with asyncio.timeout(LIFETIME):
-                while (data := await r.read(self._LIMIT)) and not w.is_closing():
+                while (data := await r.read(self._DEFAULT_LIMIT)) and not w.is_closing():
                     status = "write"
                     await asyncio.create_task(self.write(w, data))
                     status = "read"
