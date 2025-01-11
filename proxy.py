@@ -9,7 +9,7 @@ LIFETIME = 43200
 
 
 class proxy:
-    _DEFAULT_LIMIT = 2**16
+    _LIMIT = 2**14
     _SO_ORIGINAL_DST = 80
     _SOL_IPV6 = 41
     _V4_LEN = 16
@@ -35,22 +35,27 @@ class proxy:
             logging.debug(f"{err.exceptions}")
 
     async def proxy(self, label: str, r: asyncio.StreamReader, w: asyncio.StreamWriter):
+        status = "setsockopt"
         try:
             s: socket.socket = w.get_extra_info("socket")
             s.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, True)
 
+            status = "read"
             async with asyncio.timeout(LIFETIME):
-                while data := await r.read(self._DEFAULT_LIMIT):
+                while (data := await r.read(self._LIMIT)) and not w.is_closing():
+                    status = "write"
                     w.write(data)
                     await w.drain()
+                    status = "read"
 
-            logging.debug(f"EOF {label}")
+            status = "write_eof"
             r.feed_eof()
             w.write_eof()
             await w.drain()
+            logging.debug(f"EOF {label}")
 
         except* Exception as err:
-            logging.debug(f"{err.exceptions} {label}")
+            logging.debug(f"Error in {status} {label} {err.exceptions}")
             await self.writer_close(w)
 
     async def client(self, cr: asyncio.StreamReader, cw: asyncio.StreamWriter):
