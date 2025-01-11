@@ -51,6 +51,7 @@ class proxy:
 
         except* Exception as err:
             logging.debug(f"{err.exceptions} {label}")
+            await self.writer_close(w)
 
     async def client(self, cr: asyncio.StreamReader, cw: asyncio.StreamWriter):
         soc: socket.socket = cw.get_extra_info("socket")
