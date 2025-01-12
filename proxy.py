@@ -1,9 +1,9 @@
 import asyncio
 import logging
+import os
 import socket
 import struct
 import time
-import os
 
 PORT = 8081
 LIFETIME = 43200
@@ -103,6 +103,8 @@ class proxy:
 
     async def server(self):
         server = await asyncio.start_server(self.client, port=PORT)
+        for s in server.sockets:
+            s.setsockopt(socket.SOL_TCP, socket.TCP_DEFER_ACCEPT, 1)
         async with server:
             await server.serve_forever()
         for t in asyncio.all_tasks():
