@@ -3,6 +3,7 @@ import logging
 import socket
 import struct
 import time
+import os
 
 PORT = 8081
 LIFETIME = 43200
@@ -43,10 +44,11 @@ class proxy:
         try:
             s: socket.socket = w.get_extra_info("socket")
             s.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, True)
+            w.transport.set_write_buffer_limits(0)
 
             status = "read"
             async with asyncio.timeout(LIFETIME):
-                while (data := await r.read(self._DEFAULT_LIMIT)) and not w.is_closing():
+                while data := await r.read(self._DEFAULT_LIMIT):
                     status = "write"
                     await asyncio.create_task(self.write(w, data))
                     status = "read"
@@ -113,4 +115,5 @@ class proxy:
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.DEBUG)
+    os.sched_setaffinity(0, list(os.sched_getaffinity(0))[-2:])
     proxy().run()
