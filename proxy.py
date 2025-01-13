@@ -7,6 +7,7 @@ import time
 
 PORT = 8081
 LIFETIME = 43200
+PRELOAD = 2**23
 
 
 class proxy:
@@ -44,7 +45,7 @@ class proxy:
         try:
             s: socket.socket = w.get_extra_info("socket")
             s.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, True)
-            w.transport.set_write_buffer_limits(0)
+            w.transport.set_write_buffer_limits(PRELOAD)
 
             status = "read"
             async with asyncio.timeout(LIFETIME):
