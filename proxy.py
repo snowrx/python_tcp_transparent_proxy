@@ -1,13 +1,11 @@
 import asyncio
 import logging
-import os
 import socket
 import struct
 import time
 
 PORT = 8081
 LIFETIME = 43200
-PRELOAD = 2**23
 
 
 class proxy:
@@ -45,7 +43,6 @@ class proxy:
         try:
             s: socket.socket = w.get_extra_info("socket")
             s.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, True)
-            w.transport.set_write_buffer_limits(PRELOAD)
 
             status = "read"
             async with asyncio.timeout(LIFETIME):
@@ -97,8 +94,8 @@ class proxy:
         await asyncio.to_thread(logging.info, f"Established {open_time}ms {w_label}")
         proxy_start = time.time()
         async with asyncio.TaskGroup() as tg:
-            r = tg.create_task(self.proxy(r_label, pr, cw))
-            w = tg.create_task(self.proxy(w_label, cr, pw))
+            tg.create_task(self.proxy(r_label, pr, cw))
+            tg.create_task(self.proxy(w_label, cr, pw))
         await self.writer_close(pw)
         await self.writer_close(cw)
         proxy_time = round(time.time() - proxy_start)
@@ -120,5 +117,4 @@ class proxy:
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.DEBUG)
-    os.sched_setaffinity(0, list(os.sched_getaffinity(0))[-2:])
     proxy().run()
