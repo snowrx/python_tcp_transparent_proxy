@@ -82,7 +82,9 @@ class proxy:
             return
 
         try:
+            open_start = time.perf_counter_ns()
             pr, pw = await asyncio.open_connection(host=dst[0], port=dst[1])
+            open_time = round((time.perf_counter_ns() - open_start) * 1e-6)
         except:
             logging.warning(f"Failed {w_label}")
             cw.write(b"HTTP/1.1 502 Bad Gateway\r\n\r\n")
@@ -91,14 +93,14 @@ class proxy:
             await self.writer_close(cw)
             return
 
-        logging.info(f"Established {w_label}")
-        proxy_start = time.perf_counter()
+        logging.info(f"Established {open_time}ms {w_label}")
+        proxy_start = time.time()
         async with asyncio.TaskGroup() as tg:
             r = tg.create_task(self.proxy(r_label, pr, cw))
             w = tg.create_task(self.proxy(w_label, cr, pw))
         await self.writer_close(pw)
         await self.writer_close(cw)
-        proxy_time = round(time.perf_counter() - proxy_start)
+        proxy_time = round(time.time() - proxy_start)
         logging.info(f"Closed {proxy_time}s {w_label}")
 
     async def server(self):
