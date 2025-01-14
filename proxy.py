@@ -1,16 +1,16 @@
 import asyncio
 import logging
-import os
 import socket
 import struct
 import time
+import os
 
 PORT = 8081
-LIFETIME = 14400
+LIFETIME = 43200
 
 
 class proxy:
-    _MSS = 1280
+    _DEFAULT_LIMIT = 2**16
     _SO_ORIGINAL_DST = 80
     _SOL_IPV6 = 41
     _V4_LEN = 16
@@ -44,11 +44,10 @@ class proxy:
         try:
             s: socket.socket = w.get_extra_info("socket")
             s.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, True)
-            w.transport.set_write_buffer_limits(self._MSS)
 
             status = "read"
             async with asyncio.timeout(LIFETIME):
-                while data := await r.read(self._MSS):
+                while data := await r.read(self._DEFAULT_LIMIT):
                     status = "write"
                     await asyncio.create_task(self.write(w, data))
                     status = "read"
