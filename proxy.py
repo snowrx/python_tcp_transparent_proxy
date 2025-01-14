@@ -3,6 +3,7 @@ import logging
 import socket
 import struct
 import time
+import os
 
 PORT = 8081
 LIFETIME = 43200
@@ -117,4 +118,8 @@ class proxy:
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.DEBUG)
+    try:
+        os.sched_setaffinity(0, sorted(os.sched_getaffinity(0))[-4:])
+    except:
+        pass
     proxy().run()
