@@ -1,12 +1,12 @@
 import asyncio
 import logging
+import os
 import socket
 import struct
 import time
-import os
 
 PORT = 8081
-LIFETIME = 43200
+LIFETIME = 14400
 
 
 class proxy:
