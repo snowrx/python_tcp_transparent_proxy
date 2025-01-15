@@ -10,7 +10,7 @@ LIFETIME = 14400
 
 
 class proxy:
-    _DEFAULT_LIMIT = 2**16
+    _MSS = 1280
     _SO_ORIGINAL_DST = 80
     _SOL_IPV6 = 41
     _V4_LEN = 16
@@ -35,31 +35,29 @@ class proxy:
         except* Exception as err:
             logging.debug(f"{err.exceptions}")
 
-    async def write(self, w: asyncio.StreamWriter, data: bytes):
-        w.write(data)
-        await w.drain()
-
     async def proxy(self, label: str, r: asyncio.StreamReader, w: asyncio.StreamWriter):
         status = "setsockopt"
         try:
             s: socket.socket = w.get_extra_info("socket")
             s.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, True)
+            w.transport.set_write_buffer_limits(self._MSS)
 
             status = "read"
             async with asyncio.timeout(LIFETIME):
-                while data := await r.read(self._DEFAULT_LIMIT):
+                while data := await r.read(self._MSS):
                     status = "write"
-                    await asyncio.create_task(self.write(w, data))
+                    w.write(data)
+                    await w.drain()
                     status = "read"
 
             status = "write_eof"
             r.feed_eof()
             w.write_eof()
             await w.drain()
-            await asyncio.to_thread(logging.debug, f"EOF {label}")
+            logging.debug(f"EOF {label}")
 
         except* Exception as err:
-            await asyncio.to_thread(logging.debug, f"Error in {status} {label} {err.exceptions}")
+            logging.debug(f"Error in {status} {label} {err.exceptions}")
             await self.writer_close(w)
 
     async def client(self, cr: asyncio.StreamReader, cw: asyncio.StreamWriter):
@@ -73,7 +71,7 @@ class proxy:
         r_label = f"{src[0]}@{src[1]} < {dst[0]}@{dst[1]}"
 
         if dst[0] == srv[0] and dst[1] == srv[1]:
-            await asyncio.to_thread(logging.warning, f"Blocked {w_label}")
+            logging.warning(f"Blocked {w_label}")
             cw.write(b"HTTP/1.1 403 Forbidden\r\n\r\n")
             cw.write_eof()
             await cw.drain()
@@ -85,14 +83,14 @@ class proxy:
             pr, pw = await asyncio.open_connection(host=dst[0], port=dst[1])
             open_time = round((time.perf_counter_ns() - open_start) * 1e-6)
         except:
-            await asyncio.to_thread(logging.warning, f"Failed {w_label}")
+            logging.warning(f"Failed {w_label}")
             cw.write(b"HTTP/1.1 502 Bad Gateway\r\n\r\n")
             cw.write_eof()
             await cw.drain()
             await self.writer_close(cw)
             return
 
-        await asyncio.to_thread(logging.info, f"Established {open_time}ms {w_label}")
+        logging.info(f"Established {open_time}ms {w_label}")
         proxy_start = time.time()
         async with asyncio.TaskGroup() as tg:
             tg.create_task(self.proxy(r_label, pr, cw))
@@ -100,7 +98,7 @@ class proxy:
         await self.writer_close(pw)
         await self.writer_close(cw)
         proxy_time = round(time.time() - proxy_start)
-        await asyncio.to_thread(logging.info, f"Closed {proxy_time}s {w_label}")
+        logging.info(f"Closed {proxy_time}s {w_label}")
 
     async def server(self):
         server = await asyncio.start_server(self.client, port=PORT)
