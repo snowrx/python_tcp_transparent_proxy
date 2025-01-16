@@ -10,7 +10,7 @@ LIFETIME = 14400
 
 
 class proxy:
-    _DEFAULT_LIMIT = 2**16
+    _LIMIT = 2**14
     _SO_ORIGINAL_DST = 80
     _SOL_IPV6 = 41
     _V4_LEN = 16
@@ -40,11 +40,11 @@ class proxy:
         try:
             s: socket.socket = w.get_extra_info("socket")
             s.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, True)
-            w.transport.set_write_buffer_limits(self._DEFAULT_LIMIT)
+            w.transport.set_write_buffer_limits(self._LIMIT)
 
             status = "read"
             async with asyncio.timeout(LIFETIME):
-                while data := await r.read(self._DEFAULT_LIMIT):
+                while data := await r.read(self._LIMIT):
                     status = "write"
                     w.write(data)
                     await w.drain()
