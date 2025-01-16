@@ -58,7 +58,7 @@ class proxy:
 
         except* Exception as err:
             logging.debug(f"Error in {status} {label} {err.exceptions}")
-            await self.writer_close(w)
+            w.transport.abort()
 
     async def client(self, cr: asyncio.StreamReader, cw: asyncio.StreamWriter):
         soc: socket.socket = cw.get_extra_info("socket")
@@ -72,21 +72,17 @@ class proxy:
 
         if dst[0] == srv[0] and dst[1] == srv[1]:
             logging.warning(f"Blocked {w_label}")
-            cw.write(b"HTTP/1.1 403 Forbidden\r\n\r\n")
-            cw.write_eof()
-            await cw.drain()
+            cw.transport.abort()
             await self.writer_close(cw)
             return
 
         try:
             open_start = time.perf_counter_ns()
-            pr, pw = await asyncio.open_connection(host=dst[0], port=dst[1])
+            pr, pw = await asyncio.open_connection(host=dst[0], port=dst[1], limit=self._LIMIT)
             open_time = round((time.perf_counter_ns() - open_start) * 1e-6)
         except:
             logging.warning(f"Failed {w_label}")
-            cw.write(b"HTTP/1.1 502 Bad Gateway\r\n\r\n")
-            cw.write_eof()
-            await cw.drain()
+            cw.transport.abort()
             await self.writer_close(cw)
             return
 
@@ -101,9 +97,7 @@ class proxy:
         logging.info(f"Closed {proxy_time}s {w_label}")
 
     async def server(self):
-        server = await asyncio.start_server(self.client, port=PORT)
-        for s in server.sockets:
-            s.setsockopt(socket.SOL_TCP, socket.TCP_DEFER_ACCEPT, 1)
+        server = await asyncio.start_server(self.client, port=PORT, limit=self._LIMIT)
         async with server:
             await server.serve_forever()
         for t in asyncio.all_tasks():
