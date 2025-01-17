@@ -33,7 +33,7 @@ class proxy:
                 w.close()
                 await w.wait_closed()
         except* Exception as err:
-            logging.debug(f"{err.exceptions}")
+            await asyncio.to_thread(logging.debug, f"{err.exceptions}")
 
     async def proxy(self, label: str, r: asyncio.StreamReader, w: asyncio.StreamWriter):
         status = "setsockopt"
@@ -54,10 +54,10 @@ class proxy:
             r.feed_eof()
             w.write_eof()
             await w.drain()
-            logging.debug(f"EOF {label}")
+            await asyncio.to_thread(logging.debug, f"EOF {label}")
 
         except* Exception as err:
-            logging.debug(f"Error in {status} {label} {err.exceptions}")
+            await asyncio.to_thread(logging.debug, f"Error in {status} {label} {err.exceptions}")
             w.transport.abort()
 
     async def client(self, cr: asyncio.StreamReader, cw: asyncio.StreamWriter):
@@ -71,7 +71,7 @@ class proxy:
         r_label = f"{src[0]}@{src[1]} < {dst[0]}@{dst[1]}"
 
         if dst[0] == srv[0] and dst[1] == srv[1]:
-            logging.warning(f"Blocked {w_label}")
+            await asyncio.to_thread(logging.warning, f"Blocked {w_label}")
             cw.transport.abort()
             await self.writer_close(cw)
             return
@@ -81,12 +81,12 @@ class proxy:
             pr, pw = await asyncio.open_connection(host=dst[0], port=dst[1], limit=self._LIMIT)
             open_time = round((time.perf_counter_ns() - open_start) * 1e-6)
         except:
-            logging.warning(f"Failed {w_label}")
+            await asyncio.to_thread(logging.warning, f"Failed {w_label}")
             cw.transport.abort()
             await self.writer_close(cw)
             return
 
-        logging.info(f"Established {open_time}ms {w_label}")
+        await asyncio.to_thread(logging.info, f"Established {open_time}ms {w_label}")
         proxy_start = time.time()
         async with asyncio.TaskGroup() as tg:
             tg.create_task(self.proxy(r_label, pr, cw))
@@ -94,7 +94,7 @@ class proxy:
         await self.writer_close(pw)
         await self.writer_close(cw)
         proxy_time = round(time.time() - proxy_start)
-        logging.info(f"Closed {proxy_time}s {w_label}")
+        await asyncio.to_thread(logging.info, f"Closed {proxy_time}s {w_label}")
 
     async def server(self):
         server = await asyncio.start_server(self.client, port=PORT, limit=self._LIMIT)
