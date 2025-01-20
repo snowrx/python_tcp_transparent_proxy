@@ -58,7 +58,7 @@ class proxy:
 
         except* Exception as err:
             await asyncio.to_thread(logging.debug, f"Error in {status} {label} {err.exceptions}")
-            w.transport.abort()
+            await self.writer_close(w)
 
     async def client(self, cr: asyncio.StreamReader, cw: asyncio.StreamWriter):
         soc: socket.socket = cw.get_extra_info("socket")
@@ -72,7 +72,6 @@ class proxy:
 
         if dst[0] == srv[0] and dst[1] == srv[1]:
             await asyncio.to_thread(logging.warning, f"Blocked {w_label}")
-            cw.transport.abort()
             await self.writer_close(cw)
             return
 
@@ -82,7 +81,6 @@ class proxy:
             open_time = round((time.perf_counter_ns() - open_start) * 1e-6)
         except:
             await asyncio.to_thread(logging.warning, f"Failed {w_label}")
-            cw.transport.abort()
             await self.writer_close(cw)
             return
 
