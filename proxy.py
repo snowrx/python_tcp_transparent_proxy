@@ -32,8 +32,8 @@ class proxy:
             if not w.is_closing():
                 w.close()
                 await w.wait_closed()
-        except* Exception as err:
-            await asyncio.to_thread(logging.debug, f"{err.exceptions}")
+        except Exception as err:
+            await asyncio.to_thread(logging.debug, f"{type(err).__name__} in writer_close")
 
     async def proxy(self, label: str, r: asyncio.StreamReader, w: asyncio.StreamWriter):
         status = "setsockopt"
@@ -56,8 +56,8 @@ class proxy:
             await w.drain()
             await asyncio.to_thread(logging.debug, f"EOF {label}")
 
-        except* Exception as err:
-            await asyncio.to_thread(logging.debug, f"Error in {status} {label} {err.exceptions}")
+        except Exception as err:
+            await asyncio.to_thread(logging.debug, f"{type(err).__name__} in {status} {label}")
             await self.writer_close(w)
 
     async def client(self, cr: asyncio.StreamReader, cw: asyncio.StreamWriter):
@@ -79,8 +79,8 @@ class proxy:
             open_start = time.perf_counter_ns()
             pr, pw = await asyncio.open_connection(host=dst[0], port=dst[1])
             open_time = round((time.perf_counter_ns() - open_start) * 1e-6)
-        except:
-            await asyncio.to_thread(logging.warning, f"Failed {w_label}")
+        except Exception as err:
+            await asyncio.to_thread(logging.warning, f"Failed by {type(err).__name__} {w_label}")
             await self.writer_close(cw)
             return
 
