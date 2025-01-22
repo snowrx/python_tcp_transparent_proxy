@@ -7,10 +7,11 @@ import time
 
 PORT = 8081
 LIFETIME = 14400
+PRELOAD = 1 << 21
 
 
 class proxy:
-    _LIMIT = 2**14
+    _LIMIT = 1 << 14
     _SO_ORIGINAL_DST = 80
     _SOL_IPV6 = 41
     _V4_LEN = 16
@@ -40,7 +41,7 @@ class proxy:
         try:
             s: socket.socket = w.get_extra_info("socket")
             s.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, True)
-            w.transport.set_write_buffer_limits(self._LIMIT, self._LIMIT)
+            w.transport.set_write_buffer_limits(PRELOAD, PRELOAD)
 
             status = "read"
             async with asyncio.timeout(LIFETIME):
@@ -55,6 +56,7 @@ class proxy:
             w.write_eof()
             await w.drain()
             await asyncio.to_thread(logging.debug, f"EOF {label}")
+            status = "closed"
 
         except Exception as err:
             await asyncio.to_thread(logging.debug, f"{type(err).__name__} in {status} {label}")
