@@ -68,7 +68,7 @@ class proxy:
 
         dst: tuple[str, int] = await asyncio.to_thread(self.get_original_dst, soc, is_ipv4)
         w_label = f"{src[0]}@{src[1]} ▶ {dst[0]}@{dst[1]}"
-        r_label = f"{src[0]}@{src[1]} ◀	{dst[0]}@{dst[1]}"
+        r_label = f"{src[0]}@{src[1]} ◀ {dst[0]}@{dst[1]}"
 
         if dst[0] == srv[0] and dst[1] == srv[1]:
             await asyncio.to_thread(logging.warning, f"Blocked {w_label}")
