@@ -66,7 +66,6 @@ class proxy:
         srv: tuple[str, int] = cw.get_extra_info("sockname")
         src: tuple[str, int] = cw.get_extra_info("peername")
         is_ipv4 = "." in src[0]
-        await asyncio.to_thread(logging.info, f"Connection from {src[0]}@{src[1]} to {srv[0]}@{srv[1]}")
 
         try:
             dst: tuple[str, int] = await asyncio.to_thread(self.get_original_dst, soc, is_ipv4)
