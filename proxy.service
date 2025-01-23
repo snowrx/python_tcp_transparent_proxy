@@ -8,6 +8,7 @@ DynamicUser=yes
 WorkingDirectory=/opt
 ExecStart=python3 /opt/proxy.py
 MemoryHigh=50%
+Nice=1
 
 [Install]
 WantedBy=multi-user.target
