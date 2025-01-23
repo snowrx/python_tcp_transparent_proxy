@@ -11,7 +11,7 @@ PRELOAD = 1 << 21
 
 
 class proxy:
-    _LIMIT = 1 << 14
+    _LIMIT = 1 << 16
     _SO_ORIGINAL_DST = 80
     _SOL_IPV6 = 41
     _V4_LEN = 16
@@ -114,7 +114,7 @@ class proxy:
 if __name__ == "__main__":
     logging.basicConfig(level=logging.DEBUG)
     try:
-        os.sched_setaffinity(0, sorted(os.sched_getaffinity(0))[-4:])
+        os.sched_setaffinity(0, sorted(os.sched_getaffinity(0))[-2:])
     except:
         pass
     proxy().run()
