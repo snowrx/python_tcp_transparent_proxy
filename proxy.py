@@ -89,7 +89,7 @@ class proxy:
             await self.writer_close(cw)
             return
 
-        await asyncio.to_thread(logging.info, f"Connection established from {src[0]}@{src[1]} to {dst[0]}@{dst[1]}")
+        await asyncio.to_thread(logging.info, f"Connection established {w_label}")
         proxy_start = time.time()
         async with asyncio.TaskGroup() as tg:
             tg.create_task(self.proxy(r_label, pr, cw))
