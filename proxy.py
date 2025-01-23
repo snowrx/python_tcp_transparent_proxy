@@ -34,7 +34,7 @@ class proxy:
                 w.close()
                 await w.wait_closed()
         except Exception as err:
-            await asyncio.to_thread(logging.debug, f"{type(err).__name__} in writer_close")
+            await asyncio.to_thread(logging.error, f"Failed to close writer: {err}")
 
     async def proxy(self, label: str, r: asyncio.StreamReader, w: asyncio.StreamWriter):
         status = "setsockopt"
@@ -56,10 +56,9 @@ class proxy:
             w.write_eof()
             await w.drain()
             await asyncio.to_thread(logging.debug, f"EOF {label}")
-            status = "closed"
 
         except Exception as err:
-            await asyncio.to_thread(logging.debug, f"{type(err).__name__} in {status} {label}")
+            await asyncio.to_thread(logging.error, f"Failed to {status} {label}: {err}")
             await self.writer_close(w)
 
     async def client(self, cr: asyncio.StreamReader, cw: asyncio.StreamWriter):
@@ -67,26 +66,30 @@ class proxy:
         srv: tuple[str, int] = cw.get_extra_info("sockname")
         src: tuple[str, int] = cw.get_extra_info("peername")
         is_ipv4 = "." in src[0]
+        await asyncio.to_thread(logging.info, f"Connection from {src[0]}@{src[1]} to {srv[0]}@{srv[1]}")
 
-        dst: tuple[str, int] = await asyncio.to_thread(self.get_original_dst, soc, is_ipv4)
-        w_label = f"{src[0]}@{src[1]} ▶ {dst[0]}@{dst[1]}"
-        r_label = f"{src[0]}@{src[1]} ◀ {dst[0]}@{dst[1]}"
+        try:
+            dst: tuple[str, int] = await asyncio.to_thread(self.get_original_dst, soc, is_ipv4)
+        except Exception as err:
+            await asyncio.to_thread(logging.error, f"Failed to get original destination: {err}")
+            await self.writer_close(cw)
+            return
+        w_label = f"{src[0]}@{src[1]} -> {dst[0]}@{dst[1]}"
+        r_label = f"{src[0]}@{src[1]} <- {dst[0]}@{dst[1]}"
 
         if dst[0] == srv[0] and dst[1] == srv[1]:
-            await asyncio.to_thread(logging.warning, f"Blocked {w_label}")
+            await asyncio.to_thread(logging.error, f"Blocked direct connection {w_label}")
             await self.writer_close(cw)
             return
 
         try:
-            open_start = time.perf_counter_ns()
             pr, pw = await asyncio.open_connection(host=dst[0], port=dst[1])
-            open_time = round((time.perf_counter_ns() - open_start) * 1e-6)
         except Exception as err:
-            await asyncio.to_thread(logging.warning, f"Failed by {type(err).__name__} {w_label}")
+            await asyncio.to_thread(logging.error, f"Failed to open connection {w_label}: {err}")
             await self.writer_close(cw)
             return
 
-        await asyncio.to_thread(logging.info, f"Established {open_time}ms {w_label}")
+        await asyncio.to_thread(logging.info, f"Connection established from {src[0]}@{src[1]} to {dst[0]}@{dst[1]}")
         proxy_start = time.time()
         async with asyncio.TaskGroup() as tg:
             tg.create_task(self.proxy(r_label, pr, cw))
@@ -94,7 +97,7 @@ class proxy:
         await self.writer_close(pw)
         await self.writer_close(cw)
         proxy_time = round(time.time() - proxy_start)
-        await asyncio.to_thread(logging.info, f"Closed {proxy_time}s {w_label}")
+        await asyncio.to_thread(logging.info, f"Connection closed {w_label} in {proxy_time} seconds")
 
     async def server(self):
         server = await asyncio.start_server(self.client, port=PORT)
@@ -104,7 +107,7 @@ class proxy:
             t.cancel()
 
     def run(self):
-        logging.info(f"Listening {PORT=}")
+        logging.info(f"Proxy server started on port {PORT}")
         asyncio.run(self.server())
 
 
