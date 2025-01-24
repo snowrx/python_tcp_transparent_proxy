@@ -6,8 +6,8 @@ import struct
 import time
 
 PORT = 8081
-LIFETIME = 14400
-PRELOAD = 1 << 21
+LIFETIME = 86400
+PRELOAD = 1 << 23
 
 
 class proxy:
