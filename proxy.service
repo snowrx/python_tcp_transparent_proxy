@@ -8,6 +8,8 @@ DynamicUser=yes
 WorkingDirectory=/opt
 ExecStart=python3 /opt/proxy.py
 MemoryHigh=80%
+CPUSchedulingPolicy=rr
+CPUSchedulingPriority=1
 
 [Install]
 WantedBy=multi-user.target

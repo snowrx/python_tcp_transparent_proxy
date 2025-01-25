@@ -7,7 +7,7 @@ import time
 
 PORT = 8081
 LIFETIME = 86400
-PRELOAD = 1 << 23
+PRELOAD = 1 << 27
 
 
 class proxy:
