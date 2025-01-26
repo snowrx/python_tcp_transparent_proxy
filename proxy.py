@@ -7,7 +7,7 @@ import time
 
 PORT = 8081
 LIFETIME = 86400
-PRELOAD = 1 << 27
+PRELOAD = 1 << 21
 
 
 class proxy:
@@ -16,6 +16,8 @@ class proxy:
     _SOL_IPV6 = 41
     _V4_LEN = 16
     _V6_LEN = 28
+
+    _queue = asyncio.Queue()
 
     def get_original_dst(self, so: socket.socket, is_ipv4=True):
         if is_ipv4:
@@ -45,10 +47,14 @@ class proxy:
 
             status = "read"
             async with asyncio.timeout(LIFETIME):
+                ticket = asyncio.Event()
                 while not w.is_closing() and (data := await r.read(self._LIMIT)):
                     status = "write"
+                    await self._queue.put(ticket)
+                    await ticket.wait()
                     w.write(data)
                     await w.drain()
+                    ticket.clear()
                     status = "read"
 
             if not w.is_closing():
@@ -109,9 +115,20 @@ class proxy:
         for t in asyncio.all_tasks():
             t.cancel()
 
+    async def gatekeeper(self):
+        while True:
+            ticket: asyncio.Event = await self._queue.get()
+            ticket.set()
+            self._queue.task_done()
+
+    async def launch(self):
+        async with asyncio.TaskGroup() as tg:
+            tg.create_task(self.server())
+            tg.create_task(self.gatekeeper())
+
     def run(self):
         logging.info(f"Proxy server started on port {PORT}")
-        asyncio.run(self.server())
+        asyncio.run(self.launch())
 
 
 if __name__ == "__main__":
