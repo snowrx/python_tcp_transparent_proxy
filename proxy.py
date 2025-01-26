@@ -17,8 +17,6 @@ class proxy:
     _V4_LEN = 16
     _V6_LEN = 28
 
-    _queue = asyncio.Queue()
-
     def get_original_dst(self, so: socket.socket, is_ipv4=True):
         if is_ipv4:
             dst = so.getsockopt(socket.SOL_IP, self._SO_ORIGINAL_DST, self._V4_LEN)
@@ -39,7 +37,7 @@ class proxy:
             await asyncio.to_thread(logging.error, f"Failed to close writer: {err}")
 
     async def proxy(self, label: str, r: asyncio.StreamReader, w: asyncio.StreamWriter):
-        status = "setsockopt"
+        status = "start"
         try:
             s: socket.socket = w.get_extra_info("socket")
             s.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, True)
@@ -47,18 +45,21 @@ class proxy:
 
             status = "read"
             async with asyncio.timeout(LIFETIME):
-                while data := await r.read(self._LIMIT):
+                while not w.is_closing() and (data := await r.read(self._LIMIT)):
                     status = "write"
-                    await self._queue.put((w, data))
-                    await self._queue.join()
+                    w.write(data)
                     await w.drain()
                     status = "read"
 
-            status = "write_eof"
+            if not w.is_closing():
+                status = "write_eof"
+                w.write_eof()
+                await w.drain()
+
+            status = "feed_eof"
             r.feed_eof()
-            w.write_eof()
-            await w.drain()
             await asyncio.to_thread(logging.debug, f"EOF {label}")
+            status = "wait_closed"
 
         except Exception as err:
             await asyncio.to_thread(logging.error, f"Failed to {status} {label}: {err}")
@@ -108,27 +109,9 @@ class proxy:
         for t in asyncio.all_tasks():
             t.cancel()
 
-    async def consumer(self):
-        w: asyncio.StreamWriter
-        data: bytes
-        while True:
-            try:
-                w, data = await self._queue.get()
-                w.write(data)
-            except Exception as err:
-                await asyncio.to_thread(logging.error, f"Failed to write: {err}")
-                await self.writer_close(w)
-            finally:
-                self._queue.task_done()
-
-    async def launch(self):
-        async with asyncio.TaskGroup() as tg:
-            tg.create_task(self.consumer())
-            tg.create_task(self.server())
-
     def run(self):
         logging.info(f"Proxy server started on port {PORT}")
-        asyncio.run(self.launch())
+        asyncio.run(self.server())
 
 
 if __name__ == "__main__":
