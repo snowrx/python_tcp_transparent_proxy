@@ -43,7 +43,7 @@ class proxy:
                 w.close()
                 await w.wait_closed()
         except Exception as err:
-            await asyncio.to_thread(logging.error, f"Failed to close writer: {err}")
+            logging.error(f"Failed to close writer: {err}")
 
     async def proxy(self, label: str, r: asyncio.StreamReader, w: asyncio.StreamWriter):
         status = "start"
@@ -59,6 +59,8 @@ class proxy:
                     status = "write"
                     t.deadline = time.monotonic_ns() + len(data)
                     await self._pq.put(t)
+                    if self._pq.qsize() > 1:
+                        logging.debug(f"enqueued {t.deadline}")
                     await t.event.wait()
                     t.event.clear()
                     w.write(data)
@@ -72,11 +74,11 @@ class proxy:
 
             status = "feed_eof"
             r.feed_eof()
-            await asyncio.to_thread(logging.debug, f"EOF {label}")
+            logging.debug(f"EOF {label}")
             status = "wait_closed"
 
         except Exception as err:
-            await asyncio.to_thread(logging.error, f"Failed to {status} {label}: {err}")
+            logging.error(f"Failed to {status} {label}: {err}")
             await self.writer_close(w)
 
     async def client(self, cr: asyncio.StreamReader, cw: asyncio.StreamWriter):
@@ -88,25 +90,25 @@ class proxy:
         try:
             dst: tuple[str, int] = await asyncio.to_thread(self.get_original_dst, soc, is_ipv4)
         except Exception as err:
-            await asyncio.to_thread(logging.error, f"Failed to get original destination: {err}")
+            logging.error(f"Failed to get original destination: {err}")
             await self.writer_close(cw)
             return
         w_label = f"{src[0]}@{src[1]} -> {dst[0]}@{dst[1]}"
         r_label = f"{src[0]}@{src[1]} <- {dst[0]}@{dst[1]}"
 
         if dst[0] == srv[0] and dst[1] == srv[1]:
-            await asyncio.to_thread(logging.error, f"Blocked direct connection {w_label}")
+            logging.error(f"Blocked direct connection {w_label}")
             await self.writer_close(cw)
             return
 
         try:
             pr, pw = await asyncio.open_connection(host=dst[0], port=dst[1])
         except Exception as err:
-            await asyncio.to_thread(logging.error, f"Failed to open connection {w_label}: {err}")
+            logging.error(f"Failed to open connection {w_label}: {err}")
             await self.writer_close(cw)
             return
 
-        await asyncio.to_thread(logging.info, f"Connection established {w_label}")
+        logging.info(f"Connection established {w_label}")
         proxy_start = time.time()
         async with asyncio.TaskGroup() as tg:
             tg.create_task(self.proxy(r_label, pr, cw))
@@ -114,7 +116,7 @@ class proxy:
         await self.writer_close(pw)
         await self.writer_close(cw)
         proxy_time = round(time.time() - proxy_start)
-        await asyncio.to_thread(logging.info, f"Connection closed {w_label} in {proxy_time} seconds")
+        logging.info(f"Connection closed {w_label} in {proxy_time} seconds")
 
     async def server(self):
         server = await asyncio.start_server(self.client, port=PORT)
@@ -127,6 +129,8 @@ class proxy:
         while True:
             t = await self._pq.get()
             t.event.set()
+            if self._pq.qsize():
+                logging.debug(f"dequeued {t.deadline}")
             self._pq.task_done()
 
     async def launch(self):
