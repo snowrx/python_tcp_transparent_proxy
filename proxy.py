@@ -1,7 +1,6 @@
 from dataclasses import dataclass, field
 import asyncio
 import logging
-import os
 import socket
 import struct
 import time
@@ -141,8 +140,4 @@ class proxy:
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.DEBUG)
-    try:
-        os.sched_setaffinity(0, sorted(os.sched_getaffinity(0))[-2:])
-    except:
-        pass
     proxy().run()
