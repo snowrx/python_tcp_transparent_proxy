@@ -13,7 +13,7 @@ READAHEAD = 1 << 21
 
 @dataclass(order=True)
 class ticket:
-    length: int = field(default=0, compare=True)
+    deadline: int = field(default=0, compare=True)
     event: asyncio.Event = field(default_factory=asyncio.Event, compare=False)
 
 
@@ -57,7 +57,7 @@ class proxy:
                 t = ticket()
                 while not w.is_closing() and (data := await r.read(self._LIMIT)):
                     status = "write"
-                    t.length = len(data)
+                    t.deadline = time.monotonic_ns() + len(data)
                     await self._pq.put(t)
                     await t.event.wait()
                     t.event.clear()
