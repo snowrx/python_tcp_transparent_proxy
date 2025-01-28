@@ -1,3 +1,4 @@
+from dataclasses import dataclass, field
 import asyncio
 import logging
 import os
@@ -10,6 +11,12 @@ LIFETIME = 86400
 READAHEAD = 1 << 21
 
 
+@dataclass(order=True)
+class ticket:
+    length: int = field(default=0, compare=True)
+    event: asyncio.Event = field(default_factory=asyncio.Event, compare=False)
+
+
 class proxy:
     _LIMIT = 1 << 16
     _SO_ORIGINAL_DST = 80
@@ -17,7 +24,7 @@ class proxy:
     _V4_LEN = 16
     _V6_LEN = 28
 
-    _queue = asyncio.Queue()
+    _pq: asyncio.PriorityQueue[ticket] = asyncio.PriorityQueue()
 
     def get_original_dst(self, so: socket.socket, is_ipv4=True):
         if is_ipv4:
@@ -47,14 +54,15 @@ class proxy:
 
             status = "read"
             async with asyncio.timeout(LIFETIME):
-                ticket = asyncio.Event()
+                t = ticket()
                 while not w.is_closing() and (data := await r.read(self._LIMIT)):
                     status = "write"
-                    await self._queue.put(ticket)
-                    await ticket.wait()
+                    t.length = len(data)
+                    await self._pq.put(t)
+                    await t.event.wait()
+                    t.event.clear()
                     w.write(data)
                     await w.drain()
-                    ticket.clear()
                     status = "read"
 
             if not w.is_closing():
@@ -117,9 +125,9 @@ class proxy:
 
     async def gatekeeper(self):
         while True:
-            ticket: asyncio.Event = await self._queue.get()
-            ticket.set()
-            self._queue.task_done()
+            t = await self._pq.get()
+            t.event.set()
+            self._pq.task_done()
 
     async def launch(self):
         async with asyncio.TaskGroup() as tg:
