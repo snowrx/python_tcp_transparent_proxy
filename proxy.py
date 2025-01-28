@@ -59,8 +59,6 @@ class proxy:
                     status = "write"
                     t.deadline = time.monotonic_ns() + len(data)
                     await self._pq.put(t)
-                    if self._pq.qsize() > 1:
-                        logging.debug(f"enqueued {t.deadline}")
                     await t.event.wait()
                     t.event.clear()
                     w.write(data)
@@ -129,8 +127,6 @@ class proxy:
         while True:
             t = await self._pq.get()
             t.event.set()
-            if self._pq.qsize():
-                logging.debug(f"dequeued {t.deadline}")
             self._pq.task_done()
 
     async def launch(self):
