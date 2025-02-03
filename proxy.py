@@ -7,7 +7,7 @@ import time
 
 PORT = 8081
 LIFETIME = 86400
-READAHEAD = 1 << 21
+READAHEAD = 1 << 18
 
 
 @dataclass(order=True)
@@ -17,7 +17,7 @@ class ticket:
 
 
 class proxy:
-    _LIMIT = 1 << 16
+    _LIMIT = 1 << 14
     _SO_ORIGINAL_DST = 80
     _SOL_IPV6 = 41
     _V4_LEN = 16
@@ -106,13 +106,13 @@ class proxy:
             return
 
         logging.info(f"Connection established {w_label}")
-        proxy_start = time.time()
+        proxy_start = time.monotonic()
         async with asyncio.TaskGroup() as tg:
             tg.create_task(self.proxy(r_label, pr, cw))
             tg.create_task(self.proxy(w_label, cr, pw))
         await self.writer_close(pw)
         await self.writer_close(cw)
-        proxy_time = round(time.time() - proxy_start)
+        proxy_time = round(time.monotonic() - proxy_start)
         logging.info(f"Connection closed {w_label} in {proxy_time} seconds")
 
     async def server(self):
