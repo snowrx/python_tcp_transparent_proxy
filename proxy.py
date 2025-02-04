@@ -4,6 +4,7 @@ import logging
 import socket
 import struct
 import time
+import gc
 
 PORT = 8081
 LIFETIME = 86400
@@ -60,7 +61,7 @@ class proxy:
                     await self._pq.put(t)
                     await t.event.wait()
                     t.event.clear()
-                    w.write(data)
+                    w.write(memoryview(data))
                     await w.drain()
                     status = "read"
 
@@ -76,6 +77,7 @@ class proxy:
 
         except Exception as err:
             logging.error(f"Failed to {status} {label}: {err}")
+            w.transport.abort()
             await self.writer_close(w)
 
     async def client(self, cr: asyncio.StreamReader, cw: asyncio.StreamWriter):
@@ -95,6 +97,7 @@ class proxy:
 
         if dst[0] == srv[0] and dst[1] == srv[1]:
             logging.error(f"Blocked direct connection {w_label}")
+            cw.transport.abort()
             await self.writer_close(cw)
             return
 
@@ -102,6 +105,7 @@ class proxy:
             pr, pw = await asyncio.open_connection(host=dst[0], port=dst[1])
         except Exception as err:
             logging.error(f"Failed to open connection {w_label}: {err}")
+            cw.transport.abort()
             await self.writer_close(cw)
             return
 
@@ -139,5 +143,9 @@ class proxy:
 
 
 if __name__ == "__main__":
+    gc.collect()
+    gc.freeze()
+    gc.set_threshold(10000)
+    gc.set_debug(gc.DEBUG_STATS)
     logging.basicConfig(level=logging.DEBUG)
     proxy().run()
