@@ -1,14 +1,14 @@
 from dataclasses import dataclass, field
 import asyncio
+import gc
 import logging
 import socket
 import struct
 import time
-import gc
 
 PORT = 8081
 LIFETIME = 86400
-READAHEAD = 1 << 18
+READAHEAD = 1 << 20
 
 
 @dataclass(order=True)
@@ -18,7 +18,7 @@ class ticket:
 
 
 class proxy:
-    _LIMIT = 1 << 14
+    _LIMIT = 1 << 12
     _SO_ORIGINAL_DST = 80
     _SOL_IPV6 = 41
     _V4_LEN = 16
