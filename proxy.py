@@ -8,7 +8,7 @@ import time
 
 PORT = 8081
 LIFETIME = 86400
-READAHEAD = 1 << 20
+READAHEAD = 1 << 27
 
 
 @dataclass(order=True)
@@ -18,7 +18,7 @@ class ticket:
 
 
 class proxy:
-    _LIMIT = 1 << 12
+    _LIMIT = 1 << 16
     _SO_ORIGINAL_DST = 80
     _SOL_IPV6 = 41
     _V4_LEN = 16
