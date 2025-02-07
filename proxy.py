@@ -26,7 +26,7 @@ class proxy:
 
     _pq: asyncio.PriorityQueue[ticket] = asyncio.PriorityQueue()
 
-    def get_original_dst(self, so: socket.socket, is_ipv4=True):
+    def get_original_dst(self, so: socket.socket, is_ipv4: bool = True):
         if is_ipv4:
             dst = so.getsockopt(socket.SOL_IP, self._SO_ORIGINAL_DST, self._V4_LEN)
             port, raw_ip = struct.unpack_from("!2xH4s", dst)
