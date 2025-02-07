@@ -8,7 +8,7 @@ import time
 
 PORT = 8081
 LIFETIME = 86400
-READAHEAD = 1 << 27
+READAHEAD = 1 << 21
 
 
 @dataclass(order=True)

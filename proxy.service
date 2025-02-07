@@ -7,9 +7,7 @@ ConditionPathExists=/opt/proxy.py
 DynamicUser=yes
 WorkingDirectory=/opt
 ExecStart=python3 /opt/proxy.py
-MemoryHigh=80%
-CPUSchedulingPolicy=rr
-CPUSchedulingPriority=1
+MemoryHigh=25%
 
 [Install]
 WantedBy=multi-user.target
