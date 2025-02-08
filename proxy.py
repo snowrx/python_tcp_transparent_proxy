@@ -61,7 +61,7 @@ class proxy:
                     await self._pq.put(t)
                     await t.event.wait()
                     t.event.clear()
-                    w.write(memoryview(data))
+                    w.write(data)
                     await w.drain()
                     status = "read"
 
