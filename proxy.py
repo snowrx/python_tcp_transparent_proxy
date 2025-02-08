@@ -19,6 +19,7 @@ class ticket:
 
 
 class proxy:
+    _DEFAULT_LIMIT = 1 << 16
     _SO_ORIGINAL_DST = 80
     _SOL_IPV6 = 41
     _V4_LEN = 16
@@ -50,12 +51,12 @@ class proxy:
         try:
             s: socket.socket = w.get_extra_info("socket")
             s.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, True)
-            w.transport.set_write_buffer_limits(0)
+            w.transport.set_write_buffer_limits(LIMIT, LIMIT)
 
             status = "read"
             async with asyncio.timeout(LIFETIME):
                 t = ticket()
-                while not w.is_closing() and (data := await r.read(LIMIT)):
+                while not w.is_closing() and (data := await r.read(self._DEFAULT_LIMIT)):
                     status = "write"
                     await self._pq.put(t)
                     await t.event.wait()
@@ -101,7 +102,7 @@ class proxy:
             return
 
         try:
-            pr, pw = await asyncio.open_connection(host=dst[0], port=dst[1], limit=LIMIT)
+            pr, pw = await asyncio.open_connection(host=dst[0], port=dst[1])
         except Exception as err:
             logging.error(f"Failed to open connection {w_label}: {err}")
             cw.transport.abort()
@@ -119,7 +120,7 @@ class proxy:
         logging.info(f"Connection closed {w_label} in {proxy_time} seconds")
 
     async def server(self):
-        server = await asyncio.start_server(self.client, port=PORT, limit=LIMIT)
+        server = await asyncio.start_server(self.client, port=PORT)
         async with server:
             await server.serve_forever()
         for t in asyncio.all_tasks():
