@@ -1,3 +1,4 @@
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 import asyncio
 import gc
@@ -49,7 +50,7 @@ class proxy:
         try:
             s: socket.socket = w.get_extra_info("socket")
             s.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, True)
-            w.transport.set_write_buffer_limits(LIMIT, LIMIT)
+            w.transport.set_write_buffer_limits(0)
 
             status = "read"
             async with asyncio.timeout(LIFETIME):
@@ -130,6 +131,7 @@ class proxy:
             t.ts = time.monotonic_ns()
             t.event.set()
             self._pq.task_done()
+            await asyncio.sleep(0)
 
     async def launch(self):
         async with asyncio.TaskGroup() as tg:
@@ -144,7 +146,7 @@ class proxy:
 if __name__ == "__main__":
     gc.collect()
     gc.freeze()
-    gc.set_threshold(10000)
     gc.set_debug(gc.DEBUG_STATS)
     logging.basicConfig(level=logging.DEBUG)
-    proxy().run()
+    with ThreadPoolExecutor() as tp:
+        tp.submit(proxy().run)
