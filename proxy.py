@@ -1,5 +1,4 @@
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass, field
 import asyncio
 import gc
 import logging
@@ -9,13 +8,6 @@ import time
 
 PORT = 8081
 LIFETIME = 86400
-LIMIT = 1 << 20
-
-
-@dataclass(order=True)
-class ticket:
-    ts: int = field(default_factory=time.monotonic_ns, compare=True)
-    event: asyncio.Event = field(default_factory=asyncio.Event, compare=False)
 
 
 class proxy:
@@ -24,8 +16,6 @@ class proxy:
     _SOL_IPV6 = 41
     _V4_LEN = 16
     _V6_LEN = 28
-
-    _pq: asyncio.PriorityQueue[ticket] = asyncio.PriorityQueue()
 
     def get_original_dst(self, so: socket.socket, is_ipv4: bool = True):
         if is_ipv4:
@@ -47,36 +37,28 @@ class proxy:
             logging.error(f"Failed to close writer: {err}")
 
     async def proxy(self, label: str, r: asyncio.StreamReader, w: asyncio.StreamWriter):
-        status = "start"
         try:
             s: socket.socket = w.get_extra_info("socket")
             s.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, True)
-            w.transport.set_write_buffer_limits(LIMIT, LIMIT)
+            w.transport.set_write_buffer_limits(self._DEFAULT_LIMIT, self._DEFAULT_LIMIT)
 
-            status = "read"
             async with asyncio.timeout(LIFETIME):
-                t = ticket()
-                while not w.is_closing() and (data := await r.read(self._DEFAULT_LIMIT)):
-                    status = "write"
-                    await self._pq.put(t)
-                    await t.event.wait()
-                    t.event.clear()
+                data = await r.read(self._DEFAULT_LIMIT)
+                while not w.is_closing() and data:
+                    read = asyncio.create_task(r.read(self._DEFAULT_LIMIT))
                     w.write(data)
                     await w.drain()
-                    status = "read"
+                    data = await read
 
             if not w.is_closing():
-                status = "write_eof"
                 w.write_eof()
                 await w.drain()
 
-            status = "feed_eof"
             r.feed_eof()
             logging.debug(f"EOF {label}")
-            status = "wait_closed"
 
         except Exception as err:
-            logging.error(f"Failed to {status} {label}: {err}")
+            logging.error(f"{label}: {err}")
             w.transport.abort()
             await self.writer_close(w)
 
@@ -126,18 +108,9 @@ class proxy:
         for t in asyncio.all_tasks():
             t.cancel()
 
-    async def gatekeeper(self):
-        while True:
-            t = await self._pq.get()
-            t.ts = time.monotonic_ns()
-            t.event.set()
-            self._pq.task_done()
-            await asyncio.sleep(0)
-
     async def launch(self):
         async with asyncio.TaskGroup() as tg:
             tg.create_task(self.server())
-            tg.create_task(self.gatekeeper())
 
     def run(self):
         logging.info(f"Proxy server started on port {PORT}")
