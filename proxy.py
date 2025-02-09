@@ -6,7 +6,6 @@ import logging
 import socket
 import struct
 import time
-import io
 
 PORT = 8081
 LIFETIME = 86400
@@ -57,17 +56,14 @@ class proxy:
             status = "read"
             async with asyncio.timeout(LIFETIME):
                 t = ticket()
-                with io.BytesIO() as b:
-                    while not w.is_closing() and (length := b.write(await r.read(self._DEFAULT_LIMIT))):
-                        status = "write"
-                        await self._pq.put(t)
-                        await t.event.wait()
-                        t.event.clear()
-                        b.seek(0)
-                        w.write(b.read(length))
-                        b.seek(0)
-                        await w.drain()
-                        status = "read"
+                while not w.is_closing() and (data := await r.read(self._DEFAULT_LIMIT)):
+                    status = "write"
+                    await self._pq.put(t)
+                    await t.event.wait()
+                    t.event.clear()
+                    w.write(data)
+                    await w.drain()
+                    status = "read"
 
             if not w.is_closing():
                 status = "write_eof"
