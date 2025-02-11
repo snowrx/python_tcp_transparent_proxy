@@ -1,3 +1,4 @@
+from dataclasses import dataclass, field
 import asyncio
 import gc
 import logging
@@ -9,12 +10,20 @@ PORT = 8081
 LIFETIME = 86400
 
 
+@dataclass(order=True)
+class ticket:
+    ts: int = field(default_factory=time.monotonic_ns, compare=True)
+    ev: asyncio.Event = field(default_factory=asyncio.Event, compare=False)
+
+
 class proxy:
     _READ_CHUNK_SIZE = 1 << 16
     _SO_ORIGINAL_DST = 80
     _SOL_IPV6 = 41
     _V4_LEN = 16
     _V6_LEN = 28
+
+    _wq: asyncio.PriorityQueue[ticket] = asyncio.PriorityQueue()
 
     def get_original_dst(self, so: socket.socket, is_ipv4: bool = True):
         if is_ipv4:
@@ -37,14 +46,20 @@ class proxy:
 
     async def proxy(self, label: str, r: asyncio.StreamReader, w: asyncio.StreamWriter):
         try:
+            read = asyncio.create_task(r.read(self._READ_CHUNK_SIZE))
+            await asyncio.sleep(0)
             s: socket.socket = w.get_extra_info("socket")
             s.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, True)
             w.transport.set_write_buffer_limits(0)
 
             async with asyncio.timeout(LIFETIME):
-                data = await r.read(self._READ_CHUNK_SIZE)
+                t = ticket()
+                data = await read
                 while not w.is_closing() and data:
                     read = asyncio.create_task(r.read(self._READ_CHUNK_SIZE))
+                    await self._wq.put(t)
+                    await t.ev.wait()
+                    t.ev.clear()
                     w.write(data)
                     await w.drain()
                     data = await read
@@ -107,9 +122,17 @@ class proxy:
         for t in asyncio.all_tasks():
             t.cancel()
 
+    async def consumer(self):
+        while True:
+            t = await self._wq.get()
+            t.ts = time.monotonic_ns()
+            t.ev.set()
+            self._wq.task_done()
+
     async def launch(self):
         async with asyncio.TaskGroup() as tg:
             tg.create_task(self.server())
+            tg.create_task(self.consumer())
 
     def run(self):
         logging.info(f"Proxy server started on port {PORT}")
