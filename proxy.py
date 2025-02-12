@@ -47,19 +47,18 @@ class proxy:
     async def proxy(self, label: str, r: asyncio.StreamReader, w: asyncio.StreamWriter):
         try:
             read = asyncio.create_task(r.read(self._READ_CHUNK_SIZE))
-            await asyncio.sleep(0)
             s: socket.socket = w.get_extra_info("socket")
             s.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, True)
-            w.transport.set_write_buffer_limits(0)
+            w.transport.set_write_buffer_limits(self._READ_CHUNK_SIZE, self._READ_CHUNK_SIZE)
 
             async with asyncio.timeout(LIFETIME):
                 t = ticket()
                 data = await read
                 while not w.is_closing() and data:
                     read = asyncio.create_task(r.read(self._READ_CHUNK_SIZE))
+                    t.ev.clear()
                     await self._wq.put(t)
                     await t.ev.wait()
-                    t.ev.clear()
                     w.write(data)
                     await w.drain()
                     data = await read
