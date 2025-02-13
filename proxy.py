@@ -1,13 +1,19 @@
+from dataclasses import dataclass, field
 import asyncio
 import gc
 import logging
 import socket
 import struct
 import time
-import sys
 
 PORT = 8081
 LIFETIME = 86400
+
+
+@dataclass(order=True)
+class ticket:
+    ts: int = field(default_factory=time.monotonic_ns, compare=True)
+    ev: asyncio.Event = field(default_factory=asyncio.Event, compare=False)
 
 
 class proxy:
@@ -16,6 +22,8 @@ class proxy:
     _SOL_IPV6 = 41
     _V4_LEN = 16
     _V6_LEN = 28
+
+    _wq: asyncio.PriorityQueue[ticket] = asyncio.PriorityQueue()
 
     def get_original_dst(self, so: socket.socket, is_ipv4: bool = True):
         if is_ipv4:
@@ -44,9 +52,13 @@ class proxy:
             w.transport.set_write_buffer_limits(self._READ_CHUNK_SIZE, self._READ_CHUNK_SIZE)
 
             async with asyncio.timeout(LIFETIME):
+                t = ticket()
                 data = await read
                 while not w.is_closing() and data:
                     read = asyncio.create_task(r.read(self._READ_CHUNK_SIZE))
+                    await self._wq.put(t)
+                    await t.ev.wait()
+                    t.ev.clear()
                     w.write(data)
                     await w.drain()
                     data = await read
@@ -109,9 +121,17 @@ class proxy:
         for t in asyncio.all_tasks():
             t.cancel()
 
+    async def consumer(self):
+        while True:
+            t = await self._wq.get()
+            t.ts = time.monotonic_ns()
+            t.ev.set()
+            self._wq.task_done()
+
     async def launch(self):
         async with asyncio.TaskGroup() as tg:
             tg.create_task(self.server())
+            tg.create_task(self.consumer())
 
     def run(self):
         logging.info(f"Proxy server started on port {PORT}")
@@ -124,5 +144,4 @@ if __name__ == "__main__":
     gc.set_threshold(10000)
     gc.set_debug(gc.DEBUG_STATS)
     logging.basicConfig(level=logging.DEBUG)
-    sys.setswitchinterval(1 / (1 << 3))
     proxy().run()
