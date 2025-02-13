@@ -4,6 +4,7 @@ import logging
 import socket
 import struct
 import time
+import sys
 
 PORT = 8081
 LIFETIME = 86400
@@ -123,4 +124,5 @@ if __name__ == "__main__":
     gc.set_threshold(10000)
     gc.set_debug(gc.DEBUG_STATS)
     logging.basicConfig(level=logging.DEBUG)
+    sys.setswitchinterval(1 / (1 << 3))
     proxy().run()
