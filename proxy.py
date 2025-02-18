@@ -125,5 +125,5 @@ if __name__ == "__main__":
     gc.freeze()
     gc.set_threshold(10000)
     gc.set_debug(gc.DEBUG_STATS)
-    logging.basicConfig(level=logging.DEBUG)
+    logging.basicConfig(level=logging.WARNING)
     proxy().run()
