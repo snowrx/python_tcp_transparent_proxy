@@ -6,11 +6,8 @@ ConditionPathExists=/opt/proxy.py
 [Service]
 DynamicUser=yes
 WorkingDirectory=/opt
-Environment="PYTHONPYCACHEPREFIX=/tmp"
 ExecStart=python3 /opt/proxy.py
 MemoryHigh=25%
-CPUSchedulingPolicy=rr
-CPUSchedulingPriority=1
 
 [Install]
 WantedBy=multi-user.target
