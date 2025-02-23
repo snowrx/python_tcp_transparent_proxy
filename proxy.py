@@ -7,10 +7,10 @@ import time
 
 PORT = 8081
 READ_TIMEOUT = 3600
+LIMIT = 1 << 20
 
 
 class proxy:
-    _READ_CHUNK_SIZE = 1 << 16
     _SO_ORIGINAL_DST = 80
     _SOL_IPV6 = 41
     _V4_LEN = 16
@@ -40,7 +40,7 @@ class proxy:
     async def read_data(self, r: asyncio.StreamReader):
         try:
             async with asyncio.timeout(READ_TIMEOUT):
-                return await r.read(self._READ_CHUNK_SIZE)
+                return await r.read(LIMIT)
         except Exception as err:
             logging.error(f"Error in read task: {type(err).__name__}")
             return b""
@@ -50,9 +50,9 @@ class proxy:
             read = asyncio.create_task(self.read_data(r))
             s: socket.socket = w.get_extra_info("socket")
             s.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, True)
-            w.transport.set_write_buffer_limits(self._READ_CHUNK_SIZE)
-
+            w.transport.set_write_buffer_limits(LIMIT, LIMIT)
             await asyncio.sleep(0)
+
             logging.debug(f"Start channel: {label}")
             while not w.is_closing() and (data := await read):
                 read = asyncio.create_task(self.read_data(r))
@@ -93,7 +93,7 @@ class proxy:
             return
 
         try:
-            from_remote, to_remote = await asyncio.open_connection(host=dst[0], port=dst[1])
+            from_remote, to_remote = await asyncio.open_connection(host=dst[0], port=dst[1], limit=LIMIT)
         except Exception as err:
             logging.error(f"Failed to open connection: {type(err).__name__}, {w_label}")
             await self.writer_close(to_client, True)
@@ -110,7 +110,7 @@ class proxy:
         logging.info(f"Closed: {w_label}, {proxy_time}s")
 
     async def server(self):
-        server = await asyncio.start_server(self.client, port=PORT)
+        server = await asyncio.start_server(self.client, port=PORT, limit=LIMIT)
         async with server:
             logging.info(f"Listening on port {PORT}")
             await server.serve_forever()
