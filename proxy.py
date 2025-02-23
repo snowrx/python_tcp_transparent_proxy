@@ -42,7 +42,7 @@ class proxy:
             async with asyncio.timeout(READ_TIMEOUT):
                 return await r.read(self._READ_CHUNK_SIZE)
         except Exception as err:
-            logging.error(f"Failed to read data: {type(err).__name__}")
+            logging.error(f"Error in read task: {type(err).__name__}")
             return b""
 
     async def proxy(self, label: str, r: asyncio.StreamReader, w: asyncio.StreamWriter):
@@ -67,7 +67,7 @@ class proxy:
             logging.debug(f"Finished channel: {label}")
 
         except Exception as err:
-            logging.error(f"Error channel: {type(err).__name__}, {label}")
+            logging.error(f"Error in channel: {type(err).__name__}, {label}")
             await self.writer_close(w, True)
 
     async def client(self, from_client: asyncio.StreamReader, to_client: asyncio.StreamWriter):
@@ -129,5 +129,5 @@ if __name__ == "__main__":
     gc.freeze()
     gc.set_threshold(10000)
     gc.set_debug(gc.DEBUG_STATS)
-    logging.basicConfig(level=logging.WARNING)
+    logging.basicConfig(level=logging.INFO)
     proxy().run()
