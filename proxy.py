@@ -68,6 +68,7 @@ class proxy:
 
         except Exception as err:
             logging.error(f"Error in channel: {type(err).__name__}, {label}")
+            read.cancel()
             await self.writer_close(w, True)
 
     async def client(self, from_client: asyncio.StreamReader, to_client: asyncio.StreamWriter):
