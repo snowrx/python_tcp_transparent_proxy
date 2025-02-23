@@ -38,8 +38,12 @@ class proxy:
             logging.error(f"Failed to close writer: {type(err).__name__}")
 
     async def read_data(self, r: asyncio.StreamReader):
-        async with asyncio.timeout(READ_TIMEOUT):
-            return await r.read(self._READ_CHUNK_SIZE)
+        try:
+            async with asyncio.timeout(READ_TIMEOUT):
+                return await r.read(self._READ_CHUNK_SIZE)
+        except Exception as err:
+            logging.error(f"Failed to read data: {type(err).__name__}")
+            return b""
 
     async def proxy(self, label: str, r: asyncio.StreamReader, w: asyncio.StreamWriter):
         try:
