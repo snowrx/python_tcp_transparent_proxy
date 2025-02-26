@@ -1,3 +1,4 @@
+from concurrent.futures import ThreadPoolExecutor
 import asyncio
 import gc
 import logging
@@ -8,6 +9,7 @@ import time
 PORT = 8081
 READ_TIMEOUT = 3600
 WRITE_BUFFER_SIZE = 1 << 20
+THREAD_POOL_SIZE = 2
 
 
 class proxy:
@@ -111,7 +113,7 @@ class proxy:
         logging.info(f"Closed: {w_label}, {proxy_time}s")
 
     async def server(self):
-        server = await asyncio.start_server(self.client, port=PORT)
+        server = await asyncio.start_server(self.client, port=PORT, reuse_port=True)
         async with server:
             logging.info(f"Listening on port {PORT}")
             await server.serve_forever()
@@ -122,7 +124,7 @@ class proxy:
         async with asyncio.TaskGroup() as tg:
             tg.create_task(self.server())
 
-    def run(self):
+    def run(self, _):
         asyncio.run(self.launch())
 
 
@@ -132,4 +134,5 @@ if __name__ == "__main__":
     gc.set_threshold(10000)
     gc.set_debug(gc.DEBUG_STATS)
     logging.basicConfig(level=logging.INFO)
-    proxy().run()
+    with ThreadPoolExecutor(THREAD_POOL_SIZE) as executor:
+        executor.map(proxy().run, range(THREAD_POOL_SIZE))
