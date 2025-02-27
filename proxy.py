@@ -40,17 +40,17 @@ class proxy:
         except Exception as err:
             logging.error(f"Failed to close writer: {type(err).__name__}")
 
-    async def read_data(self, r: asyncio.StreamReader):
+    async def read_data(self, label: str, r: asyncio.StreamReader):
         try:
             async with asyncio.timeout(READ_TIMEOUT):
                 return await r.read(self._READ_CHUNK_SIZE)
         except Exception as err:
-            logging.error(f"Error in read task: {type(err).__name__}")
-            return b""
+            logging.error(f"Error in read task: {type(err).__name__}, {label}")
+            return None
 
     async def proxy(self, label: str, r: asyncio.StreamReader, w: asyncio.StreamWriter):
+        read = asyncio.create_task(self.read_data(label, r))
         try:
-            read = asyncio.create_task(self.read_data(r))
             s: socket.socket = w.get_extra_info("socket")
             s.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, True)
             w.transport.set_write_buffer_limits(WRITE_BUFFER_SIZE, WRITE_BUFFER_SIZE)
@@ -58,7 +58,7 @@ class proxy:
             await asyncio.sleep(0)
             logging.debug(f"Start channel: {label}")
             while not w.is_closing() and (data := await read):
-                read = asyncio.create_task(self.read_data(r))
+                read = asyncio.create_task(self.read_data(label, r))
                 w.write(data)
                 await w.drain()
 
