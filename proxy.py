@@ -1,15 +1,14 @@
-from concurrent.futures import ProcessPoolExecutor
 import asyncio
 import gc
 import logging
 import socket
 import struct
+import threading
 import time
 
 PORT = 8081
 READ_TIMEOUT = 3600
 WRITE_BUFFER_SIZE = 1 << 20
-WORKERS = 2
 
 
 class proxy:
@@ -124,15 +123,16 @@ class proxy:
         async with asyncio.TaskGroup() as tg:
             tg.create_task(self.server())
 
-    def run(self, _: int = 0):
+    def run(self):
         asyncio.run(self.launch())
 
 
 if __name__ == "__main__":
     gc.collect()
     gc.freeze()
-    gc.set_threshold(10000)
+    gc.set_threshold(3000)
     gc.set_debug(gc.DEBUG_STATS)
     logging.basicConfig(level=logging.INFO)
-    with ProcessPoolExecutor(WORKERS) as executor:
-        executor.map(proxy().run, range(WORKERS))
+    t = threading.Thread(target=proxy().run)
+    t.start()
+    t.join()
