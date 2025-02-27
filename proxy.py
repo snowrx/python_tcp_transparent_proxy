@@ -1,4 +1,4 @@
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ProcessPoolExecutor
 import asyncio
 import gc
 import logging
@@ -9,7 +9,7 @@ import time
 PORT = 8081
 READ_TIMEOUT = 3600
 WRITE_BUFFER_SIZE = 1 << 20
-THREAD_POOL_SIZE = 2
+WORKERS = 2
 
 
 class proxy:
@@ -134,5 +134,5 @@ if __name__ == "__main__":
     gc.set_threshold(10000)
     gc.set_debug(gc.DEBUG_STATS)
     logging.basicConfig(level=logging.INFO)
-    with ThreadPoolExecutor(THREAD_POOL_SIZE) as executor:
-        executor.map(proxy().run, range(THREAD_POOL_SIZE))
+    with ProcessPoolExecutor(WORKERS) as executor:
+        executor.map(proxy().run, range(WORKERS))
