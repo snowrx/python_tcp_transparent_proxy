@@ -124,7 +124,7 @@ class proxy:
         async with asyncio.TaskGroup() as tg:
             tg.create_task(self.server())
 
-    def run(self, _):
+    def run(self, _: int = 0):
         asyncio.run(self.launch())
 
 
