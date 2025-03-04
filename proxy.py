@@ -8,7 +8,7 @@ import time
 
 PORT = 8081
 READ_TIMEOUT = 3600
-WRITE_BUFFER_SIZE = 1 << 20
+WRITE_BUFFER_SIZE = 1 << 24
 
 
 class proxy:
