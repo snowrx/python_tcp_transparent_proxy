@@ -4,11 +4,12 @@ After=network-online.target
 ConditionPathExists=/opt/proxy.py
 
 [Service]
-DynamicUser=yes
-WorkingDirectory=/opt
-Environment="PYTHONPYCACHEPREFIX=/tmp"
+DynamicUser=true
+CacheDirectory=proxy
+WorkingDirectory=/var/cache/proxy
+Environment="PYTHONPYCACHEPREFIX=/var/cache/proxy"
 ExecStart=python3 /opt/proxy.py
-MemoryHigh=25%
+MemoryHigh=90%
 
 [Install]
 WantedBy=multi-user.target
