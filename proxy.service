@@ -5,6 +5,7 @@ ConditionPathExists=/opt/proxy.py
 
 [Service]
 DynamicUser=true
+TemporaryFileSystem=/var/cache
 CacheDirectory=proxy
 WorkingDirectory=/var/cache/proxy
 Environment="PYTHONPYCACHEPREFIX=/var/cache/proxy"
