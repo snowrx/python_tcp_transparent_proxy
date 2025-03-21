@@ -8,11 +8,10 @@ import time
 
 PORT = 8081
 READ_TIMEOUT = 3600
-WRITE_BUFFER_SIZE = 1 << 24
 
 
 class proxy:
-    _READ_CHUNK_SIZE = 1 << 16
+    _DEFAULT_LIMIT = 1 << 16
     _SO_ORIGINAL_DST = 80
     _SOL_IPV6 = 41
     _V4_LEN = 16
@@ -42,7 +41,7 @@ class proxy:
     async def read_data(self, label: str, r: asyncio.StreamReader):
         try:
             async with asyncio.timeout(READ_TIMEOUT):
-                return await r.read(self._READ_CHUNK_SIZE)
+                return await r.read(self._DEFAULT_LIMIT)
         except Exception as err:
             logging.error(f"Error in read task: {type(err).__name__}, {label}")
             return None
@@ -52,7 +51,7 @@ class proxy:
         try:
             s: socket.socket = w.get_extra_info("socket")
             s.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, True)
-            w.transport.set_write_buffer_limits(WRITE_BUFFER_SIZE, WRITE_BUFFER_SIZE)
+            w.transport.set_write_buffer_limits(self._DEFAULT_LIMIT - 1, self._DEFAULT_LIMIT - 1)
 
             await asyncio.sleep(0)
             logging.debug(f"Start channel: {label}")
@@ -95,7 +94,7 @@ class proxy:
             return
 
         try:
-            from_remote, to_remote = await asyncio.open_connection(host=dst[0], port=dst[1])
+            from_remote, to_remote = await asyncio.open_connection(host=dst[0], port=dst[1], limit=self._DEFAULT_LIMIT)
         except Exception as err:
             logging.error(f"Failed to open connection: {type(err).__name__}, {w_label}")
             await self.writer_close(to_client, True)
@@ -112,7 +111,7 @@ class proxy:
         logging.info(f"Closed: {w_label}, {proxy_time}s")
 
     async def server(self):
-        server = await asyncio.start_server(self.client, port=PORT, reuse_port=True)
+        server = await asyncio.start_server(self.client, port=PORT, limit=self._DEFAULT_LIMIT)
         async with server:
             logging.info(f"Listening on port {PORT}")
             await server.serve_forever()
@@ -130,7 +129,6 @@ class proxy:
 if __name__ == "__main__":
     gc.collect()
     gc.freeze()
-    gc.set_threshold(3000)
     gc.set_debug(gc.DEBUG_STATS)
     logging.basicConfig(level=logging.INFO)
     t = threading.Thread(target=proxy().run)
