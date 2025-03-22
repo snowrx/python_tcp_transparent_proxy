@@ -52,7 +52,6 @@ class proxy:
         try:
             s: socket.socket = w.get_extra_info("socket")
             s.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, True)
-            s.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, struct.pack("ii", 1, 10))
             w.transport.set_write_buffer_limits(LOOKAHEAD, LOOKAHEAD)
 
             await asyncio.sleep(0)
@@ -130,8 +129,10 @@ class proxy:
 
 
 if __name__ == "__main__":
+    gc.collect()
+    gc.freeze()
     gc.set_debug(gc.DEBUG_STATS)
     gc.set_threshold(10000)
     logging.basicConfig(level=logging.INFO)
-    with ThreadPoolExecutor(1) as t:
+    with ThreadPoolExecutor() as t:
         t.submit(proxy().run)
