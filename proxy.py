@@ -110,6 +110,8 @@ class proxy:
     async def server(self):
         server = await asyncio.start_server(self.client, port=PORT, limit=self._DEFAULT_LIMIT)
         async with server:
+            gc.collect()
+            gc.freeze()
             logging.info(f"Listening on port {PORT}")
             await server.serve_forever()
         return
@@ -125,8 +127,6 @@ class proxy:
 
 
 if __name__ == "__main__":
-    gc.collect()
-    gc.freeze()
     gc.set_debug(gc.DEBUG_STATS)
     gc.set_threshold(3000)
     logging.basicConfig(level=logging.INFO)
