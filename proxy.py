@@ -8,6 +8,7 @@ import time
 
 PORT = 8081
 CONNECTION_LIFETIME = 86400
+LOOKAHEAD = 1 << 20
 
 
 class proxy:
@@ -43,7 +44,7 @@ class proxy:
         try:
             s: socket.socket = w.get_extra_info("socket")
             s.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, True)
-            w.transport.set_write_buffer_limits(self._DEFAULT_LIMIT - 1, self._DEFAULT_LIMIT - 1)
+            w.transport.set_write_buffer_limits(LOOKAHEAD, LOOKAHEAD)
             await asyncio.sleep(0)
 
             logging.debug(f"Start channel: {label}")
