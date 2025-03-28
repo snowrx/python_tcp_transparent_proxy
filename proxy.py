@@ -129,7 +129,6 @@ if __name__ == "__main__":
     gc.collect()
     gc.freeze()
     gc.set_debug(gc.DEBUG_STATS)
-    gc.set_threshold(3000)
     logging.basicConfig(level=logging.INFO)
     with ThreadPoolExecutor() as t:
         t.submit(proxy().run)
