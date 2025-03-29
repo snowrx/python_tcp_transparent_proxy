@@ -47,25 +47,22 @@ class proxy:
             w.transport.set_write_buffer_limits(LOOKAHEAD, LOOKAHEAD)
             await asyncio.sleep(0)
 
-            logging.debug(f"Start channel: {label}")
             async with asyncio.timeout(CONNECTION_LIFETIME):
                 while not w.is_closing() and (data := await read):
-                    read = asyncio.create_task(r.read(self._DEFAULT_LIMIT))
                     w.write(data)
                     del data
+                    del read
+                    read = asyncio.create_task(r.read(self._DEFAULT_LIMIT))
                     await w.drain()
 
             if not w.is_closing():
                 w.write_eof()
                 await w.drain()
-            logging.debug(f"End channel: {label}")
 
         except Exception as err:
             logging.error(f"Error in channel: {type(err).__name__}, {label}")
-            read.cancel()
             await self.writer_close(w)
 
-        del read
         return
 
     async def client(self, from_client: asyncio.StreamReader, to_client: asyncio.StreamWriter):
@@ -126,9 +123,9 @@ class proxy:
 
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.DEBUG)
+    gc.set_threshold(3000)
     gc.collect()
-    gc.freeze()
     gc.set_debug(gc.DEBUG_STATS)
-    logging.basicConfig(level=logging.INFO)
     with ThreadPoolExecutor() as t:
         t.submit(proxy().run)
