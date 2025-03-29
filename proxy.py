@@ -123,9 +123,9 @@ class proxy:
 
 
 if __name__ == "__main__":
-    logging.basicConfig(level=logging.DEBUG)
-    gc.set_threshold(3000)
     gc.collect()
+    gc.freeze()
     gc.set_debug(gc.DEBUG_STATS)
+    logging.basicConfig(level=logging.DEBUG)
     with ThreadPoolExecutor() as t:
         t.submit(proxy().run)
