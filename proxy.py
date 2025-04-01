@@ -47,12 +47,16 @@ class proxy:
             w.transport.set_write_buffer_limits(LOOKAHEAD, LOOKAHEAD)
             await asyncio.sleep(0)
 
+            d_now = time.monotonic()
             async with asyncio.timeout(CONNECTION_LIFETIME):
                 while not w.is_closing() and (data := await read):
                     w.write(data)
                     del data
                     del read
                     read = asyncio.create_task(r.read(self._DEFAULT_LIMIT))
+                    if (slept := time.monotonic() - d_now) >= 10:
+                        logging.debug(f"Slept {slept:.1f}s: {label}")
+                    d_now = time.monotonic()
                     await w.drain()
 
             if not w.is_closing():
@@ -101,7 +105,7 @@ class proxy:
         await self.writer_close(to_remote)
         await self.writer_close(to_client)
         proxy_time = round(time.monotonic() - proxy_start)
-        logging.info(f"Closed: {w_label}, {proxy_time}s")
+        logging.info(f"Closed: {w_label}, {proxy_time:.1f}s")
         del from_remote, to_remote, from_client, to_client
         return
 
