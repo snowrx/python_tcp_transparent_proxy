@@ -44,7 +44,7 @@ class proxy:
         try:
             s: socket.socket = w.get_extra_info("socket")
             s.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, True)
-            w.transport.set_write_buffer_limits(LOOKAHEAD, 0)
+            w.transport.set_write_buffer_limits(LOOKAHEAD, LOOKAHEAD)
             await asyncio.sleep(0)
 
             async with asyncio.timeout(CONNECTION_LIFETIME):
