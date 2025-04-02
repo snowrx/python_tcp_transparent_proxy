@@ -8,7 +8,7 @@ import time
 
 PORT = 8081
 CONNECTION_LIFETIME = 86400
-LOOKAHEAD = 1 << 20
+LOOKAHEAD = 1 << 27
 
 
 class proxy:
@@ -44,19 +44,15 @@ class proxy:
         try:
             s: socket.socket = w.get_extra_info("socket")
             s.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, True)
-            w.transport.set_write_buffer_limits(LOOKAHEAD, LOOKAHEAD)
+            w.transport.set_write_buffer_limits(LOOKAHEAD, 0)
             await asyncio.sleep(0)
 
-            d_now = time.monotonic()
             async with asyncio.timeout(CONNECTION_LIFETIME):
                 while not w.is_closing() and (data := await read):
-                    w.write(data)
-                    del data
                     del read
                     read = asyncio.create_task(r.read(self._DEFAULT_LIMIT))
-                    if (slept := time.monotonic() - d_now) >= 10:
-                        logging.debug(f"Slept {slept:.1f}s: {label}")
-                    d_now = time.monotonic()
+                    w.write(data)
+                    del data
                     await w.drain()
 
             if not w.is_closing():
