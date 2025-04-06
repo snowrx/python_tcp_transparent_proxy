@@ -7,8 +7,7 @@ import struct
 import time
 
 PORT = 8081
-CONNECTION_LIFETIME = 86400
-LOOKAHEAD = 1 << 27
+READ_TIMEOUT = 3600
 
 
 class proxy:
@@ -38,31 +37,35 @@ class proxy:
             logging.error(f"Failed to close writer: {type(err).__name__}")
         return
 
-    async def proxy(self, label: str, r: asyncio.StreamReader, w: asyncio.StreamWriter):
-        read = asyncio.create_task(r.read(self._DEFAULT_LIMIT))
-
+    async def read(self, r: asyncio.StreamReader, label: str):
         try:
+            async with asyncio.timeout(READ_TIMEOUT):
+                return await r.read(self._DEFAULT_LIMIT)
+        except Exception as err:
+            logging.error(f"Failed to read: {type(err).__name__}, {label}")
+            return None
+
+    async def proxy(self, label: str, r: asyncio.StreamReader, w: asyncio.StreamWriter):
+        try:
+            read = asyncio.create_task(self.read(r, label))
             s: socket.socket = w.get_extra_info("socket")
             s.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, True)
-            w.transport.set_write_buffer_limits(LOOKAHEAD, LOOKAHEAD)
+            w.transport.set_write_buffer_limits(self._DEFAULT_LIMIT, self._DEFAULT_LIMIT)
             await asyncio.sleep(0)
 
-            async with asyncio.timeout(CONNECTION_LIFETIME):
-                while not w.is_closing() and (data := await read):
-                    del read
-                    read = asyncio.create_task(r.read(self._DEFAULT_LIMIT))
-                    w.write(data)
-                    del data
-                    await w.drain()
+            while not w.is_closing() and (data := await read):
+                del read
+                read = asyncio.create_task(self.read(r, label))
+                w.write(data)
+                del data
+                await w.drain()
 
             if not w.is_closing():
                 w.write_eof()
                 await w.drain()
-
         except Exception as err:
             logging.error(f"Error in channel: {type(err).__name__}, {label}")
             await self.writer_close(w)
-
         return
 
     async def client(self, from_client: asyncio.StreamReader, to_client: asyncio.StreamWriter):
@@ -87,7 +90,7 @@ class proxy:
             return
 
         try:
-            from_remote, to_remote = await asyncio.open_connection(host=dst[0], port=dst[1], limit=self._DEFAULT_LIMIT)
+            from_remote, to_remote = await asyncio.open_connection(host=dst[0], port=dst[1])
         except Exception as err:
             logging.error(f"Failed to open connection: {type(err).__name__}, {w_label}")
             await self.writer_close(to_client)
@@ -106,27 +109,22 @@ class proxy:
         return
 
     async def server(self):
-        server = await asyncio.start_server(self.client, port=PORT, limit=self._DEFAULT_LIMIT)
+        server = await asyncio.start_server(self.client, port=PORT)
         async with server:
             logging.info(f"Listening on port {PORT}")
             await server.serve_forever()
         return
 
-    async def launch(self):
-        async with asyncio.TaskGroup() as tg:
-            tg.create_task(self.server())
-        return
-
     def run(self):
-        asyncio.run(self.launch())
+        asyncio.run(self.server())
         return
 
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.DEBUG)
+    gc.set_threshold(3000)
     gc.collect()
     gc.freeze()
-    gc.set_threshold(10000)
     gc.set_debug(gc.DEBUG_STATS)
-    logging.basicConfig(level=logging.DEBUG)
     with ThreadPoolExecutor() as t:
         t.submit(proxy().run)
