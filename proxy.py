@@ -5,6 +5,7 @@ import logging
 import socket
 import struct
 import time
+import os
 
 PORT = 8081
 READ_TIMEOUT = 3600
@@ -129,5 +130,12 @@ if __name__ == "__main__":
     gc.collect()
     gc.freeze()
     gc.set_debug(gc.DEBUG_STATS)
+
+    try:
+        cpu = sorted(os.sched_getaffinity(0))[-2:]
+        os.sched_setaffinity(0, cpu)
+    except:
+        pass
+
     with ThreadPoolExecutor() as t:
         t.submit(proxy().run)
