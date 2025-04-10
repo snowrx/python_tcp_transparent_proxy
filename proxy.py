@@ -112,6 +112,8 @@ class proxy:
     async def server(self):
         server = await asyncio.start_server(self.client, port=PORT)
         async with server:
+            for sock in server.sockets:
+                sock.setsockopt(socket.SOL_TCP, socket.TCP_DEFER_ACCEPT, 1)
             logging.info(f"Listening on port {PORT}")
             await server.serve_forever()
         return
