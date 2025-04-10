@@ -8,6 +8,7 @@ import time
 
 PORT = 8081
 READ_TIMEOUT = 3600
+READAHEAD = 1 << 24
 
 
 class proxy:
@@ -50,7 +51,7 @@ class proxy:
             read = asyncio.create_task(self.read(r, label))
             s: socket.socket = w.get_extra_info("socket")
             s.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, True)
-            w.transport.set_write_buffer_limits(self._DEFAULT_LIMIT, self._DEFAULT_LIMIT)
+            w.transport.set_write_buffer_limits(READAHEAD, READAHEAD)
             await asyncio.sleep(0)
 
             while not w.is_closing() and (data := await read):
