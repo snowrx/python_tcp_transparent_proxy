@@ -67,7 +67,6 @@ class proxy:
                 await w.drain()
         except Exception as err:
             logging.error(f"Error in channel: {type(err).__name__}, {label}")
-            await self.writer_close(w)
         return
 
     async def client(self, from_client: asyncio.StreamReader, to_client: asyncio.StreamWriter):
@@ -113,8 +112,6 @@ class proxy:
     async def server(self):
         server = await asyncio.start_server(self.client, port=PORT)
         async with server:
-            for sock in server.sockets:
-                sock.setsockopt(socket.SOL_TCP, socket.TCP_DEFER_ACCEPT, 1)
             logging.info(f"Listening on port {PORT}")
             await server.serve_forever()
         return
@@ -130,12 +127,10 @@ if __name__ == "__main__":
     gc.collect()
     gc.freeze()
     gc.set_debug(gc.DEBUG_STATS)
-
     try:
         cpu = sorted(os.sched_getaffinity(0))[-2:]
         os.sched_setaffinity(0, cpu)
     except:
         pass
-
     with ThreadPoolExecutor() as t:
         t.submit(proxy().run)
