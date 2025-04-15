@@ -8,6 +8,7 @@ import time
 
 PORT = 8081
 READ_TIMEOUT = 600
+THREAD_LIMIT = 2
 
 
 class proxy:
@@ -108,13 +109,14 @@ class proxy:
         return
 
     async def server(self):
+        asyncio.get_running_loop().set_default_executor(ThreadPoolExecutor(THREAD_LIMIT))
         server = await asyncio.start_server(self.client, port=PORT, reuse_port=True)
         async with server:
             logging.info(f"Listening on port {PORT}")
             await server.serve_forever()
         return
 
-    def run(self):
+    def run(self, _=None):
         asyncio.run(self.server())
         return
 
@@ -125,6 +127,5 @@ if __name__ == "__main__":
     gc.collect()
     gc.freeze()
     gc.set_debug(gc.DEBUG_STATS)
-    with ThreadPoolExecutor() as t:
-        t.submit(proxy().run)
-        t.submit(proxy().run)
+    with ThreadPoolExecutor(THREAD_LIMIT) as executor:
+        executor.map(proxy().run, range(THREAD_LIMIT))
