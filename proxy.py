@@ -108,7 +108,7 @@ class proxy:
         return
 
     async def server(self):
-        server = await asyncio.start_server(self.client, port=PORT)
+        server = await asyncio.start_server(self.client, port=PORT, reuse_port=True)
         async with server:
             logging.info(f"Listening on port {PORT}")
             await server.serve_forever()
@@ -126,4 +126,5 @@ if __name__ == "__main__":
     gc.freeze()
     gc.set_debug(gc.DEBUG_STATS)
     with ThreadPoolExecutor() as t:
+        t.submit(proxy().run)
         t.submit(proxy().run)
