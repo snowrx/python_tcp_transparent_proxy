@@ -8,7 +8,9 @@ import time
 
 PORT = 8081
 READ_TIMEOUT = 600
-THREAD_LIMIT = 2
+BACKLOG = 3
+LISTENER = 4
+SUB_THREAD = 2
 
 
 class proxy:
@@ -103,14 +105,14 @@ class proxy:
             tg.create_task(self.proxy(r_label, from_remote, to_client))
         await self.writer_close(to_remote)
         await self.writer_close(to_client)
-        proxy_time = round(time.monotonic() - proxy_start)
+        proxy_time = time.monotonic() - proxy_start
         logging.info(f"Closed: {w_label}, {proxy_time:.1f}s")
         del from_remote, to_remote, from_client, to_client
         return
 
     async def server(self):
-        asyncio.get_running_loop().set_default_executor(ThreadPoolExecutor(THREAD_LIMIT))
-        server = await asyncio.start_server(self.client, port=PORT, reuse_port=True)
+        asyncio.get_running_loop().set_default_executor(ThreadPoolExecutor(SUB_THREAD))
+        server = await asyncio.start_server(self.client, port=PORT, reuse_port=True, backlog=BACKLOG)
         async with server:
             logging.info(f"Listening on port {PORT}")
             await server.serve_forever()
@@ -127,5 +129,5 @@ if __name__ == "__main__":
     gc.collect()
     gc.freeze()
     gc.set_debug(gc.DEBUG_STATS)
-    with ThreadPoolExecutor(THREAD_LIMIT) as executor:
-        executor.map(proxy().run, range(THREAD_LIMIT))
+    with ThreadPoolExecutor(LISTENER) as executor:
+        executor.map(proxy().run, range(LISTENER))
