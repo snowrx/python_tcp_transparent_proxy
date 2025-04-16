@@ -1,4 +1,3 @@
-from concurrent.futures import ThreadPoolExecutor
 import asyncio
 import gc
 import logging
@@ -7,10 +6,7 @@ import struct
 import time
 
 PORT = 8081
-READ_TIMEOUT = 600
-BACKLOG = 3
-LISTENER = 4
-SUB_THREAD = 2
+READ_TIMEOUT = 3600
 
 
 class proxy:
@@ -110,16 +106,11 @@ class proxy:
         del from_remote, to_remote, from_client, to_client
         return
 
-    async def server(self):
-        asyncio.get_running_loop().set_default_executor(ThreadPoolExecutor(SUB_THREAD))
-        server = await asyncio.start_server(self.client, port=PORT, reuse_port=True, backlog=BACKLOG)
+    async def run(self):
+        server = await asyncio.start_server(self.client, port=PORT)
         async with server:
             logging.info(f"Listening on port {PORT}")
             await server.serve_forever()
-        return
-
-    def run(self, _=None):
-        asyncio.run(self.server())
         return
 
 
@@ -129,5 +120,4 @@ if __name__ == "__main__":
     gc.collect()
     gc.freeze()
     gc.set_debug(gc.DEBUG_STATS)
-    with ThreadPoolExecutor(LISTENER) as executor:
-        executor.map(proxy().run, range(LISTENER))
+    asyncio.run(proxy().run())
