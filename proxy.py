@@ -4,12 +4,13 @@ import gc
 import logging
 import socket
 import struct
+import sys
 import time
 
 PORT = 8081
 BACKLOG = 3
 READ_TIMEOUT = 3600
-MAX_WORKERS = 4
+MAX_WORKERS = 2
 
 
 class proxy:
@@ -128,5 +129,6 @@ if __name__ == "__main__":
     gc.set_threshold(3000)
     gc.set_debug(gc.DEBUG_STATS)
     logging.basicConfig(level=logging.DEBUG)
+    sys.setswitchinterval(1)
     with ThreadPoolExecutor(MAX_WORKERS) as pool:
         pool.map(proxy().start, range(MAX_WORKERS))
