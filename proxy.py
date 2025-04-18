@@ -3,9 +3,11 @@ import gc
 import logging
 import socket
 import struct
+import threading
 import time
 
 PORT = 8081
+BACKLOG = 3
 READ_TIMEOUT = 3600
 
 
@@ -107,7 +109,7 @@ class proxy:
         return
 
     async def run(self):
-        server = await asyncio.start_server(self.client, port=PORT)
+        server = await asyncio.start_server(self.client, port=PORT, backlog=BACKLOG)
         async with server:
             logging.info(f"Listening on port {PORT}")
             await server.serve_forever()
@@ -115,9 +117,11 @@ class proxy:
 
 
 if __name__ == "__main__":
-    logging.basicConfig(level=logging.DEBUG)
-    gc.set_threshold(3000)
     gc.collect()
     gc.freeze()
+    gc.set_threshold(3000)
     gc.set_debug(gc.DEBUG_STATS)
-    asyncio.run(proxy().run())
+    logging.basicConfig(level=logging.DEBUG)
+    t = threading.Thread(target=asyncio.run, args=(proxy().run(),))
+    t.start()
+    t.join()
