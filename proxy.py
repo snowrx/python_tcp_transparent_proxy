@@ -1,16 +1,13 @@
-from concurrent.futures import ThreadPoolExecutor
 import asyncio
 import gc
 import logging
 import socket
 import struct
-import sys
 import time
 
 PORT = 8081
 BACKLOG = 3
 READ_TIMEOUT = 3600
-MAX_WORKERS = 2
 
 
 class proxy:
@@ -111,15 +108,10 @@ class proxy:
         return
 
     async def run(self):
-        asyncio.get_running_loop().set_default_executor(ThreadPoolExecutor(MAX_WORKERS))
         server = await asyncio.start_server(self.client, port=PORT, backlog=BACKLOG, reuse_port=True)
         async with server:
             logging.info(f"Listening on port {PORT}")
             await server.serve_forever()
-        return
-
-    def start(self, _=None):
-        asyncio.run(self.run())
         return
 
 
@@ -129,6 +121,4 @@ if __name__ == "__main__":
     gc.set_threshold(3000)
     gc.set_debug(gc.DEBUG_STATS)
     logging.basicConfig(level=logging.DEBUG)
-    sys.setswitchinterval(1)
-    with ThreadPoolExecutor(MAX_WORKERS) as pool:
-        pool.map(proxy().start, range(MAX_WORKERS))
+    asyncio.run(proxy().run())
