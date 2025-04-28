@@ -6,7 +6,7 @@ import struct
 import time
 
 PORT = 8081
-READ_TIMEOUT = 3600
+LIFETIME = 86400
 
 
 class proxy:
@@ -36,28 +36,21 @@ class proxy:
             logging.error(f"Failed to close writer: {type(err).__name__}")
         return
 
-    async def read(self, r: asyncio.StreamReader, label: str):
-        try:
-            async with asyncio.timeout(READ_TIMEOUT):
-                return await r.read(self._DEFAULT_LIMIT)
-        except Exception as err:
-            logging.error(f"Failed to read: {type(err).__name__}, {label}")
-            return None
-
     async def proxy(self, label: str, r: asyncio.StreamReader, w: asyncio.StreamWriter):
         try:
-            read = asyncio.create_task(self.read(r, label))
+            read = asyncio.create_task(r.read(self._DEFAULT_LIMIT))
             s: socket.socket = w.get_extra_info("socket")
             s.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, True)
             w.transport.set_write_buffer_limits(self._DEFAULT_LIMIT, self._DEFAULT_LIMIT)
             await asyncio.sleep(0)
 
-            while not w.is_closing() and (data := await read):
-                del read
-                read = asyncio.create_task(self.read(r, label))
-                w.write(data)
-                del data
-                await w.drain()
+            async with asyncio.timeout(LIFETIME):
+                while not w.is_closing() and (data := await read):
+                    del read
+                    read = asyncio.create_task(r.read(self._DEFAULT_LIMIT))
+                    w.write(data)
+                    del data
+                    await w.drain()
 
             if not w.is_closing():
                 w.write_eof()
