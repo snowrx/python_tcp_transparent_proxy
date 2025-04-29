@@ -1,4 +1,5 @@
 import asyncio
+from concurrent.futures import ThreadPoolExecutor
 import gc
 import logging
 import socket
@@ -101,6 +102,7 @@ class proxy:
         return
 
     async def run(self):
+        asyncio.get_running_loop().set_default_executor(ThreadPoolExecutor(4))
         server = await asyncio.start_server(self.client, port=PORT)
         async with server:
             logging.info(f"Listening on port {PORT}")
