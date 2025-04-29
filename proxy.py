@@ -57,7 +57,7 @@ class proxy:
                 w.write_eof()
                 await w.drain()
         except Exception as err:
-            logging.error(f"Error in channel: {type(err).__name__}, {label}")
+            logging.error(f"Error in channel: {label}, {type(err).__name__}, {err}")
             await self.writer_close(w)
         return
 
@@ -78,14 +78,14 @@ class proxy:
         r_label = f"{src[0]}@{src[1]} <- {dst[0]}@{dst[1]}"
 
         if dst[0] == srv[0] and dst[1] == srv[1]:
-            logging.error(f"Refused to connect: {w_label}")
+            logging.error(f"Loopback detected: {w_label}")
             await self.writer_close(to_client)
             return
 
         try:
             from_remote, to_remote = await asyncio.open_connection(host=dst[0], port=dst[1])
         except Exception as err:
-            logging.error(f"Failed to open connection: {type(err).__name__}, {w_label}")
+            logging.error(f"Failed to connect: {w_label}, {type(err).__name__}, {err}")
             await self.writer_close(to_client)
             return
 
