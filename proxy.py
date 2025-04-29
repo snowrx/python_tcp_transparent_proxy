@@ -58,7 +58,7 @@ class proxy:
                 await w.drain()
         except Exception as err:
             logging.error(f"Error in channel: {label}, {type(err).__name__}, {err}")
-            await self.writer_close(w)
+            w.transport.abort()
         return
 
     async def client(self, from_client: asyncio.StreamReader, to_client: asyncio.StreamWriter):
@@ -71,6 +71,7 @@ class proxy:
             dst: tuple[str, int] = await asyncio.to_thread(self.get_original_dst, soc, is_ipv4)
         except Exception as err:
             logging.error(f"Failed to get original destination: {type(err).__name__}, {src[0]}@{src[1]}")
+            to_client.transport.abort()
             await self.writer_close(to_client)
             return
 
@@ -79,6 +80,7 @@ class proxy:
 
         if dst[0] == srv[0] and dst[1] == srv[1]:
             logging.error(f"Loopback detected: {w_label}")
+            to_client.transport.abort()
             await self.writer_close(to_client)
             return
 
@@ -86,6 +88,7 @@ class proxy:
             from_remote, to_remote = await asyncio.open_connection(host=dst[0], port=dst[1])
         except Exception as err:
             logging.error(f"Failed to connect: {w_label}, {type(err).__name__}, {err}")
+            to_client.transport.abort()
             await self.writer_close(to_client)
             return
 
