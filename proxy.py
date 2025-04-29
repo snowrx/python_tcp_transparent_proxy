@@ -1,5 +1,5 @@
-import asyncio
 from concurrent.futures import ThreadPoolExecutor
+import asyncio
 import gc
 import logging
 import socket
