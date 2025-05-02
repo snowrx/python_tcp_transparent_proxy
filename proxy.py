@@ -11,7 +11,7 @@ LIFETIME = 86400
 
 
 class proxy:
-    _DEFAULT_LIMIT = 1 << 16
+    _DEFAULT_LIMIT = 1 << 18
     _SO_ORIGINAL_DST = 80
     _SOL_IPV6 = 41
     _V4_LEN = 16
@@ -85,7 +85,7 @@ class proxy:
             return
 
         try:
-            from_remote, to_remote = await asyncio.open_connection(host=dst[0], port=dst[1])
+            from_remote, to_remote = await asyncio.open_connection(host=dst[0], port=dst[1], limit=self._DEFAULT_LIMIT)
         except Exception as err:
             logging.error(f"Failed to connect: {w_label}, {type(err).__name__}, {err}")
             to_client.transport.abort()
@@ -106,7 +106,7 @@ class proxy:
 
     async def run(self):
         asyncio.get_running_loop().set_default_executor(ThreadPoolExecutor(4))
-        server = await asyncio.start_server(self.client, port=PORT)
+        server = await asyncio.start_server(self.client, port=PORT, limit=self._DEFAULT_LIMIT)
         async with server:
             logging.info(f"Listening on port {PORT}")
             await server.serve_forever()
