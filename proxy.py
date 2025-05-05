@@ -1,7 +1,8 @@
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 import asyncio
 import gc
 import logging
+import os
 import socket
 import struct
 import time
@@ -105,11 +106,15 @@ class proxy:
         return
 
     async def run(self):
-        asyncio.get_running_loop().set_default_executor(ThreadPoolExecutor(4))
-        server = await asyncio.start_server(self.client, port=PORT, limit=self._DEFAULT_LIMIT)
+        asyncio.get_running_loop().set_default_executor(ThreadPoolExecutor(2))
+        server = await asyncio.start_server(self.client, port=PORT, reuse_port=True, limit=self._DEFAULT_LIMIT)
         async with server:
             logging.info(f"Listening on port {PORT}")
             await server.serve_forever()
+        return
+
+    def start(self, _=None):
+        asyncio.run(self.run())
         return
 
 
@@ -119,4 +124,6 @@ if __name__ == "__main__":
     gc.set_threshold(3000)
     gc.set_debug(gc.DEBUG_STATS)
     logging.basicConfig(level=logging.DEBUG)
-    asyncio.run(proxy().run())
+    cpu_list = os.sched_getaffinity(0)
+    with ProcessPoolExecutor(len(cpu_list)) as pool:
+        pool.map(proxy().start, cpu_list)
