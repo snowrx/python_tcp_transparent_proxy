@@ -9,6 +9,7 @@ import time
 
 PORT = 8081
 LIFETIME = 86400
+CORE_PINNING = True
 
 
 class proxy:
@@ -113,7 +114,9 @@ class proxy:
             await server.serve_forever()
         return
 
-    def start(self, _=None):
+    def start(self, cpu=None):
+        if CORE_PINNING and cpu:
+            os.sched_setaffinity(0, {cpu})
         asyncio.run(self.run())
         return
 
