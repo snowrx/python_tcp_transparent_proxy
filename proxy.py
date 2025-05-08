@@ -1,15 +1,14 @@
-from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
+from concurrent.futures import ProcessPoolExecutor
 import asyncio
 import gc
 import logging
-import os
 import socket
 import struct
 import time
 
 PORT = 8081
 LIFETIME = 86400
-CORE_PINNING = True
+POOL_SIZE = 2
 
 
 class proxy:
@@ -107,16 +106,13 @@ class proxy:
         return
 
     async def run(self):
-        asyncio.get_running_loop().set_default_executor(ThreadPoolExecutor(2))
         server = await asyncio.start_server(self.client, port=PORT, reuse_port=True, limit=self._DEFAULT_LIMIT)
         async with server:
             logging.info(f"Listening on port {PORT}")
             await server.serve_forever()
         return
 
-    def start(self, cpu=None):
-        if CORE_PINNING and cpu:
-            os.sched_setaffinity(0, {cpu})
+    def start(self, _=None):
         asyncio.run(self.run())
         return
 
@@ -127,6 +123,5 @@ if __name__ == "__main__":
     gc.set_threshold(3000)
     gc.set_debug(gc.DEBUG_STATS)
     logging.basicConfig(level=logging.DEBUG)
-    cpu_list = os.sched_getaffinity(0)
-    with ProcessPoolExecutor(len(cpu_list)) as pool:
-        pool.map(proxy().start, cpu_list)
+    with ProcessPoolExecutor(POOL_SIZE) as pool:
+        pool.map(proxy().start, range(POOL_SIZE))
