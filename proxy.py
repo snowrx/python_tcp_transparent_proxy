@@ -9,6 +9,7 @@ import time
 PORT = 8081
 LIFETIME = 86400
 POOL_SIZE = 2
+TURBO_WRITE = 1 << 30
 
 
 class proxy:
@@ -43,7 +44,7 @@ class proxy:
             read = asyncio.create_task(r.read(self._DEFAULT_LIMIT))
             s: socket.socket = w.get_extra_info("socket")
             s.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, True)
-            w.transport.set_write_buffer_limits(self._DEFAULT_LIMIT, self._DEFAULT_LIMIT)
+            w.transport.set_write_buffer_limits(TURBO_WRITE, TURBO_WRITE)
             await asyncio.sleep(0)
 
             async with asyncio.timeout(LIFETIME):
