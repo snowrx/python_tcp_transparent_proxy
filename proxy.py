@@ -1,4 +1,5 @@
 from concurrent.futures import ProcessPoolExecutor
+from mmap import mmap
 import asyncio
 import gc
 import logging
@@ -41,23 +42,25 @@ class proxy:
 
     async def proxy(self, label: str, r: asyncio.StreamReader, w: asyncio.StreamWriter):
         try:
-            read = asyncio.create_task(r.read(self._DEFAULT_LIMIT))
-            s: socket.socket = w.get_extra_info("socket")
-            s.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, True)
-            w.transport.set_write_buffer_limits(TURBO_WRITE, TURBO_WRITE)
-            await asyncio.sleep(0)
+            with mmap(-1, self._DEFAULT_LIMIT) as mm:
+                read = asyncio.create_task(r.read(self._DEFAULT_LIMIT))
+                s: socket.socket = w.get_extra_info("socket")
+                s.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, True)
+                w.transport.set_write_buffer_limits(TURBO_WRITE, TURBO_WRITE)
+                await asyncio.sleep(0)
 
-            async with asyncio.timeout(LIFETIME):
-                while not w.is_closing() and (data := await read):
-                    del read
-                    read = asyncio.create_task(r.read(self._DEFAULT_LIMIT))
-                    w.write(data)
-                    del data
+                async with asyncio.timeout(LIFETIME):
+                    while not w.is_closing() and (l := mm.write(memoryview(await read))):
+                        del read
+                        read = asyncio.create_task(r.read(self._DEFAULT_LIMIT))
+                        mm.seek(0)
+                        w.write(memoryview(mm.read(l)))
+                        mm.seek(0)
+                        await w.drain()
+
+                if not w.is_closing():
+                    w.write_eof()
                     await w.drain()
-
-            if not w.is_closing():
-                w.write_eof()
-                await w.drain()
         except Exception as err:
             logging.error(f"Error in channel: {label}, {type(err).__name__}, {err}")
             w.transport.abort()
