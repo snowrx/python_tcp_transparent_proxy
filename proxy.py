@@ -1,8 +1,8 @@
 from concurrent.futures import ProcessPoolExecutor
-from mmap import mmap
 import asyncio
 import gc
 import logging
+import mmap
 import socket
 import struct
 import time
@@ -41,7 +41,8 @@ class proxy:
 
     async def proxy(self, label: str, r: asyncio.StreamReader, w: asyncio.StreamWriter):
         try:
-            with mmap(-1, self._DEFAULT_LIMIT) as mm:
+            with mmap.mmap(-1, self._DEFAULT_LIMIT) as mm:
+                mm.madvise(mmap.MADV_HUGEPAGE)
                 read = asyncio.create_task(r.read(self._DEFAULT_LIMIT))
                 s: socket.socket = w.get_extra_info("socket")
                 s.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, True)
