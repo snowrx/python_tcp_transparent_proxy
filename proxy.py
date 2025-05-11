@@ -41,7 +41,7 @@ class proxy:
 
     async def proxy(self, label: str, r: asyncio.StreamReader, w: asyncio.StreamWriter):
         try:
-            with mmap.mmap(-1, self._DEFAULT_LIMIT) as mm:
+            with mmap.mmap(-1, self._DEFAULT_LIMIT, flags=mmap.MAP_ANONYMOUS | mmap.MAP_PRIVATE) as mm:
                 mm.madvise(mmap.MADV_HUGEPAGE)
                 read = asyncio.create_task(r.read(self._DEFAULT_LIMIT))
                 s: socket.socket = w.get_extra_info("socket")
