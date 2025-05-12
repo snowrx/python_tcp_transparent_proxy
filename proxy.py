@@ -13,8 +13,7 @@ POOL_SIZE = 2
 
 
 class proxy:
-    _DEFAULT_LIMIT = 1 << 16
-    _MMAP_SIZE = 1 << 21
+    _CHUNK_SIZE = 1 << 16
     _SO_ORIGINAL_DST = 80
     _SOL_IPV6 = 41
     _V4_LEN = 16
@@ -42,18 +41,17 @@ class proxy:
 
     async def proxy(self, label: str, r: asyncio.StreamReader, w: asyncio.StreamWriter):
         try:
-            with mmap.mmap(-1, self._MMAP_SIZE, flags=mmap.MAP_ANONYMOUS | mmap.MAP_PRIVATE) as mm:
+            with mmap.mmap(-1, self._CHUNK_SIZE, flags=mmap.MAP_ANONYMOUS | mmap.MAP_PRIVATE) as mm:
                 mm.madvise(mmap.MADV_HUGEPAGE)
-                read = asyncio.create_task(r.read(self._DEFAULT_LIMIT))
+                read = asyncio.create_task(r.read(self._CHUNK_SIZE))
                 s: socket.socket = w.get_extra_info("socket")
                 s.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, True)
-                w.transport.set_write_buffer_limits(self._DEFAULT_LIMIT, self._DEFAULT_LIMIT)
+                w.transport.set_write_buffer_limits(self._CHUNK_SIZE, self._CHUNK_SIZE)
                 await asyncio.sleep(0)
 
                 async with asyncio.timeout(LIFETIME):
                     while not w.is_closing() and (l := mm.write(memoryview(await read))):
-                        del read
-                        read = asyncio.create_task(r.read(self._DEFAULT_LIMIT))
+                        read = asyncio.create_task(r.read(self._CHUNK_SIZE))
                         mm.seek(0)
                         w.write(memoryview(mm.read(l)))
                         await w.drain()
@@ -91,7 +89,7 @@ class proxy:
             return
 
         try:
-            from_remote, to_remote = await asyncio.open_connection(host=dst[0], port=dst[1], limit=self._DEFAULT_LIMIT)
+            from_remote, to_remote = await asyncio.open_connection(host=dst[0], port=dst[1], limit=self._CHUNK_SIZE)
         except Exception as err:
             logging.error(f"Failed to connect: {w_label}, {type(err).__name__}, {err}")
             to_client.transport.abort()
@@ -111,7 +109,7 @@ class proxy:
         return
 
     async def run(self):
-        server = await asyncio.start_server(self.client, port=PORT, reuse_port=True, limit=self._DEFAULT_LIMIT)
+        server = await asyncio.start_server(self.client, port=PORT, reuse_port=True, limit=self._CHUNK_SIZE)
         async with server:
             logging.info(f"Listening on port {PORT}")
             await server.serve_forever()
