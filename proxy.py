@@ -14,7 +14,7 @@ POOL_SIZE = 2
 
 class proxy:
     _DEFAULT_LIMIT = 1 << 16
-    _MMAP_HUGESIZE = 1 << 21
+    _MMAP_SIZE = 1 << 21
     _SO_ORIGINAL_DST = 80
     _SOL_IPV6 = 41
     _V4_LEN = 16
@@ -42,9 +42,8 @@ class proxy:
 
     async def proxy(self, label: str, r: asyncio.StreamReader, w: asyncio.StreamWriter):
         try:
-            with mmap.mmap(-1, self._DEFAULT_LIMIT, flags=mmap.MAP_ANONYMOUS | mmap.MAP_PRIVATE) as mm:
+            with mmap.mmap(-1, self._MMAP_SIZE, flags=mmap.MAP_ANONYMOUS | mmap.MAP_PRIVATE) as mm:
                 mm.madvise(mmap.MADV_HUGEPAGE)
-                mm.resize(self._MMAP_HUGESIZE)
                 read = asyncio.create_task(r.read(self._DEFAULT_LIMIT))
                 s: socket.socket = w.get_extra_info("socket")
                 s.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, True)
