@@ -1,7 +1,6 @@
 import asyncio
 import gc
 import logging
-import mmap
 import socket
 import struct
 import time
@@ -11,7 +10,7 @@ LIFETIME = 86400
 
 
 class proxy:
-    _CHUNK_SIZE = 1 << 20
+    _CHUNK_SIZE = 1 << 16
     _SO_ORIGINAL_DST = 80
     _SOL_IPV6 = 41
     _V4_LEN = 16
@@ -39,25 +38,22 @@ class proxy:
 
     async def proxy(self, label: str, r: asyncio.StreamReader, w: asyncio.StreamWriter):
         try:
-            with mmap.mmap(-1, self._CHUNK_SIZE, flags=mmap.MAP_ANONYMOUS | mmap.MAP_PRIVATE) as mm:
-                mm.madvise(mmap.MADV_HUGEPAGE)
-                read = asyncio.create_task(r.read(self._CHUNK_SIZE))
-                s: socket.socket = w.get_extra_info("socket")
-                s.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, True)
-                w.transport.set_write_buffer_limits(self._CHUNK_SIZE - 1)
-                await asyncio.sleep(0)
+            read = asyncio.create_task(r.read(self._CHUNK_SIZE))
+            s: socket.socket = w.get_extra_info("socket")
+            s.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, True)
+            w.transport.set_write_buffer_limits(self._CHUNK_SIZE, self._CHUNK_SIZE)
+            await asyncio.sleep(0)
 
-                async with asyncio.timeout(LIFETIME):
-                    while not w.is_closing() and (l := mm.write(memoryview(await read))):
-                        read = asyncio.create_task(r.read(self._CHUNK_SIZE))
-                        mm.seek(0)
-                        w.write(memoryview(mm.read(l)))
-                        await w.drain()
-                        mm.seek(0)
-
-                if not w.is_closing():
-                    w.write_eof()
+            async with asyncio.timeout(LIFETIME):
+                while not w.is_closing() and (mv := memoryview(await read)):
+                    read = asyncio.create_task(r.read(self._CHUNK_SIZE))
+                    w.write(mv)
                     await w.drain()
+
+            if not w.is_closing():
+                w.write_eof()
+                await w.drain()
+
         except Exception as err:
             logging.error(f"Error in channel: {label}, {type(err).__name__}, {err}")
             w.transport.abort()
