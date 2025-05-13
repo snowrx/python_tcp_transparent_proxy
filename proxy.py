@@ -11,7 +11,7 @@ LIFETIME = 86400
 
 
 class proxy:
-    _CHUNK_SIZE = 1 << 16
+    _CHUNK_SIZE = 1 << 20
     _SO_ORIGINAL_DST = 80
     _SOL_IPV6 = 41
     _V4_LEN = 16
