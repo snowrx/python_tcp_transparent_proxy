@@ -7,6 +7,7 @@ import time
 
 PORT = 8081
 LIFETIME = 86400
+BURST_LIMIT = 1 << 24
 
 
 class proxy:
@@ -41,7 +42,7 @@ class proxy:
             read = asyncio.create_task(r.read(self._CHUNK_SIZE))
             s: socket.socket = w.get_extra_info("socket")
             s.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, True)
-            w.transport.set_write_buffer_limits(self._CHUNK_SIZE, self._CHUNK_SIZE)
+            w.transport.set_write_buffer_limits(BURST_LIMIT, BURST_LIMIT)
             await asyncio.sleep(0)
 
             async with asyncio.timeout(LIFETIME):
