@@ -10,6 +10,7 @@ CacheDirectory=proxy
 WorkingDirectory=/var/cache/proxy
 Environment="PYTHONPYCACHEPREFIX=/var/cache/proxy"
 ExecStart=python3 /opt/proxy.py
+MemoryLow=1%
 MemoryHigh=50%
 CPUSchedulingPolicy=rr
 CPUSchedulingPriority=1
