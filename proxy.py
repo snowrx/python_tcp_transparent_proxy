@@ -1,4 +1,3 @@
-from concurrent.futures import ProcessPoolExecutor
 import asyncio
 import gc
 import logging
@@ -9,7 +8,6 @@ import time
 
 PORT = 8081
 LIFETIME = 86400
-POOL_SIZE = 2
 
 
 class proxy:
@@ -46,7 +44,7 @@ class proxy:
                 read = asyncio.create_task(r.read(self._CHUNK_SIZE))
                 s: socket.socket = w.get_extra_info("socket")
                 s.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, True)
-                w.transport.set_write_buffer_limits(self._CHUNK_SIZE, self._CHUNK_SIZE)
+                w.transport.set_write_buffer_limits(self._CHUNK_SIZE - 1)
                 await asyncio.sleep(0)
 
                 async with asyncio.timeout(LIFETIME):
@@ -109,14 +107,10 @@ class proxy:
         return
 
     async def run(self):
-        server = await asyncio.start_server(self.client, port=PORT, reuse_port=True, limit=self._CHUNK_SIZE)
+        server = await asyncio.start_server(self.client, port=PORT, limit=self._CHUNK_SIZE)
         async with server:
             logging.info(f"Listening on port {PORT}")
             await server.serve_forever()
-        return
-
-    def start(self, _=None):
-        asyncio.run(self.run())
         return
 
 
@@ -126,5 +120,4 @@ if __name__ == "__main__":
     gc.set_threshold(3000)
     gc.set_debug(gc.DEBUG_STATS)
     logging.basicConfig(level=logging.DEBUG)
-    with ProcessPoolExecutor(POOL_SIZE) as pool:
-        pool.map(proxy().start, range(POOL_SIZE))
+    asyncio.run(proxy().run())
