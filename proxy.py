@@ -8,6 +8,7 @@ import time
 PORT = 8081
 LIFETIME = 86400
 BURST_LIMIT = 1 << 24
+TCP_DEFER_ACCEPT = 1
 
 
 class proxy:
@@ -106,6 +107,9 @@ class proxy:
     async def run(self):
         server = await asyncio.start_server(self.client, port=PORT, limit=self._CHUNK_SIZE)
         async with server:
+            if TCP_DEFER_ACCEPT > 0:
+                for sock in server.sockets:
+                    sock.setsockopt(socket.SOL_SOCKET, socket.TCP_DEFER_ACCEPT, TCP_DEFER_ACCEPT)
             logging.info(f"Listening on port {PORT}")
             await server.serve_forever()
         return
