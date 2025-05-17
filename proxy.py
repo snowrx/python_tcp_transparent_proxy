@@ -1,3 +1,4 @@
+from dataclasses import dataclass, field
 import asyncio
 import gc
 import logging
@@ -11,12 +12,28 @@ BURST_LIMIT = 1 << 24
 TCP_DEFER_ACCEPT = 1
 
 
+@dataclass(order=True)
+class ticket:
+    timestamp: int = field(default_factory=time.monotonic_ns, compare=True)
+    flag: asyncio.Event = field(default_factory=asyncio.Event, compare=False)
+
+    async def wait(self):
+        await self.flag.wait()
+        self.flag.clear()
+
+    def set(self):
+        self.flag.set()
+        self.timestamp = time.monotonic_ns()
+
+
 class proxy:
     _CHUNK_SIZE = 1 << 16
     _SO_ORIGINAL_DST = 80
     _SOL_IPV6 = 41
     _V4_LEN = 16
     _V6_LEN = 28
+
+    _pq = asyncio.PriorityQueue()
 
     def get_original_dst(self, so: socket.socket, is_ipv4: bool = True):
         if is_ipv4:
@@ -44,11 +61,14 @@ class proxy:
             s: socket.socket = w.get_extra_info("socket")
             s.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, True)
             w.transport.set_write_buffer_limits(BURST_LIMIT, BURST_LIMIT)
+            t = ticket()
             await asyncio.sleep(0)
 
             async with asyncio.timeout(LIFETIME):
                 while not w.is_closing() and (mv := memoryview(await read)):
                     read = asyncio.create_task(r.read(self._CHUNK_SIZE))
+                    await self._pq.put(t)
+                    await t.wait()
                     w.write(mv)
                     await w.drain()
 
@@ -104,7 +124,7 @@ class proxy:
         del from_remote, to_remote, from_client, to_client
         return
 
-    async def run(self):
+    async def start_server(self):
         server = await asyncio.start_server(self.client, port=PORT, limit=self._CHUNK_SIZE)
         async with server:
             if TCP_DEFER_ACCEPT > 0:
@@ -114,6 +134,18 @@ class proxy:
             await server.serve_forever()
         return
 
+    async def process_ticket(self):
+        while True:
+            t: ticket = await self._pq.get()
+            t.set()
+            self._pq.task_done()
+
+    async def start(self):
+        async with asyncio.TaskGroup() as tg:
+            tg.create_task(self.start_server())
+            tg.create_task(self.process_ticket())
+        return
+
 
 if __name__ == "__main__":
     gc.collect()
@@ -121,4 +153,4 @@ if __name__ == "__main__":
     gc.set_threshold(3000)
     gc.set_debug(gc.DEBUG_STATS)
     logging.basicConfig(level=logging.DEBUG)
-    asyncio.run(proxy().run())
+    asyncio.run(proxy().start())
