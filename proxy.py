@@ -8,7 +8,6 @@ import time
 
 PORT = 8081
 LIFETIME = 86400
-BURST_LIMIT = 1 << 24
 TCP_DEFER_ACCEPT = 1
 
 
@@ -60,7 +59,7 @@ class proxy:
             read = asyncio.create_task(r.read(self._CHUNK_SIZE))
             s: socket.socket = w.get_extra_info("socket")
             s.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, True)
-            w.transport.set_write_buffer_limits(BURST_LIMIT, BURST_LIMIT)
+            w.transport.set_write_buffer_limits(self._CHUNK_SIZE, self._CHUNK_SIZE)
             t = ticket()
             await asyncio.sleep(0)
 
@@ -129,7 +128,7 @@ class proxy:
         async with server:
             if TCP_DEFER_ACCEPT > 0:
                 for sock in server.sockets:
-                    sock.setsockopt(socket.SOL_SOCKET, socket.TCP_DEFER_ACCEPT, TCP_DEFER_ACCEPT)
+                    sock.setsockopt(socket.SOL_TCP, socket.TCP_DEFER_ACCEPT, TCP_DEFER_ACCEPT)
             logging.info(f"Listening on port {PORT}")
             await server.serve_forever()
         return
