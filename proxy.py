@@ -7,8 +7,7 @@ import struct
 import time
 
 PORT = 8081
-LIFETIME = 86400
-TCP_DEFER_ACCEPT = 1
+TIMEOUT = 3600
 
 
 @dataclass(order=True)
@@ -54,22 +53,29 @@ class proxy:
             logging.error(f"Failed to close writer: {type(err).__name__}")
         return
 
+    async def read(self, r: asyncio.StreamReader):
+        try:
+            async with asyncio.timeout(TIMEOUT):
+                return await r.read(self._CHUNK_SIZE)
+        except Exception as err:
+            logging.error(f"Failed to read: {type(err).__name__}")
+            return b""
+
     async def proxy(self, label: str, r: asyncio.StreamReader, w: asyncio.StreamWriter):
         try:
-            read = asyncio.create_task(r.read(self._CHUNK_SIZE))
+            read = asyncio.create_task(self.read(r))
             s: socket.socket = w.get_extra_info("socket")
             s.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, True)
             w.transport.set_write_buffer_limits(self._CHUNK_SIZE, self._CHUNK_SIZE)
             t = ticket()
             await asyncio.sleep(0)
 
-            async with asyncio.timeout(LIFETIME):
-                while not w.is_closing() and (mv := memoryview(await read)):
-                    read = asyncio.create_task(r.read(self._CHUNK_SIZE))
-                    await self._pq.put(t)
-                    await t.wait()
-                    w.write(mv)
-                    await w.drain()
+            while not w.is_closing() and (mv := memoryview(await read)):
+                read = asyncio.create_task(self.read(r))
+                await self._pq.put(t)
+                await t.wait()
+                w.write(mv)
+                await w.drain()
 
             if not w.is_closing():
                 w.write_eof()
@@ -126,9 +132,6 @@ class proxy:
     async def start_server(self):
         server = await asyncio.start_server(self.client, port=PORT, limit=self._CHUNK_SIZE)
         async with server:
-            if TCP_DEFER_ACCEPT > 0:
-                for sock in server.sockets:
-                    sock.setsockopt(socket.SOL_TCP, socket.TCP_DEFER_ACCEPT, TCP_DEFER_ACCEPT)
             logging.info(f"Listening on port {PORT}")
             await server.serve_forever()
         return
