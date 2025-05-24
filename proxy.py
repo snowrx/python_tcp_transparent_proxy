@@ -25,13 +25,13 @@ class ticket:
 
 
 class proxy:
-    _CHUNK_SIZE = 1 << 18
+    _CHUNK_SIZE = 1 << 16
     _SO_ORIGINAL_DST = 80
     _SOL_IPV6 = 41
     _V4_LEN = 16
     _V6_LEN = 28
 
-    _pq = asyncio.PriorityQueue()
+    _pq: asyncio.PriorityQueue[ticket] = asyncio.PriorityQueue()
 
     def get_original_dst(self, so: socket.socket, is_ipv4: bool = True):
         if is_ipv4:
