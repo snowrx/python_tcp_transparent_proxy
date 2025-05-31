@@ -7,11 +7,11 @@ import time
 
 PORT = 8081
 TIMEOUT = 3600
-ASYNC_WRITE = 1 << 24
+LOW_WATERMARK = 1 << 12
 
 
 class proxy:
-    _CHUNK_SIZE = 1 << 16
+    _DEFAULT_LIMIT = 1 << 16
     _SO_ORIGINAL_DST = 80
     _SOL_IPV6 = 41
     _V4_LEN = 16
@@ -40,7 +40,7 @@ class proxy:
     async def read(self, r: asyncio.StreamReader):
         try:
             async with asyncio.timeout(TIMEOUT):
-                return await r.read(self._CHUNK_SIZE)
+                return await r.read(self._DEFAULT_LIMIT)
         except Exception as err:
             logging.error(f"Failed to read: {type(err).__name__}")
             return b""
@@ -50,7 +50,7 @@ class proxy:
             read = asyncio.create_task(self.read(r))
             s: socket.socket = w.get_extra_info("socket")
             s.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, True)
-            w.transport.set_write_buffer_limits(ASYNC_WRITE, ASYNC_WRITE)
+            w.transport.set_write_buffer_limits(LOW_WATERMARK, LOW_WATERMARK)
             await asyncio.sleep(0)
 
             while not w.is_closing() and (mv := memoryview(await read)):
