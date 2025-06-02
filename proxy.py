@@ -1,19 +1,51 @@
-from concurrent.futures import ProcessPoolExecutor
 import asyncio
 import gc
 import logging
-import os
 import socket
 import struct
-import time
 
 PORT = 8081
-TIMEOUT = 3600
-LOW_WATERMARK = 1 << 12
 
 
-class proxy:
-    _DEFAULT_LIMIT = 1 << 16
+class channel:
+    _reader: asyncio.StreamReader
+    _writer: asyncio.StreamWriter
+    _label: str
+    _limit: int = 1 << 16
+
+    def __init__(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter, label: str):
+        self._reader = reader
+        self._writer = writer
+        self._label = label
+
+    async def streaming(self):
+        read_task = asyncio.create_task(self._reader.read(self._limit))
+        while not self._writer.is_closing() and (mv := memoryview(await read_task)):
+            self._writer.write(mv)
+            read_task = asyncio.create_task(self._reader.read(self._limit))
+            await self._writer.drain()
+
+    async def transfer(self):
+        try:
+            logging.debug(f"Open channel: {self._label}")
+            so: socket.socket = self._writer.get_extra_info("socket")
+            so.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, True)
+            self._writer.transport.set_write_buffer_limits(self._limit, self._limit)
+            await asyncio.create_task(self.streaming())
+            if not self._writer.is_closing():
+                self._writer.write_eof()
+                await self._writer.drain()
+        except Exception as err:
+            logging.error(f"Error in channel: {self._label}: {err}")
+            self._writer.transport.abort()
+        finally:
+            if not self._writer.is_closing():
+                self._writer.close()
+                await self._writer.wait_closed()
+            logging.debug(f"Close channel: {self._label}")
+
+
+class server:
     _SO_ORIGINAL_DST = 80
     _SOL_IPV6 = 41
     _V4_LEN = 16
@@ -30,106 +62,47 @@ class proxy:
             ip = socket.inet_ntop(socket.AF_INET6, raw_ip)
         return ip, port
 
-    async def writer_close(self, w: asyncio.StreamWriter):
-        try:
-            if not w.is_closing():
-                w.close()
-                await w.wait_closed()
-        except Exception as err:
-            logging.error(f"Failed to close writer: {type(err).__name__}")
-        return
+    async def accept(self, client_reader: asyncio.StreamReader, client_writer: asyncio.StreamWriter):
+        so: socket.socket = client_writer.get_extra_info("socket")
+        peername: tuple[str, int] = client_writer.get_extra_info("peername")
+        sockname: tuple[str, int] = client_writer.get_extra_info("sockname")
+        orig: tuple[str, int] = self.get_original_dst(so, "." in peername[0])
+        read_label = f"{orig[0]}@{orig[1]} -> {peername[0]}@{peername[1]}"
+        write_label = f"{peername[0]}@{peername[1]} -> {orig[0]}@{orig[1]}"
 
-    async def read(self, r: asyncio.StreamReader):
-        try:
-            async with asyncio.timeout(TIMEOUT):
-                return await r.read(self._DEFAULT_LIMIT)
-        except Exception as err:
-            logging.error(f"Failed to read: {type(err).__name__}")
-            return b""
-
-    async def proxy(self, label: str, r: asyncio.StreamReader, w: asyncio.StreamWriter):
-        try:
-            read = asyncio.create_task(self.read(r))
-            s: socket.socket = w.get_extra_info("socket")
-            s.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, True)
-            w.transport.set_write_buffer_limits(LOW_WATERMARK, LOW_WATERMARK)
-            await asyncio.sleep(0)
-
-            while not w.is_closing() and (mv := memoryview(await read)):
-                read = asyncio.create_task(self.read(r))
-                w.write(mv)
-                await w.drain()
-
-            if not w.is_closing():
-                w.write_eof()
-                await w.drain()
-
-        except Exception as err:
-            logging.error(f"Error in channel: {label}, {type(err).__name__}, {err}")
-            w.transport.abort()
-        return
-
-    async def client(self, from_client: asyncio.StreamReader, to_client: asyncio.StreamWriter):
-        soc: socket.socket = to_client.get_extra_info("socket")
-        srv: tuple[str, int] = to_client.get_extra_info("sockname")
-        src: tuple[str, int] = to_client.get_extra_info("peername")
-        is_ipv4 = "." in src[0]
-
-        try:
-            dst: tuple[str, int] = await asyncio.to_thread(self.get_original_dst, soc, is_ipv4)
-        except Exception as err:
-            logging.error(f"Failed to get original destination: {type(err).__name__}, {src[0]}@{src[1]}")
-            to_client.transport.abort()
-            await self.writer_close(to_client)
-            return
-
-        w_label = f"{src[0]}@{src[1]} -> {dst[0]}@{dst[1]}"
-        r_label = f"{src[0]}@{src[1]} <- {dst[0]}@{dst[1]}"
-
-        if dst[0] == srv[0] and dst[1] == srv[1]:
-            logging.error(f"Loopback detected: {w_label}")
-            to_client.transport.abort()
-            await self.writer_close(to_client)
+        if orig[0] == sockname[0] and orig[1] == sockname[1]:
+            logging.error(f"Blocked loopback connection: {write_label}")
+            client_writer.close()
+            await client_writer.wait_closed()
             return
 
         try:
-            from_remote, to_remote = await asyncio.open_connection(host=dst[0], port=dst[1])
+            orig_reader, orig_writer = await asyncio.open_connection(orig[0], orig[1])
         except Exception as err:
-            logging.error(f"Failed to connect: {w_label}, {type(err).__name__}, {err}")
-            to_client.transport.abort()
-            await self.writer_close(to_client)
+            logging.error(f"Failed to connect: {write_label}: {err}")
+            client_writer.close()
+            await client_writer.wait_closed()
             return
 
-        logging.info(f"Established: {w_label}")
-        proxy_start = time.monotonic()
+        logging.info(f"Established connection: {write_label}")
+        read_channel = channel(orig_reader, client_writer, read_label)
+        write_channel = channel(client_reader, orig_writer, write_label)
         async with asyncio.TaskGroup() as tg:
-            tg.create_task(self.proxy(w_label, from_client, to_remote))
-            tg.create_task(self.proxy(r_label, from_remote, to_client))
-        await self.writer_close(to_remote)
-        await self.writer_close(to_client)
-        proxy_time = time.monotonic() - proxy_start
-        logging.info(f"Closed: {w_label}, {proxy_time:.1f}s")
-        del from_remote, to_remote, from_client, to_client
-        return
+            tg.create_task(read_channel.transfer())
+            tg.create_task(write_channel.transfer())
+        logging.info(f"Closed connection: {write_label}")
 
     async def start_server(self):
-        server = await asyncio.start_server(self.client, port=PORT, reuse_port=True)
+        server = await asyncio.start_server(self.accept, port=PORT)
+        logging.info(f"Listening on port {PORT}")
         async with server:
-            logging.info(f"Listening on port {PORT}")
             await server.serve_forever()
-        return
-
-    def run(self, pid: int = 0):
-        logging.debug(f"Process {pid} started")
-        asyncio.run(self.start_server())
 
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.DEBUG)
+    gc.set_threshold(10000)
     gc.collect()
     gc.freeze()
-    gc.set_threshold(10000)
     gc.set_debug(gc.DEBUG_STATS)
-    logging.basicConfig(level=logging.DEBUG)
-    workers = len(os.sched_getaffinity(0))
-    with ProcessPoolExecutor(workers) as pool:
-        pool.map(proxy().run, range(workers))
+    asyncio.run(server().start_server())
