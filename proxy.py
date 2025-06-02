@@ -38,8 +38,11 @@ class channel:
             self._writer.transport.abort()
         finally:
             if not self._writer.is_closing():
-                self._writer.close()
-                await self._writer.wait_closed()
+                try:
+                    self._writer.close()
+                    await self._writer.wait_closed()
+                except Exception as err:
+                    logging.debug(f"Failed to close writer: {self._label}: {err}")
 
 
 class server:
