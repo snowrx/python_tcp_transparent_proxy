@@ -5,6 +5,7 @@ import socket
 import struct
 
 PORT = 8081
+LIFETIME = 86400
 
 
 class channel:
@@ -32,7 +33,8 @@ class channel:
             so: socket.socket = self._writer.get_extra_info("socket")
             so.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, True)
             self._writer.transport.set_write_buffer_limits(self._limit, self._limit)
-            await asyncio.create_task(self.streaming())
+            async with asyncio.timeout(LIFETIME):
+                await asyncio.create_task(self.streaming())
         except Exception as err:
             logging.error(f"Error in channel: {self._label}: {err}")
             self._writer.transport.abort()
