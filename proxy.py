@@ -20,21 +20,19 @@ class channel:
 
     async def streaming(self):
         read_task = asyncio.create_task(self._reader.read(self._limit))
-        while not self._writer.is_closing() and (mv := memoryview(await read_task)):
+        while mv := memoryview(await read_task):
             self._writer.write(mv)
             read_task = asyncio.create_task(self._reader.read(self._limit))
             await self._writer.drain()
+        self._writer.write_eof()
+        await self._writer.drain()
 
     async def transfer(self):
         try:
-            logging.debug(f"Open channel: {self._label}")
             so: socket.socket = self._writer.get_extra_info("socket")
             so.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, True)
             self._writer.transport.set_write_buffer_limits(self._limit, self._limit)
             await asyncio.create_task(self.streaming())
-            if not self._writer.is_closing():
-                self._writer.write_eof()
-                await self._writer.drain()
         except Exception as err:
             logging.error(f"Error in channel: {self._label}: {err}")
             self._writer.transport.abort()
@@ -42,7 +40,6 @@ class channel:
             if not self._writer.is_closing():
                 self._writer.close()
                 await self._writer.wait_closed()
-            logging.debug(f"Close channel: {self._label}")
 
 
 class server:
@@ -72,6 +69,7 @@ class server:
 
         if orig[0] == sockname[0] and orig[1] == sockname[1]:
             logging.error(f"Blocked loopback connection: {write_label}")
+            client_writer.transport.abort()
             client_writer.close()
             await client_writer.wait_closed()
             return
@@ -80,6 +78,7 @@ class server:
             orig_reader, orig_writer = await asyncio.open_connection(orig[0], orig[1])
         except Exception as err:
             logging.error(f"Failed to connect: {write_label}: {err}")
+            client_writer.transport.abort()
             client_writer.close()
             await client_writer.wait_closed()
             return
