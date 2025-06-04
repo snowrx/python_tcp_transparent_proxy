@@ -6,7 +6,7 @@ import struct
 
 PORT = 8081
 LIFETIME = 86400
-BUFFER_SIZE = 1 << 24
+BUFFER_SIZE = 1 << 11
 
 
 class channel:
