@@ -6,14 +6,13 @@ import struct
 
 PORT = 8081
 LIFETIME = 86400
-BUFFER_SIZE = 1 << 11
+LIMIT = 1 << 18
 
 
 class channel:
     _reader: asyncio.StreamReader
     _writer: asyncio.StreamWriter
     _label: str
-    _limit: int = 1 << 16
 
     def __init__(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter, label: str):
         self._reader = reader
@@ -21,10 +20,10 @@ class channel:
         self._label = label
 
     async def streaming(self):
-        read_task = asyncio.create_task(self._reader.read(self._limit))
+        read_task = asyncio.create_task(self._reader.read(LIMIT))
         while mv := memoryview(await read_task):
             self._writer.write(mv)
-            read_task = asyncio.create_task(self._reader.read(self._limit))
+            read_task = asyncio.create_task(self._reader.read(LIMIT))
             await self._writer.drain()
         self._writer.write_eof()
         await self._writer.drain()
@@ -33,7 +32,7 @@ class channel:
         try:
             so: socket.socket = self._writer.get_extra_info("socket")
             so.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, True)
-            self._writer.transport.set_write_buffer_limits(BUFFER_SIZE, BUFFER_SIZE)
+            self._writer.transport.set_write_buffer_limits(LIMIT, LIMIT)
             async with asyncio.timeout(LIFETIME):
                 await asyncio.create_task(self.streaming())
         except Exception as err:
@@ -81,7 +80,7 @@ class server:
             return
 
         try:
-            orig_reader, orig_writer = await asyncio.open_connection(orig[0], orig[1])
+            orig_reader, orig_writer = await asyncio.open_connection(orig[0], orig[1], limit=LIMIT)
         except Exception as err:
             logging.error(f"Failed to connect: {write_label}: {err}")
             client_writer.transport.abort()
@@ -98,7 +97,7 @@ class server:
         logging.info(f"Closed connection: {write_label}")
 
     async def start_server(self):
-        server = await asyncio.start_server(self.accept, port=PORT)
+        server = await asyncio.start_server(self.accept, port=PORT, limit=LIMIT)
         logging.info(f"Listening on port {PORT}")
         async with server:
             await server.serve_forever()
