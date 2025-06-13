@@ -5,8 +5,8 @@ import socket
 import struct
 
 PORT = 8081
-LIFETIME = 86400
 LIMIT = 1 << 18
+IDLE_TIMEOUT = 600
 
 
 class channel:
@@ -19,11 +19,15 @@ class channel:
         self._writer = writer
         self._label = label
 
+    async def read(self):
+        async with asyncio.timeout(IDLE_TIMEOUT):
+            return await self._reader.read(LIMIT)
+
     async def streaming(self):
-        read_task = asyncio.create_task(self._reader.read(LIMIT))
-        while mv := memoryview(await read_task):
-            self._writer.write(mv)
-            read_task = asyncio.create_task(self._reader.read(LIMIT))
+        reader_task = asyncio.create_task(self.read())
+        while data := await reader_task:
+            self._writer.write(data)
+            reader_task = asyncio.create_task(self.read())
             await self._writer.drain()
         self._writer.write_eof()
         await self._writer.drain()
@@ -33,8 +37,7 @@ class channel:
             so: socket.socket = self._writer.get_extra_info("socket")
             so.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, True)
             self._writer.transport.set_write_buffer_limits(LIMIT, LIMIT)
-            async with asyncio.timeout(LIFETIME):
-                await asyncio.create_task(self.streaming())
+            await asyncio.create_task(self.streaming())
         except Exception as err:
             logging.error(f"Error in channel: {self._label}: {err}")
             self._writer.transport.abort()
