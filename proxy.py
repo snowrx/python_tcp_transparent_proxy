@@ -5,10 +5,10 @@ import socket
 import struct
 import uvloop
 
-
 PORT = 8081
 LIFETIME = 86400
 LIMIT = 1 << 18
+READAHEAD = 1 << 27
 
 
 class channel:
@@ -23,8 +23,8 @@ class channel:
 
     async def streaming(self):
         read_task = asyncio.create_task(self._reader.read(LIMIT))
-        while mv := memoryview(await read_task):
-            self._writer.write(mv)
+        while buf := await read_task:
+            self._writer.write(buf)
             read_task = asyncio.create_task(self._reader.read(LIMIT))
             await self._writer.drain()
         self._writer.write_eof()
@@ -34,7 +34,7 @@ class channel:
         try:
             so: socket.socket = self._writer.get_extra_info("socket")
             so.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, True)
-            self._writer.transport.set_write_buffer_limits(LIMIT, LIMIT)
+            self._writer.transport.set_write_buffer_limits(READAHEAD, READAHEAD)
             async with asyncio.timeout(LIFETIME):
                 await asyncio.create_task(self.streaming())
         except Exception as err:
