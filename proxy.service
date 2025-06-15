@@ -1,7 +1,7 @@
 [Unit]
 Description=Transparent TCP Proxy
 After=network-online.target
-ConditionPathExists=/opt/proxy.py
+ConditionPathExists=/opt/proxy/run.sh
 
 [Service]
 DynamicUser=true
@@ -9,7 +9,7 @@ TemporaryFileSystem=/var/cache
 CacheDirectory=proxy
 WorkingDirectory=/var/cache/proxy
 Environment="PYTHONPYCACHEPREFIX=/var/cache/proxy"
-ExecStart=python3 /opt/proxy.py
+ExecStart=/opt/proxy/run.sh
 MemoryLow=1%
 MemoryHigh=50%
 CPUSchedulingPolicy=rr

@@ -3,6 +3,8 @@ import gc
 import logging
 import socket
 import struct
+import uvloop
+
 
 PORT = 8081
 LIFETIME = 86400
@@ -109,4 +111,5 @@ if __name__ == "__main__":
     gc.collect()
     gc.freeze()
     gc.set_debug(gc.DEBUG_STATS)
+    asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
     asyncio.run(server().start_server())
