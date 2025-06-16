@@ -108,7 +108,8 @@ class server:
 
 
 if __name__ == "__main__":
-    logging.basicConfig(level=logging.DEBUG)
     gc.collect()
+    gc.freeze()
     gc.set_debug(gc.DEBUG_STATS)
+    logging.basicConfig(level=logging.DEBUG)
     asyncio.run(server().start_server())
