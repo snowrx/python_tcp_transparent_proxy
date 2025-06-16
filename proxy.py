@@ -3,6 +3,7 @@ import gc
 import logging
 import socket
 import struct
+import sys
 import uvloop
 
 PORT = 8081
@@ -108,6 +109,9 @@ class server:
 
 
 if __name__ == "__main__":
+    if not sys.platform.startswith("linux"):
+        print("This script is intended for Linux only.")
+        sys.exit(1)
     gc.collect()
     gc.freeze()
     gc.set_debug(gc.DEBUG_STATS)
