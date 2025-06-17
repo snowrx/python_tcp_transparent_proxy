@@ -3,7 +3,7 @@ import gc
 import logging
 import socket
 import struct
-import sys
+
 import uvloop
 
 PORT = 8081
@@ -100,7 +100,6 @@ class server:
         logging.info(f"Closed connection: {write_label}")
 
     async def start_server(self):
-        asyncio.get_running_loop().set_task_factory(asyncio.eager_task_factory)
         server = await asyncio.start_server(self.accept, port=PORT, limit=LIMIT)
         logging.info(f"Listening on port {PORT}")
         async with server:
@@ -108,12 +107,9 @@ class server:
 
 
 if __name__ == "__main__":
-    if not sys.platform.startswith("linux"):
-        print("This script is intended for Linux only.")
-        sys.exit(1)
     gc.collect()
     gc.freeze()
+    gc.set_threshold(3000)
     gc.set_debug(gc.DEBUG_STATS)
     logging.basicConfig(level=logging.DEBUG)
-    with asyncio.Runner(loop_factory=uvloop.new_event_loop) as runner:
-        runner.run(server().start_server())
+    uvloop.run(server().start_server())
