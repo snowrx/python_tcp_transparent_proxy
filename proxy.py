@@ -1,5 +1,4 @@
 import asyncio
-from concurrent.futures import ThreadPoolExecutor
 import gc
 import logging
 import socket
@@ -11,7 +10,6 @@ PORT = 8081
 LIFETIME = 86400
 LIMIT = 1 << 18
 READAHEAD = 1 << 27
-WORKERS = 2
 
 
 class channel:
@@ -101,16 +99,13 @@ class server:
             tg.create_task(write_channel.transfer())
         logging.info(f"Closed connection: {write_label}")
 
-    def start(self, id: int = -1):
-        async def start_server():
-            asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
-            asyncio.get_running_loop().set_task_factory(asyncio.eager_task_factory)
-            server = await asyncio.start_server(self.accept, port=PORT, limit=LIMIT, reuse_port=True)
-            logging.info(f"Listening on port {PORT}")
-            async with server:
-                await server.serve_forever()
-
-        asyncio.run(start_server())
+    async def start_server(self):
+        asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
+        asyncio.get_running_loop().set_task_factory(asyncio.eager_task_factory)
+        server = await asyncio.start_server(self.accept, port=PORT, limit=LIMIT)
+        logging.info(f"Listening on port {PORT}")
+        async with server:
+            await server.serve_forever()
 
 
 if __name__ == "__main__":
@@ -121,5 +116,4 @@ if __name__ == "__main__":
     gc.freeze()
     gc.set_debug(gc.DEBUG_STATS)
     logging.basicConfig(level=logging.DEBUG)
-    with ThreadPoolExecutor(WORKERS) as pool:
-        pool.map(server().start, range(WORKERS))
+    asyncio.run(server().start_server())
