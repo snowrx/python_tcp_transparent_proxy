@@ -100,7 +100,6 @@ class server:
         logging.info(f"Closed connection: {write_label}")
 
     async def start_server(self):
-        asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
         asyncio.get_running_loop().set_task_factory(asyncio.eager_task_factory)
         server = await asyncio.start_server(self.accept, port=PORT, limit=LIMIT)
         logging.info(f"Listening on port {PORT}")
@@ -116,4 +115,5 @@ if __name__ == "__main__":
     gc.freeze()
     gc.set_debug(gc.DEBUG_STATS)
     logging.basicConfig(level=logging.DEBUG)
-    asyncio.run(server().start_server())
+    with asyncio.Runner(loop_factory=uvloop.new_event_loop) as runner:
+        runner.run(server().start_server())
