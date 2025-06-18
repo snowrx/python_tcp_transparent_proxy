@@ -1,3 +1,4 @@
+from concurrent.futures import ThreadPoolExecutor
 import asyncio
 import gc
 import logging
@@ -9,7 +10,7 @@ import uvloop
 PORT = 8081
 LIFETIME = 86400
 LIMIT = 1 << 18
-READAHEAD = 1 << 27
+THREAD = 2
 
 
 class channel:
@@ -35,7 +36,7 @@ class channel:
         try:
             so: socket.socket = self._writer.get_extra_info("socket")
             so.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, True)
-            self._writer.transport.set_write_buffer_limits(READAHEAD, READAHEAD)
+            self._writer.transport.set_write_buffer_limits(LIMIT, LIMIT)
             async with asyncio.timeout(LIFETIME):
                 await asyncio.create_task(self.streaming())
         except Exception as err:
@@ -100,10 +101,13 @@ class server:
         logging.info(f"Closed connection: {write_label}")
 
     async def start_server(self):
-        server = await asyncio.start_server(self.accept, port=PORT, limit=LIMIT)
+        server = await asyncio.start_server(self.accept, port=PORT, limit=LIMIT, reuse_port=True)
         logging.info(f"Listening on port {PORT}")
         async with server:
             await server.serve_forever()
+
+    def run(self, _=0):
+        uvloop.run(self.start_server())
 
 
 if __name__ == "__main__":
@@ -112,4 +116,5 @@ if __name__ == "__main__":
     gc.set_threshold(3000)
     gc.set_debug(gc.DEBUG_STATS)
     logging.basicConfig(level=logging.DEBUG)
-    uvloop.run(server().start_server())
+    with ThreadPoolExecutor(THREAD) as pool:
+        pool.map(server().run, range(THREAD))
