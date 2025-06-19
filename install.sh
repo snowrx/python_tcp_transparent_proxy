@@ -7,19 +7,19 @@ if [ "$EUID" -ne 0 ]; then
   exit
 fi
 
-if [ ! -d $DEST ] ; then
-  mkdir $DEST
-  chown proxy:proxy $DEST
-  cd $DEST
-  python3 -m venv .venv
+if [ -d "$DEST" ]; then
+  systemctl disable --now proxy.service
+  rm -rf $DEST
 fi
 
-cd "$(dirname "$0")"
-cp {proxy.py,requirements.txt,run.sh} $DEST/
-chmod a+rx $DEST/run.sh
+mkdir -p $DEST
+cp {proxy.py,requirements.txt,proxy} $DEST/
 cp proxy.service /etc/systemd/system/
+chown -R proxy:proxy $DEST
+chmod a+rx $DEST/proxy
 
 cd $DEST
+python3 -m venv .venv
 source .venv/bin/activate
 pip install -U -r requirements.txt
 deactivate
