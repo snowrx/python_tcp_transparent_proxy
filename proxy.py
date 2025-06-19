@@ -2,7 +2,6 @@ from concurrent.futures import ThreadPoolExecutor
 import asyncio
 import gc
 import logging
-import os
 import socket
 import struct
 
@@ -12,6 +11,7 @@ PORT = 8081
 LIFETIME = 86400
 LIMIT = 1 << 18
 READAHEAD = 1 << 24
+WORKERS = 2
 
 
 class channel:
@@ -107,8 +107,9 @@ class server:
         async with server:
             await server.serve_forever()
 
-    def run(self, _=0):
-        uvloop.run(self.start_server())
+
+def run(_=0):
+    uvloop.run(server().start_server())
 
 
 if __name__ == "__main__":
@@ -117,6 +118,6 @@ if __name__ == "__main__":
     gc.set_threshold(3000)
     gc.set_debug(gc.DEBUG_STATS)
     logging.basicConfig(level=logging.DEBUG)
-    cpu_count = len(os.sched_getaffinity(0))
-    with ThreadPoolExecutor(cpu_count) as pool:
-        pool.map(server().run, range(cpu_count))
+
+    with ThreadPoolExecutor(max_workers=WORKERS) as executor:
+        executor.map(run, range(WORKERS))
