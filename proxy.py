@@ -2,6 +2,7 @@ from concurrent.futures import ThreadPoolExecutor
 import asyncio
 import gc
 import logging
+import os
 import socket
 import struct
 
@@ -10,7 +11,7 @@ import uvloop
 PORT = 8081
 LIFETIME = 86400
 LIMIT = 1 << 18
-THREAD = 2
+READAHEAD = 1 << 24
 
 
 class channel:
@@ -36,7 +37,7 @@ class channel:
         try:
             so: socket.socket = self._writer.get_extra_info("socket")
             so.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, True)
-            self._writer.transport.set_write_buffer_limits(LIMIT, LIMIT)
+            self._writer.transport.set_write_buffer_limits(READAHEAD, READAHEAD)
             async with asyncio.timeout(LIFETIME):
                 await asyncio.create_task(self.streaming())
         except Exception as err:
@@ -116,5 +117,6 @@ if __name__ == "__main__":
     gc.set_threshold(3000)
     gc.set_debug(gc.DEBUG_STATS)
     logging.basicConfig(level=logging.DEBUG)
-    with ThreadPoolExecutor(THREAD) as pool:
-        pool.map(server().run, range(THREAD))
+    cpu_count = len(os.sched_getaffinity(0))
+    with ThreadPoolExecutor(cpu_count) as pool:
+        pool.map(server().run, range(cpu_count))
