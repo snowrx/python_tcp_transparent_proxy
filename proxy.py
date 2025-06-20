@@ -101,10 +101,11 @@ class server:
         logging.info(f"Closed connection: {write_label}")
 
     async def start_server(self):
+        asyncio.get_running_loop().set_task_factory(asyncio.eager_task_factory)
         server = await asyncio.start_server(self.accept, port=PORT, limit=LIMIT, reuse_port=True)
         logging.info(f"Listening on port {PORT}")
         async with server:
-            await server.serve_forever()
+            await asyncio.create_task(server.serve_forever())
 
 
 def run(_=0):
