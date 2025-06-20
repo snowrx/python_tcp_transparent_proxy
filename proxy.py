@@ -2,7 +2,6 @@ from concurrent.futures import ThreadPoolExecutor
 import asyncio
 import gc
 import logging
-import mmap
 import socket
 import struct
 
@@ -25,17 +24,13 @@ class channel:
         self._label = label
 
     async def streaming(self):
-        with mmap.mmap(-1, LIMIT, mmap.MAP_PRIVATE | mmap.MAP_ANONYMOUS) as buf:
-            buf.madvise(mmap.MADV_HUGEPAGE)
+        read_task = asyncio.create_task(self._reader.read(LIMIT))
+        while v := memoryview(await read_task):
+            self._writer.write(v)
             read_task = asyncio.create_task(self._reader.read(LIMIT))
-            while l := buf.write(await read_task):
-                read_task = asyncio.create_task(self._reader.read(LIMIT))
-                buf.seek(0)
-                self._writer.write(buf.read(l))
-                buf.seek(0)
-                await self._writer.drain()
-            self._writer.write_eof()
             await self._writer.drain()
+        self._writer.write_eof()
+        await self._writer.drain()
 
     async def transfer(self):
         try:
