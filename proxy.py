@@ -2,6 +2,7 @@ from concurrent.futures import ThreadPoolExecutor
 import asyncio
 import gc
 import logging
+import mmap
 import socket
 import struct
 
@@ -10,7 +11,6 @@ import uvloop
 PORT = 8081
 LIFETIME = 86400
 LIMIT = 1 << 18
-READAHEAD = 1 << 24
 WORKERS = 2
 
 
@@ -25,19 +25,23 @@ class channel:
         self._label = label
 
     async def streaming(self):
-        read_task = asyncio.create_task(self._reader.read(LIMIT))
-        while buf := await read_task:
-            self._writer.write(buf)
+        with mmap.mmap(-1, LIMIT, mmap.MAP_PRIVATE | mmap.MAP_ANONYMOUS) as buf:
+            buf.madvise(mmap.MADV_HUGEPAGE)
             read_task = asyncio.create_task(self._reader.read(LIMIT))
+            while l := buf.write(await read_task):
+                read_task = asyncio.create_task(self._reader.read(LIMIT))
+                buf.seek(0)
+                self._writer.write(buf.read(l))
+                buf.seek(0)
+                await self._writer.drain()
+            self._writer.write_eof()
             await self._writer.drain()
-        self._writer.write_eof()
-        await self._writer.drain()
 
     async def transfer(self):
         try:
             so: socket.socket = self._writer.get_extra_info("socket")
             so.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, True)
-            self._writer.transport.set_write_buffer_limits(READAHEAD, READAHEAD)
+            self._writer.transport.set_write_buffer_limits(LIMIT, LIMIT)
             async with asyncio.timeout(LIFETIME):
                 await asyncio.create_task(self.streaming())
         except Exception as err:
