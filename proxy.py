@@ -9,6 +9,7 @@ import struct
 PORT = 8081
 LIFETIME = 86400
 LIMIT = 1 << 18
+NCORES = 4
 
 
 class channel:
@@ -109,12 +110,7 @@ class server:
             await asyncio.create_task(server.serve_forever())
 
 
-def run(cpu: int = -1):
-    if cpu != -1:
-        try:
-            os.sched_setaffinity(0, {cpu})
-        except:
-            logging.warning(f"Failed to set affinity to CPU {cpu}")
+def run(_=None):
     asyncio.run(server().start_server())
 
 
@@ -125,9 +121,8 @@ if __name__ == "__main__":
     gc.set_debug(gc.DEBUG_STATS)
     logging.basicConfig(level=logging.DEBUG)
 
-    cpu_list = os.sched_getaffinity(0)
-    if len(cpu_list) > 1:
-        with ThreadPoolExecutor(len(cpu_list)) as executor:
-            executor.map(run, cpu_list)
+    if NCORES > 1:
+        with ThreadPoolExecutor(NCORES) as executor:
+            executor.map(run, range(NCORES))
     else:
         run()
