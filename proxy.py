@@ -71,7 +71,7 @@ class server:
         so: socket.socket = client_writer.get_extra_info("socket")
         peername: tuple[str, int] = client_writer.get_extra_info("peername")
         sockname: tuple[str, int] = client_writer.get_extra_info("sockname")
-        orig: tuple[str, int] = self.get_original_dst(so, "." in peername[0])
+        orig: tuple[str, int] = await asyncio.to_thread(self.get_original_dst, so, "." in peername[0])
         read_label = f"{orig[0]}@{orig[1]} -> {peername[0]}@{peername[1]}"
         write_label = f"{peername[0]}@{peername[1]} -> {orig[0]}@{orig[1]}"
 
@@ -100,14 +100,21 @@ class server:
         logging.info(f"Closed connection: {write_label}")
 
     async def start_server(self):
-        asyncio.get_running_loop().set_task_factory(asyncio.eager_task_factory)
+        loop = asyncio.get_running_loop()
+        loop.set_task_factory(asyncio.eager_task_factory)
+        loop.set_default_executor(ThreadPoolExecutor(1))
         server = await asyncio.start_server(self.accept, port=PORT, limit=LIMIT, reuse_port=True)
         logging.info(f"Listening on port {PORT}")
         async with server:
             await asyncio.create_task(server.serve_forever())
 
 
-def run(_=0):
+def run(cpu: int = -1):
+    if cpu != -1:
+        try:
+            os.sched_setaffinity(0, {cpu})
+        except:
+            logging.warning(f"Failed to set affinity to CPU {cpu}")
     asyncio.run(server().start_server())
 
 
@@ -118,6 +125,9 @@ if __name__ == "__main__":
     gc.set_debug(gc.DEBUG_STATS)
     logging.basicConfig(level=logging.DEBUG)
 
-    cpu_count = len(os.sched_getaffinity(0))
-    with ThreadPoolExecutor(cpu_count) as pool:
-        pool.map(run, range(cpu_count))
+    cpu_list = os.sched_getaffinity(0)
+    if len(cpu_list) > 1:
+        with ThreadPoolExecutor(len(cpu_list)) as executor:
+            executor.map(run, cpu_list)
+    else:
+        run()
