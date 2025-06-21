@@ -2,13 +2,13 @@ from concurrent.futures import ThreadPoolExecutor
 import asyncio
 import gc
 import logging
+import os
 import socket
 import struct
 
 PORT = 8081
 LIFETIME = 86400
 LIMIT = 1 << 18
-WORKER = 4
 
 
 class channel:
@@ -118,5 +118,6 @@ if __name__ == "__main__":
     gc.set_debug(gc.DEBUG_STATS)
     logging.basicConfig(level=logging.DEBUG)
 
-    with ThreadPoolExecutor(WORKER) as pool:
-        pool.map(run, range(WORKER))
+    cpu_count = len(os.sched_getaffinity(0))
+    with ThreadPoolExecutor(cpu_count) as pool:
+        pool.map(run, range(cpu_count))
