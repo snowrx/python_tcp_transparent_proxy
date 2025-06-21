@@ -5,12 +5,10 @@ import logging
 import socket
 import struct
 
-import uvloop
-
 PORT = 8081
 LIFETIME = 86400
 LIMIT = 1 << 18
-WORKERS = 2
+WORKER = 4
 
 
 class channel:
@@ -36,6 +34,7 @@ class channel:
         try:
             so: socket.socket = self._writer.get_extra_info("socket")
             so.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, True)
+            so.setsockopt(socket.SOL_TCP, socket.TCP_NODELAY, True)
             self._writer.transport.set_write_buffer_limits(LIMIT, LIMIT)
             async with asyncio.timeout(LIFETIME):
                 await asyncio.create_task(self.streaming())
@@ -109,7 +108,7 @@ class server:
 
 
 def run(_=0):
-    uvloop.run(server().start_server())
+    asyncio.run(server().start_server())
 
 
 if __name__ == "__main__":
@@ -119,5 +118,5 @@ if __name__ == "__main__":
     gc.set_debug(gc.DEBUG_STATS)
     logging.basicConfig(level=logging.DEBUG)
 
-    with ThreadPoolExecutor(max_workers=WORKERS) as executor:
-        executor.map(run, range(WORKERS))
+    with ThreadPoolExecutor(WORKER) as pool:
+        pool.map(run, range(WORKER))
