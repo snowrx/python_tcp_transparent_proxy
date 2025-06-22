@@ -81,6 +81,7 @@ class server:
             await client_writer.wait_closed()
             return
 
+        open = asyncio.create_task(asyncio.open_connection(orig[0], orig[1], limit=LIMIT))
         peername: tuple[str, int] = client_writer.get_extra_info("peername")
         sockname: tuple[str, int] = client_writer.get_extra_info("sockname")
         read_label = f"{orig[0]}@{orig[1]} -> {peername[0]}@{peername[1]}"
@@ -88,14 +89,16 @@ class server:
 
         if orig[0] == sockname[0] and orig[1] == sockname[1]:
             logging.error(f"Blocked loopback connection: {write_label}")
+            open.cancel()
             client_writer.close()
             await client_writer.wait_closed()
             return
 
         try:
-            orig_reader, orig_writer = await asyncio.open_connection(orig[0], orig[1], limit=LIMIT)
+            orig_reader, orig_writer = await open
         except Exception as err:
             logging.error(f"Failed to connect: {write_label}: {err}")
+            open.cancel()
             client_writer.close()
             await client_writer.wait_closed()
             return
