@@ -5,14 +5,8 @@ ConditionPathExists=/opt/proxy/proxy
 
 [Service]
 DynamicUser=true
-TemporaryFileSystem=/var/cache
-CacheDirectory=proxy
-WorkingDirectory=/var/cache/proxy
-Environment="PYTHONPYCACHEPREFIX=/var/cache/proxy"
+WorkingDirectory=/opt/proxy
 ExecStart=/opt/proxy/proxy
-MemoryHigh=50%
-CPUSchedulingPolicy=rr
-CPUSchedulingPriority=1
 
 [Install]
 WantedBy=multi-user.target
