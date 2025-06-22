@@ -2,6 +2,7 @@ from concurrent.futures import ProcessPoolExecutor
 import asyncio
 import gc
 import logging
+import os
 import socket
 import struct
 
@@ -10,7 +11,6 @@ import uvloop
 PORT = 8081
 LIFETIME = 86400
 LIMIT = 1 << 18
-MULTI_PROCESS = 4
 
 
 class channel:
@@ -81,8 +81,6 @@ class server:
             await client_writer.wait_closed()
             return
 
-        t_open = asyncio.create_task(asyncio.open_connection(orig[0], orig[1], limit=LIMIT))
-        await asyncio.sleep(0)
         peername: tuple[str, int] = client_writer.get_extra_info("peername")
         sockname: tuple[str, int] = client_writer.get_extra_info("sockname")
         read_label = f"{orig[0]}@{orig[1]} -> {peername[0]}@{peername[1]}"
@@ -90,16 +88,14 @@ class server:
 
         if orig[0] == sockname[0] and orig[1] == sockname[1]:
             logging.error(f"Blocked loopback connection: {write_label}")
-            t_open.cancel()
             client_writer.close()
             await client_writer.wait_closed()
             return
 
         try:
-            orig_reader, orig_writer = await t_open
+            orig_reader, orig_writer = await asyncio.open_connection(orig[0], orig[1], limit=LIMIT)
         except Exception as err:
             logging.error(f"Failed to connect: {write_label}: {err}")
-            t_open.cancel()
             client_writer.close()
             await client_writer.wait_closed()
             return
@@ -114,7 +110,6 @@ class server:
 
     async def start_server(self):
         asyncio.get_event_loop().set_task_factory(asyncio.eager_task_factory)
-        self._queue = asyncio.Queue()
         server = await asyncio.start_server(self.accept, port=PORT, limit=LIMIT, reuse_port=True)
         logging.info(f"Listening on port {PORT}")
         async with server:
@@ -129,8 +124,9 @@ if __name__ == "__main__":
     gc.collect()
     gc.set_debug(gc.DEBUG_STATS)
     logging.basicConfig(level=logging.DEBUG)
-    if MULTI_PROCESS > 1:
-        with ProcessPoolExecutor(MULTI_PROCESS) as executor:
-            executor.map(launch, range(MULTI_PROCESS))
+    cpu = os.sched_getaffinity(0)
+    if len(cpu) > 1:
+        with ProcessPoolExecutor(len(cpu)) as executor:
+            executor.map(launch, cpu)
     else:
         launch()
