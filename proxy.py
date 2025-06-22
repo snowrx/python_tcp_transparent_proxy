@@ -1,3 +1,4 @@
+from concurrent.futures import ProcessPoolExecutor
 import asyncio
 import gc
 import logging
@@ -9,6 +10,7 @@ import uvloop
 PORT = 8081
 LIFETIME = 86400
 LIMIT = 1 << 18
+MULTI_PROCESS = 4
 
 
 class channel:
@@ -119,8 +121,16 @@ class server:
             await server.serve_forever()
 
 
+def launch(_=None):
+    uvloop.run(server().start_server())
+
+
 if __name__ == "__main__":
     gc.collect()
     gc.set_debug(gc.DEBUG_STATS)
     logging.basicConfig(level=logging.DEBUG)
-    uvloop.run(server().start_server())
+    if MULTI_PROCESS > 1:
+        with ProcessPoolExecutor(MULTI_PROCESS) as executor:
+            executor.map(launch, range(MULTI_PROCESS))
+    else:
+        launch()
