@@ -1,8 +1,6 @@
-from concurrent.futures import ProcessPoolExecutor
 import asyncio
 import gc
 import logging
-import os
 import socket
 import struct
 
@@ -11,6 +9,7 @@ import uvloop
 PORT = 8081
 LIFETIME = 86400
 LIMIT = 1 << 18
+SUB_THREAD = 1
 
 
 class channel:
@@ -112,24 +111,23 @@ class server:
         logging.info(f"Closed connection: {write_label}")
 
     async def start_server(self):
-        asyncio.get_event_loop().set_task_factory(asyncio.eager_task_factory)
+        loop = asyncio.get_running_loop()
+        loop.set_task_factory(asyncio.eager_task_factory)
         server = await asyncio.start_server(self.accept, port=PORT, limit=LIMIT, reuse_port=True)
         logging.info(f"Listening on port {PORT}")
         async with server:
             await server.serve_forever()
 
-
-def launch(_=None):
-    uvloop.run(server().start_server())
+    async def run(self):
+        async with asyncio.TaskGroup() as tg:
+            tg.create_task(self.start_server())
+            for _ in range(SUB_THREAD):
+                tg.create_task(asyncio.to_thread(uvloop.run, self.start_server()))
 
 
 if __name__ == "__main__":
     gc.collect()
     gc.set_debug(gc.DEBUG_STATS)
     logging.basicConfig(level=logging.DEBUG)
-    cpu = os.sched_getaffinity(0)
-    if len(cpu) > 1:
-        with ProcessPoolExecutor(len(cpu)) as executor:
-            executor.map(launch, cpu)
-    else:
-        launch()
+    uvloop.run(server().run())
+    logging.shutdown()
