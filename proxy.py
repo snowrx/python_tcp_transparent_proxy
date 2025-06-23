@@ -127,7 +127,10 @@ if __name__ == "__main__":
     gc.collect()
     gc.set_debug(gc.DEBUG_STATS)
     logging.basicConfig(level=logging.DEBUG)
-    cpu = os.sched_getaffinity(0)
-    with ThreadPoolExecutor(len(cpu)) as pool:
-        pool.map(run, cpu)
+    worker_count = len(os.sched_getaffinity(0)) // 2
+    if worker_count > 1:
+        with ThreadPoolExecutor(worker_count) as executor:
+            executor.map(run, range(worker_count))
+    else:
+        run()
     logging.shutdown()
