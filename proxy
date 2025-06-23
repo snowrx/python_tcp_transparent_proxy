@@ -1,13 +1,8 @@
 #!/bin/bash
 
+PYTHON=python3.13t
+which $PYTHON || PYTHON=python3
+
 cd "$(dirname "$0")"
-
-if [ ! -d ".venv" ]; then
-  echo "Please run install.sh first"
-  exit 1
-fi
-
-source .venv/bin/activate
-pip install --no-cache-dir -U -r requirements.txt
-exec python3 proxy.py
+exec $PYTHON proxy.py
 deactivate

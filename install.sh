@@ -13,15 +13,10 @@ if [ -d "$DEST" ]; then
 fi
 
 mkdir -p $DEST
-cp {proxy.py,proxy,requirements.txt} $DEST/
+cp {proxy.py,proxy} $DEST/
 cp proxy.service /etc/systemd/system/
 chown -R proxy:proxy $DEST
 chmod a+rx $DEST/proxy
-cd $DEST
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-deactivate
 
 systemctl daemon-reload
 systemctl enable --now proxy.service

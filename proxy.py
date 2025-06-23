@@ -2,15 +2,13 @@ from concurrent.futures import ThreadPoolExecutor
 import asyncio
 import gc
 import logging
+import os
 import socket
 import struct
-
-import uvloop
 
 PORT = 8081
 LIFETIME = 86400
 LIMIT = 1 << 18
-THREAD = 2
 
 
 class channel:
@@ -114,6 +112,7 @@ class server:
     async def start_server(self):
         loop = asyncio.get_running_loop()
         loop.set_task_factory(asyncio.eager_task_factory)
+        loop.set_default_executor(ThreadPoolExecutor(1))
         server = await asyncio.start_server(self.accept, port=PORT, limit=LIMIT, reuse_port=True)
         logging.info(f"Listening on port {PORT}")
         async with server:
@@ -121,16 +120,14 @@ class server:
 
 
 def run(_=None):
-    uvloop.run(server().start_server())
+    asyncio.run(server().start_server())
 
 
 if __name__ == "__main__":
     gc.collect()
     gc.set_debug(gc.DEBUG_STATS)
     logging.basicConfig(level=logging.DEBUG)
-    if THREAD > 0:
-        with ThreadPoolExecutor(THREAD) as executor:
-            executor.map(run, range(THREAD))
-    else:
-        run()
+    cpu = os.sched_getaffinity(0)
+    with ThreadPoolExecutor(len(cpu)) as pool:
+        pool.map(run, cpu)
     logging.shutdown()
