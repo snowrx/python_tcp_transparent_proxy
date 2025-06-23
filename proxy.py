@@ -1,8 +1,7 @@
-from concurrent.futures import ProcessPoolExecutor
+from concurrent.futures import ThreadPoolExecutor
 import asyncio
 import gc
 import logging
-import os
 import socket
 import struct
 
@@ -11,6 +10,7 @@ import uvloop
 PORT = 8081
 LIFETIME = 86400
 LIMIT = 1 << 18
+THREAD = 2
 
 
 class channel:
@@ -128,7 +128,9 @@ if __name__ == "__main__":
     gc.collect()
     gc.set_debug(gc.DEBUG_STATS)
     logging.basicConfig(level=logging.DEBUG)
-    cpu = len(os.sched_getaffinity(0))
-    with ProcessPoolExecutor(cpu) as pool:
-        pool.map(run, range(cpu))
+    if THREAD > 0:
+        with ThreadPoolExecutor(THREAD) as executor:
+            executor.map(run, range(THREAD))
+    else:
+        run()
     logging.shutdown()
