@@ -9,6 +9,7 @@ import struct
 PORT = 8081
 LIFETIME = 86400
 LIMIT = 1 << 18
+THREAD_MAX = 16
 
 
 class channel:
@@ -127,7 +128,7 @@ if __name__ == "__main__":
     gc.collect()
     gc.set_debug(gc.DEBUG_STATS)
     logging.basicConfig(level=logging.DEBUG)
-    worker_count = len(os.sched_getaffinity(0)) // 2
+    worker_count = min(THREAD_MAX, len(os.sched_getaffinity(0)) // 2)
     if worker_count > 1:
         with ThreadPoolExecutor(worker_count) as executor:
             executor.map(run, range(worker_count))
