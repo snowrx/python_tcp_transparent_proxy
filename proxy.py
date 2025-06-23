@@ -1,6 +1,8 @@
+from concurrent.futures import ProcessPoolExecutor
 import asyncio
 import gc
 import logging
+import os
 import socket
 import struct
 
@@ -9,7 +11,6 @@ import uvloop
 PORT = 8081
 LIFETIME = 86400
 LIMIT = 1 << 18
-SUB_THREAD = 1
 
 
 class channel:
@@ -118,16 +119,18 @@ class server:
         async with server:
             await server.serve_forever()
 
-    async def run(self):
-        async with asyncio.TaskGroup() as tg:
-            tg.create_task(self.start_server())
-            for _ in range(SUB_THREAD):
-                tg.create_task(asyncio.to_thread(uvloop.run, self.start_server()))
+
+def run(cpu: int | None = None):
+    if cpu:
+        os.sched_setaffinity(0, {cpu})
+    uvloop.run(server().start_server())
 
 
 if __name__ == "__main__":
     gc.collect()
     gc.set_debug(gc.DEBUG_STATS)
     logging.basicConfig(level=logging.DEBUG)
-    uvloop.run(server().run())
+    cpu = os.sched_getaffinity(0)
+    with ProcessPoolExecutor(len(cpu)) as executor:
+        executor.map(run, cpu)
     logging.shutdown()
