@@ -120,9 +120,7 @@ class server:
             await server.serve_forever()
 
 
-def run(cpu: int | None = None):
-    if cpu:
-        os.sched_setaffinity(0, {cpu})
+def run(_=None):
     uvloop.run(server().start_server())
 
 
@@ -130,7 +128,7 @@ if __name__ == "__main__":
     gc.collect()
     gc.set_debug(gc.DEBUG_STATS)
     logging.basicConfig(level=logging.DEBUG)
-    cpu = os.sched_getaffinity(0)
-    with ProcessPoolExecutor(len(cpu)) as executor:
-        executor.map(run, cpu)
+    cpu = len(os.sched_getaffinity(0))
+    with ProcessPoolExecutor(cpu) as pool:
+        pool.map(run, range(cpu))
     logging.shutdown()
