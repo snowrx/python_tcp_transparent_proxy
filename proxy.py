@@ -1,5 +1,4 @@
 from concurrent.futures import ThreadPoolExecutor
-from threading import local
 import asyncio
 import gc
 import logging
