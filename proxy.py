@@ -9,7 +9,7 @@ import struct
 PORT = 8081
 LIFETIME = 86400
 LIMIT = 1 << 18
-THREAD_MAX = 16
+READAHEAD = 1 << 24
 
 
 class channel:
@@ -35,7 +35,7 @@ class channel:
             so: socket.socket = self._writer.get_extra_info("socket")
             so.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, True)
             so.setsockopt(socket.SOL_TCP, socket.TCP_NODELAY, True)
-            self._writer.transport.set_write_buffer_limits(LIMIT, LIMIT)
+            self._writer.transport.set_write_buffer_limits(READAHEAD, READAHEAD)
             async with asyncio.timeout(LIFETIME):
                 await self.streaming()
         except Exception as err:
@@ -128,10 +128,7 @@ if __name__ == "__main__":
     gc.collect()
     gc.set_debug(gc.DEBUG_STATS)
     logging.basicConfig(level=logging.DEBUG)
-    worker_count = min(THREAD_MAX, len(os.sched_getaffinity(0)) // 2)
-    if worker_count > 1:
-        with ThreadPoolExecutor(worker_count) as executor:
-            executor.map(run, range(worker_count))
-    else:
-        run()
+    cpu = os.sched_getaffinity(0)
+    with ThreadPoolExecutor(len(cpu)) as executor:
+        executor.map(run, cpu)
     logging.shutdown()
