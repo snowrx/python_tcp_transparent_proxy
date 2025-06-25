@@ -36,14 +36,14 @@ class channel:
             async with asyncio.timeout(LIFETIME):
                 await self.streaming()
         except Exception as err:
-            logging.error(f"[{self._pid}] Error in channel: {self._label}: {err}")
+            logging.error(f"[{self._pid}] Error in channel: {self._label}, {err}")
         finally:
             if not self._writer.is_closing():
                 try:
                     self._writer.close()
                     await self._writer.wait_closed()
                 except Exception as err:
-                    logging.debug(f"[{self._pid}] Failed to close writer: {self._label}: {err}")
+                    logging.debug(f"[{self._pid}] Failed to close writer: {self._label}, {err}")
 
 
 class server:
@@ -97,7 +97,7 @@ class server:
             logging.debug(f"[{self._pid}] calling: {write_label}")
             orig_reader, orig_writer = await asyncio.open_connection(orig[0], orig[1], limit=LIMIT)
         except Exception as err:
-            logging.error(f"[{self._pid}] Failed to connect: {write_label}: {err}")
+            logging.error(f"[{self._pid}] Failed to connect: {write_label}, {err}")
             client_writer.close()
             await client_writer.wait_closed()
             return
