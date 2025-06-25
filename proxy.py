@@ -2,7 +2,6 @@ from concurrent.futures import ThreadPoolExecutor
 import asyncio
 import gc
 import logging
-import os
 import socket
 import struct
 
@@ -10,13 +9,12 @@ PORT = 8081
 LIFETIME = 86400
 LIMIT = 1 << 18
 READAHEAD = 1 << 24
-FID_MAX = 1000000
+WORKER_COUNT = 4
 
 
 class channel:
-    def __init__(self, pid: int, fid: int, reader: asyncio.StreamReader, writer: asyncio.StreamWriter, label: str):
+    def __init__(self, pid: int, reader: asyncio.StreamReader, writer: asyncio.StreamWriter, label: str):
         self._pid: int = pid
-        self._fid: int = fid
         self._reader: asyncio.StreamReader = reader
         self._writer: asyncio.StreamWriter = writer
         self._label: str = label
@@ -38,14 +36,14 @@ class channel:
             async with asyncio.timeout(LIFETIME):
                 await self.streaming()
         except Exception as err:
-            logging.error(f"[{self._pid}:{self._fid}] Error in channel: {self._label}: {err}")
+            logging.error(f"[{self._pid}] Error in channel: {self._label}: {err}")
         finally:
             if not self._writer.is_closing():
                 try:
                     self._writer.close()
                     await self._writer.wait_closed()
                 except Exception as err:
-                    logging.debug(f"[{self._pid}:{self._fid}] Failed to close writer: {self._label}: {err}")
+                    logging.debug(f"[{self._pid}] Failed to close writer: {self._label}: {err}")
 
 
 class server:
@@ -84,7 +82,6 @@ class server:
             await client_writer.wait_closed()
             return
 
-        open = asyncio.create_task(asyncio.open_connection(orig[0], orig[1], limit=LIMIT))
         peername: tuple[str, int] = client_writer.get_extra_info("peername")
         sockname: tuple[str, int] = client_writer.get_extra_info("sockname")
         read_label = f"{orig[0]}@{orig[1]} -> {peername[0]}@{peername[1]}"
@@ -92,29 +89,25 @@ class server:
 
         if orig[0] == sockname[0] and orig[1] == sockname[1]:
             logging.error(f"[{self._pid}] Blocked loopback connection: {write_label}")
-            open.cancel()
             client_writer.close()
             await client_writer.wait_closed()
             return
 
         try:
-            orig_reader, orig_writer = await open
+            orig_reader, orig_writer = await asyncio.open_connection(orig[0], orig[1], limit=LIMIT)
         except Exception as err:
             logging.error(f"[{self._pid}] Failed to connect: {write_label}: {err}")
-            open.cancel()
             client_writer.close()
             await client_writer.wait_closed()
             return
 
-        fid = self._fid
-        self._fid = (self._fid + 1) % FID_MAX
-        logging.info(f"[{self._pid}:{fid}] Established connection: {write_label}")
-        read_channel = channel(self._pid, fid, orig_reader, client_writer, read_label)
-        write_channel = channel(self._pid, fid, client_reader, orig_writer, write_label)
+        logging.info(f"[{self._pid}] Established connection: {write_label}")
+        read_channel = channel(self._pid, orig_reader, client_writer, read_label)
+        write_channel = channel(self._pid, client_reader, orig_writer, write_label)
         async with asyncio.TaskGroup() as tg:
             tg.create_task(read_channel.transfer())
             tg.create_task(write_channel.transfer())
-        logging.info(f"[{self._pid}:{fid}] Closed connection: {write_label}")
+        logging.info(f"[{self._pid}] Closed connection: {write_label}")
 
     async def start_server(self):
         loop = asyncio.get_running_loop()
@@ -128,7 +121,6 @@ class server:
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.DEBUG)
-    worker = len(os.sched_getaffinity(0))
-    with ThreadPoolExecutor(worker) as executor:
-        executor.map(asyncio.run, [server(i).start_server() for i in range(worker)])
+    with ThreadPoolExecutor(WORKER_COUNT) as executor:
+        executor.map(asyncio.run, [server(i).start_server() for i in range(WORKER_COUNT)])
     logging.shutdown()
