@@ -94,6 +94,7 @@ class server:
             return
 
         try:
+            logging.debug(f"[{self._pid}] calling: {write_label}")
             orig_reader, orig_writer = await asyncio.open_connection(orig[0], orig[1], limit=LIMIT)
         except Exception as err:
             logging.error(f"[{self._pid}] Failed to connect: {write_label}: {err}")
