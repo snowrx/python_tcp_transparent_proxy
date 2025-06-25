@@ -121,6 +121,11 @@ class server:
 
 
 if __name__ == "__main__":
+    assert PORT > 0, "PORT must be greater than 0"
+    assert LIFETIME > 0, "LIFETIME must be greater than 0"
+    assert LIMIT > 0, "LIMIT must be greater than 0"
+    assert READAHEAD > 0, "READAHEAD must be greater than 0"
+    assert WORKER_COUNT > 0, "WORKER_COUNT must be greater than 0"
     logging.basicConfig(level=logging.DEBUG)
     with ThreadPoolExecutor(WORKER_COUNT) as executor:
         executor.map(asyncio.run, [server(i).start_server() for i in range(WORKER_COUNT)])
