@@ -19,9 +19,9 @@ class channel:
         self._label: str = label
 
     async def streaming(self):
-        while not self._writer.is_closing() and (b := await self._reader.read(LIMIT)):
+        while not self._writer.is_closing() and (v := memoryview(await self._reader.read(LIMIT))):
             await self._writer.drain()
-            self._writer.write(b)
+            self._writer.write(v)
         if not self._writer.is_closing():
             self._writer.write_eof()
             await self._writer.drain()
@@ -30,7 +30,6 @@ class channel:
         try:
             so: socket.socket = self._writer.get_extra_info("socket")
             so.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, True)
-            so.setsockopt(socket.SOL_TCP, socket.TCP_NODELAY, True)
             self._writer.transport.set_write_buffer_limits(LIMIT, LIMIT)
             async with asyncio.timeout(LIFETIME):
                 await self.streaming()
