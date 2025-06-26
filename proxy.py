@@ -2,14 +2,13 @@ from concurrent.futures import ThreadPoolExecutor
 import asyncio
 import gc
 import logging
+import os
 import socket
 import struct
 
 PORT = 8081
 LIFETIME = 86400
 LIMIT = 1 << 18
-READAHEAD = 1 << 24
-WORKER_COUNT = 4
 
 
 class channel:
@@ -32,7 +31,7 @@ class channel:
             so: socket.socket = self._writer.get_extra_info("socket")
             so.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, True)
             so.setsockopt(socket.SOL_TCP, socket.TCP_NODELAY, True)
-            self._writer.transport.set_write_buffer_limits(READAHEAD, READAHEAD)
+            self._writer.transport.set_write_buffer_limits(LIMIT, LIMIT)
             async with asyncio.timeout(LIFETIME):
                 await self.streaming()
         except Exception as err:
@@ -121,12 +120,8 @@ class server:
 
 
 if __name__ == "__main__":
-    assert PORT > 0, "PORT must be greater than 0"
-    assert LIFETIME > 0, "LIFETIME must be greater than 0"
-    assert LIMIT > 0, "LIMIT must be greater than 0"
-    assert READAHEAD > 0, "READAHEAD must be greater than 0"
-    assert WORKER_COUNT > 0, "WORKER_COUNT must be greater than 0"
     logging.basicConfig(level=logging.DEBUG)
-    with ThreadPoolExecutor(WORKER_COUNT) as executor:
-        executor.map(asyncio.run, [server(i).start_server() for i in range(WORKER_COUNT)])
+    worker_count = len(os.sched_getaffinity(0))
+    with ThreadPoolExecutor(worker_count) as executor:
+        executor.map(asyncio.run, [server(i).start_server() for i in range(worker_count)])
     logging.shutdown()
