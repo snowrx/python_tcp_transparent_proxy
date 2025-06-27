@@ -114,6 +114,8 @@ class server:
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.DEBUG)
+    gc.collect()
+    gc.set_threshold(3000)
     gc.set_debug(gc.DEBUG_STATS)
     uvloop.run(server().start_server())
     logging.shutdown()
