@@ -18,9 +18,9 @@ class channel:
         self._label: str = label
 
     async def streaming(self):
-        while not self._writer.is_closing() and (v := memoryview(await self._reader.read(LIMIT))):
+        while not self._writer.is_closing() and (b := await self._reader.read(LIMIT)):
             await self._writer.drain()
-            self._writer.write(v)
+            self._writer.write(b)
         if not self._writer.is_closing():
             self._writer.write_eof()
             await self._writer.drain()
