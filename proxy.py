@@ -8,7 +8,7 @@ import uvloop
 
 PORT = 8081
 LIFETIME = 86400
-LIMIT = 1 << 18
+LIMIT = 1 << 14
 
 
 class channel:
