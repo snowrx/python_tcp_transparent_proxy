@@ -8,7 +8,7 @@ import uvloop
 
 PORT = 8081
 LIFETIME = 86400
-LIMIT = 1 << 14
+MSS = 1400
 
 
 class channel:
@@ -18,7 +18,7 @@ class channel:
         self._label: str = label
 
     async def streaming(self):
-        while not self._writer.is_closing() and (b := await self._reader.read(LIMIT)):
+        while not self._writer.is_closing() and (b := await self._reader.read(MSS)):
             await self._writer.drain()
             self._writer.write(b)
         if not self._writer.is_closing():
@@ -29,7 +29,6 @@ class channel:
         try:
             so: socket.socket = self._writer.get_extra_info("socket")
             so.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, True)
-            self._writer.transport.set_write_buffer_limits(LIMIT, LIMIT)
             async with asyncio.timeout(LIFETIME):
                 await self.streaming()
         except Exception as err:
@@ -89,7 +88,7 @@ class server:
 
         try:
             logging.debug(f"calling: {write_label}")
-            orig_reader, orig_writer = await asyncio.open_connection(orig[0], orig[1], limit=LIMIT)
+            orig_reader, orig_writer = await asyncio.open_connection(orig[0], orig[1])
         except Exception as err:
             logging.error(f"Failed to connect: {write_label}, {err}")
             client_writer.transport.abort()
@@ -106,7 +105,7 @@ class server:
         logging.info(f"Closed connection: {write_label}")
 
     async def start_server(self):
-        server = await asyncio.start_server(self.accept, port=PORT, limit=LIMIT)
+        server = await asyncio.start_server(self.accept, port=PORT)
         logging.info(f"Listening on port {PORT}")
         async with server:
             await server.serve_forever()
