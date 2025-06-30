@@ -1,5 +1,6 @@
 from concurrent.futures import ProcessPoolExecutor
 import asyncio
+import gc
 import logging
 import socket
 import struct
@@ -121,6 +122,9 @@ class server:
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.DEBUG)
+    gc.collect()
+    gc.set_threshold(10000)
+    gc.set_debug(gc.DEBUG_STATS)
     with ProcessPoolExecutor(WORKERS) as pool:
         for i in range(WORKERS):
             pool.submit(server(i).run)
