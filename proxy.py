@@ -111,9 +111,14 @@ class server:
             await server.serve_forever()
 
 
-if __name__ == "__main__":
+def main():
     gc.collect()
+    gc.freeze()
     gc.set_debug(gc.DEBUG_STATS)
     logging.basicConfig(level=logging.DEBUG)
     uvloop.run(server().start_server())
     logging.shutdown()
+
+
+if __name__ == "__main__":
+    main()
