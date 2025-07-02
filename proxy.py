@@ -6,6 +6,7 @@ import struct
 
 import uvloop
 
+LOG = logging.WARNING
 PORT = 8081
 LIFETIME = 86400
 MSS = 1400
@@ -117,7 +118,7 @@ def main():
     gc.collect()
     gc.set_threshold(3000)
     gc.set_debug(gc.DEBUG_STATS)
-    logging.basicConfig(level=logging.DEBUG)
+    logging.basicConfig(level=LOG)
     uvloop.run(server().start_server())
     logging.shutdown()
 
