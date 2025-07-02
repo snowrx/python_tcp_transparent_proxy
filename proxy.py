@@ -8,7 +8,8 @@ import uvloop
 
 PORT = 8081
 LIFETIME = 86400
-LIMIT = 1 << 16
+MSS = 1400
+BUFFER = 131072
 
 
 class channel:
@@ -19,7 +20,7 @@ class channel:
         self._label: str = label
 
     async def streaming(self):
-        while not self._writer.is_closing() and (b := await self._reader.read(LIMIT)):
+        while not self._writer.is_closing() and (b := await self._reader.read(MSS)):
             await self._writer.drain()
             self._writer.write(b)
         if not self._writer.is_closing():
@@ -30,6 +31,7 @@ class channel:
         try:
             so: socket.socket = self._writer.get_extra_info("socket")
             so.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, True)
+            self._writer.transport.set_write_buffer_limits(BUFFER, BUFFER)
             async with asyncio.timeout(LIFETIME):
                 await self.streaming()
         except Exception as err:
@@ -40,7 +42,7 @@ class channel:
                     self._writer.close()
                     await self._writer.wait_closed()
                 except Exception as err:
-                    logging.debug(f"Failed to close writer: {self._label}, {err}")
+                    logging.error(f"Failed to close writer: {self._label}, {err}")
 
 
 class server:
@@ -88,7 +90,6 @@ class server:
             return
 
         try:
-            logging.debug(f"calling: {write_label}")
             orig_reader, orig_writer = await asyncio.open_connection(orig[0], orig[1])
         except Exception as err:
             logging.error(f"Failed to connect: {write_label}, {err}")
@@ -114,7 +115,7 @@ class server:
 
 def main():
     gc.collect()
-    gc.freeze()
+    gc.set_threshold(3000)
     gc.set_debug(gc.DEBUG_STATS)
     logging.basicConfig(level=logging.DEBUG)
     uvloop.run(server().start_server())
