@@ -8,17 +8,18 @@ import uvloop
 
 PORT = 8081
 LIFETIME = 86400
-MSS = 1400
+LIMIT = 1 << 16
 
 
 class channel:
+
     def __init__(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter, label: str):
         self._reader: asyncio.StreamReader = reader
         self._writer: asyncio.StreamWriter = writer
         self._label: str = label
 
     async def streaming(self):
-        while not self._writer.is_closing() and (b := await self._reader.read(MSS)):
+        while not self._writer.is_closing() and (b := await self._reader.read(LIMIT)):
             await self._writer.drain()
             self._writer.write(b)
         if not self._writer.is_closing():
