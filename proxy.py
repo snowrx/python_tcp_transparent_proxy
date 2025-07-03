@@ -21,11 +21,12 @@ class channel:
         self._label: str = label
 
     async def streaming(self):
-        while b := await self._reader.read(MSS):
+        while not self._writer.is_closing() and (b := await self._reader.read(MSS)):
             await self._writer.drain()
             self._writer.write(b)
-        self._writer.write_eof()
-        await self._writer.drain()
+        if not self._writer.is_closing():
+            self._writer.write_eof()
+            await self._writer.drain()
 
     async def transfer(self):
         try:
