@@ -1,3 +1,4 @@
+from concurrent.futures import ThreadPoolExecutor
 import asyncio
 import gc
 import logging
@@ -11,6 +12,7 @@ PORT = 8081
 LIFETIME = 86400
 LIMIT = 1 << 18
 MSS = 1400
+WORKERS = 2
 
 
 class channel:
@@ -51,6 +53,9 @@ class server:
     _SOL_IPV6 = 41
     _V4_LEN = 16
     _V6_LEN = 28
+
+    def __init__(self):
+        pass
 
     def get_original_dst(self, so: socket.socket):
         ip: str
@@ -108,10 +113,13 @@ class server:
         logging.info(f"Closed connection: {write_label}")
 
     async def start_server(self):
-        server = await asyncio.start_server(self.accept, port=PORT, limit=LIMIT)
+        server = await asyncio.start_server(self.accept, port=PORT, limit=LIMIT, reuse_port=True)
         logging.info(f"Listening on port {PORT}")
         async with server:
             await server.serve_forever()
+
+    def run(self, _=None):
+        uvloop.run(self.start_server())
 
 
 def main():
@@ -119,7 +127,8 @@ def main():
     gc.set_threshold(3000)
     gc.set_debug(gc.DEBUG_STATS)
     logging.basicConfig(level=LOG)
-    uvloop.run(server().start_server())
+    with ThreadPoolExecutor(WORKERS) as pool:
+        pool.map(server().run, range(WORKERS))
     logging.shutdown()
 
 
