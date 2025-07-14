@@ -1,3 +1,4 @@
+from concurrent.futures import ProcessPoolExecutor
 import asyncio
 import logging
 import socket
@@ -9,6 +10,7 @@ LOG = logging.DEBUG
 PORT = 8081
 LIFETIME = 86400
 LIMIT = 1 << 18
+WORKERS = 4
 
 
 class util:
@@ -116,7 +118,12 @@ class server:
             await server.serve_forever()
 
 
+def run(_=None):
+    uvloop.run(server().start_server())
+
+
 if __name__ == "__main__":
     logging.basicConfig(level=LOG)
-    uvloop.run(server().start_server())
+    with ProcessPoolExecutor(WORKERS) as executor:
+        executor.map(run, range(WORKERS))
     logging.shutdown()
