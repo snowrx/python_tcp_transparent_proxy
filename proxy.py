@@ -8,7 +8,7 @@ import uvloop
 LOG = logging.DEBUG
 PORT = 8081
 LIFETIME = 86400
-BUFFER = 1 << 14
+LIMIT = 1 << 18
 
 
 class util:
@@ -57,9 +57,10 @@ class coupler:
         try:
             so: socket.socket = w.get_extra_info("socket")
             so.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, True)
-            w.transport.set_write_buffer_limits(BUFFER, BUFFER)
+            mss = so.getsockopt(socket.IPPROTO_TCP, socket.TCP_MAXSEG)
+            w.transport.set_write_buffer_limits(mss, mss)
             async with asyncio.timeout(LIFETIME):
-                while not self.status() and (b := await r.read(BUFFER)):
+                while not self.status() and (b := await r.read(mss)):
                     await w.drain()
                     w.write(b)
         except Exception as err:
@@ -96,7 +97,7 @@ class server:
             return
 
         try:
-            pr, pw = await asyncio.open_connection(dst[0], dst[1], limit=BUFFER)
+            pr, pw = await asyncio.open_connection(dst[0], dst[1], limit=LIMIT)
         except Exception as err:
             logging.error(f"Failed to open connection: {label}, {err}")
             cw.transport.abort()
@@ -109,7 +110,7 @@ class server:
         logging.info(f"Disconnected: {label}")
 
     async def start_server(self):
-        server = await asyncio.start_server(self.accept, port=PORT, limit=BUFFER, reuse_port=True)
+        server = await asyncio.start_server(self.accept, port=PORT, limit=LIMIT, reuse_port=True)
         logging.info(f"Listening on port {PORT}")
         async with server:
             await server.serve_forever()
