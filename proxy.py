@@ -45,10 +45,8 @@ class coupler:
         self._pr: asyncio.StreamReader = pr
         self._pw: asyncio.StreamWriter = pw
 
-    def status(self):
-        h = self._cw.is_closing() ^ self._pw.is_closing()
-        f = self._cw.is_closing() & self._pw.is_closing()
-        return f << 1 | h
+    def is_alive(self):
+        return not (self._cw.is_closing() or self._pw.is_closing())
 
     async def run(self):
         async with asyncio.TaskGroup() as tg:
@@ -62,13 +60,12 @@ class coupler:
             mss = so.getsockopt(socket.IPPROTO_TCP, socket.TCP_MAXSEG)
             w.transport.set_write_buffer_limits(mss, mss)
             async with asyncio.timeout(LIFETIME):
-                while not self.status() and (b := await r.read(mss)):
+                while self.is_alive() and (b := await r.read(mss)):
                     await w.drain()
                     w.write(b)
         except Exception as err:
-            logging.error(f"Failed to stream: {self._label}, {err}")
+            logging.error(f"Error in coupler {self._label}: {err}")
         finally:
-            logging.debug(f"Closing: {self._label} status={self.status()}")
             try:
                 w.close()
                 await w.wait_closed()
@@ -80,36 +77,37 @@ class server:
     async def accept(self, cr: asyncio.StreamReader, cw: asyncio.StreamWriter):
         try:
             dst: tuple[str, int] = util.get_original_dst(cw.get_extra_info("socket"))
+            peer: tuple[str, int] = cw.get_extra_info("peername")
+            sock: tuple[str, int] = cw.get_extra_info("sockname")
         except Exception as err:
             logging.error(f"Failed to get original destination: {err}")
-            cw.transport.abort()
-            cw.close()
-            await cw.wait_closed()
+            await self.abort(cw)
             return
 
-        peer: tuple[str, int] = cw.get_extra_info("peername")
-        sock: tuple[str, int] = cw.get_extra_info("sockname")
         label = f"{peer[0]}@{peer[1]} <-> {dst[0]}@{dst[1]}"
-
         if dst[0] == sock[0] and dst[1] == sock[1]:
             logging.error(f"Invalid destination: {label}")
-            cw.transport.abort()
-            cw.close()
-            await cw.wait_closed()
+            await self.abort(cw)
             return
 
         try:
             pr, pw = await asyncio.open_connection(dst[0], dst[1], limit=LIMIT)
         except Exception as err:
             logging.error(f"Failed to open connection: {label}, {err}")
-            cw.transport.abort()
-            cw.close()
-            await cw.wait_closed()
+            await self.abort(cw)
             return
 
         logging.info(f"Connected: {label}")
         await coupler(label, cr, cw, pr, pw).run()
         logging.info(f"Disconnected: {label}")
+
+    async def abort(self, w: asyncio.StreamWriter):
+        try:
+            w.transport.abort()
+            w.close()
+            await w.wait_closed()
+        except:
+            pass
 
     async def start_server(self):
         server = await asyncio.start_server(self.accept, port=PORT, limit=LIMIT, reuse_port=True)
