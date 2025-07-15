@@ -1,4 +1,4 @@
-from concurrent.futures import ProcessPoolExecutor
+from concurrent.futures import ThreadPoolExecutor
 import asyncio
 import logging
 import socket
@@ -122,6 +122,6 @@ def run(_=None):
 
 if __name__ == "__main__":
     logging.basicConfig(level=LOG)
-    with ProcessPoolExecutor(WORKERS) as executor:
+    with ThreadPoolExecutor(WORKERS) as executor:
         executor.map(run, range(WORKERS))
     logging.shutdown()

@@ -7,8 +7,6 @@ ConditionPathExists=/opt/proxy/proxy
 DynamicUser=true
 WorkingDirectory=/opt/proxy
 ExecStart=/opt/proxy/proxy
-CPUSchedulingPolicy=rr
-CPUSchedulingPriority=1
 
 [Install]
 WantedBy=multi-user.target
