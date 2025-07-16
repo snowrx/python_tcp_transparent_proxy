@@ -1,4 +1,3 @@
-from concurrent.futures import ThreadPoolExecutor
 import asyncio
 import logging
 import socket
@@ -9,8 +8,7 @@ import uvloop
 LOG = logging.DEBUG
 PORT = 8081
 LIFETIME = 86400
-LIMIT = 1 << 18
-WORKERS = 4
+LIMIT = 1 << 16
 
 
 class util:
@@ -57,10 +55,9 @@ class coupler:
         try:
             so: socket.socket = w.get_extra_info("socket")
             so.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, True)
-            mss = so.getsockopt(socket.IPPROTO_TCP, socket.TCP_MAXSEG)
-            w.transport.set_write_buffer_limits(mss, mss)
+            w.transport.set_write_buffer_limits(LIMIT, LIMIT)
             async with asyncio.timeout(LIFETIME):
-                while self.is_alive() and (b := await r.read(mss)):
+                while self.is_alive() and (b := await r.read(LIMIT)):
                     await w.drain()
                     w.write(b)
         except Exception as err:
@@ -91,7 +88,7 @@ class server:
             return
 
         try:
-            pr, pw = await asyncio.open_connection(dst[0], dst[1], limit=LIMIT)
+            pr, pw = await asyncio.open_connection(*dst, limit=LIMIT)
         except Exception as err:
             logging.error(f"Failed to open connection: {label}, {err}")
             await self.abort(cw)
@@ -110,18 +107,13 @@ class server:
             pass
 
     async def start_server(self):
-        server = await asyncio.start_server(self.accept, port=PORT, limit=LIMIT, reuse_port=True)
+        server = await asyncio.start_server(self.accept, port=PORT, limit=LIMIT)
         logging.info(f"Listening on port {PORT}")
         async with server:
             await server.serve_forever()
 
 
-def run(_=None):
-    uvloop.run(server().start_server())
-
-
 if __name__ == "__main__":
     logging.basicConfig(level=LOG)
-    with ThreadPoolExecutor(WORKERS) as executor:
-        executor.map(run, range(WORKERS))
+    uvloop.run(server().start_server())
     logging.shutdown()
