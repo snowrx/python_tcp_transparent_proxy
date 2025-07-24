@@ -9,7 +9,6 @@ LOG = logging.DEBUG
 PORT = 8081
 LIFETIME = 86400
 LIMIT = 1 << 16
-EAGERNESS = 2
 
 
 class util:
@@ -89,7 +88,7 @@ class server:
             return
 
         try:
-            pr, pw = await asyncio.open_connection(*dst, limit=LIMIT << EAGERNESS)
+            pr, pw = await asyncio.open_connection(*dst, limit=LIMIT)
         except Exception as err:
             logging.error(f"Failed to open connection: {label}, {err}")
             await self.abort(cw)
@@ -108,8 +107,7 @@ class server:
             pass
 
     async def start_server(self):
-        asyncio.get_running_loop().set_task_factory(asyncio.eager_task_factory)
-        server = await asyncio.start_server(self.accept, port=PORT, limit=LIMIT << EAGERNESS)
+        server = await asyncio.start_server(self.accept, port=PORT, limit=LIMIT)
         logging.info(f"Listening on port {PORT}")
         async with server:
             await server.serve_forever()
