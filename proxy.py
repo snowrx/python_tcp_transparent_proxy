@@ -18,20 +18,17 @@ class util:
     _V6_LEN = 28
 
     @staticmethod
-    def get_original_dst(so: socket.socket):
+    def get_original_dst(so: socket.socket, v4: bool = True):
         ip: str
         port: int
-        match so.family:
-            case socket.AF_INET:
-                dst = so.getsockopt(socket.SOL_IP, util._SO_ORIGINAL_DST, util._V4_LEN)
-                port, raw_ip = struct.unpack_from("!2xH4s", dst)
-                ip = socket.inet_ntop(socket.AF_INET, raw_ip)
-            case socket.AF_INET6:
-                dst = so.getsockopt(util._SOL_IPV6, util._SO_ORIGINAL_DST, util._V6_LEN)
-                port, raw_ip = struct.unpack_from("!2xH4x16s", dst)
-                ip = socket.inet_ntop(socket.AF_INET6, raw_ip)
-            case _:
-                raise ValueError(f"Unsupported address family: {so.family}")
+        if v4:
+            dst = so.getsockopt(socket.SOL_IP, util._SO_ORIGINAL_DST, util._V4_LEN)
+            port, raw_ip = struct.unpack_from("!2xH4s", dst)
+            ip = socket.inet_ntop(socket.AF_INET, raw_ip)
+        else:
+            dst = so.getsockopt(util._SOL_IPV6, util._SO_ORIGINAL_DST, util._V6_LEN)
+            port, raw_ip = struct.unpack_from("!2xH4x16s", dst)
+            ip = socket.inet_ntop(socket.AF_INET6, raw_ip)
         return ip, port
 
 
@@ -73,9 +70,10 @@ class coupler:
 class server:
     async def accept(self, cr: asyncio.StreamReader, cw: asyncio.StreamWriter):
         try:
-            dst: tuple[str, int] = util.get_original_dst(cw.get_extra_info("socket"))
             peer: tuple[str, int] = cw.get_extra_info("peername")
             sock: tuple[str, int] = cw.get_extra_info("sockname")
+            v4 = "." in peer[0]
+            dst: tuple[str, int] = util.get_original_dst(cw.get_extra_info("socket"), v4)
         except Exception as err:
             logging.error(f"Failed to get original destination: {err}")
             await self.abort(cw)
