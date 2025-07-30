@@ -9,7 +9,7 @@ from gevent.server import StreamServer
 
 LOG = logging.DEBUG
 PORT = 8081
-LIMIT = 1 << 18
+LIMIT = 1 << 20
 
 
 class util:
