@@ -1,4 +1,5 @@
 import logging
+import mmap
 import struct
 
 import gevent
@@ -32,40 +33,19 @@ class util:
         return ip, port
 
 
-class writer:
-    def __init__(self, sock: socket.socket):
-        self._sock = sock
-        self._buf = bytearray()
-        self._sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
-        self._sock.setsockopt(socket.SOL_TCP, socket.TCP_NODELAY, 1)
-
-    def write(self, data: bytes):
-        self._buf.extend(data)
-
-    def flush(self):
-        if self._buf:
-            self._sock.sendall(self._buf)
-            self._buf.clear()
-
-    def close(self):
-        self.flush()
-        self._sock.close()
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        self.close()
-
-
 def forward(src: socket.socket, dst: socket.socket):
     try:
-        with writer(dst) as w:
-            while recv := src.recv(LIMIT):
-                w.write(recv)
-                w.flush()
+        dst.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
+        dst.setsockopt(socket.SOL_TCP, socket.TCP_NODELAY, 1)
+        with mmap.mmap(src.fileno(), LIMIT, mmap.MAP_PRIVATE | mmap.MAP_ANONYMOUS) as buf:
+            buf.madvise(mmap.MADV_HUGEPAGE | mmap.MADV_SEQUENTIAL)
+            while l := src.recv_into(buf, LIMIT):
+                dst.sendall(buf[:l])
+                buf.seek(0)
     except Exception as e:
         logging.error(f"Error in forward: {e}")
+    finally:
+        dst.close()
 
 
 def handle(sock: socket.socket, addr: tuple):
