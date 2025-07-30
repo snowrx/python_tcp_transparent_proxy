@@ -1,14 +1,14 @@
-import asyncio
 import logging
-import socket
 import struct
 
-import uvloop
+import gevent
+from gevent import socket
+from gevent.server import StreamServer
+
 
 LOG = logging.DEBUG
 PORT = 8081
-LIFETIME = 86400
-LIMIT = 1 << 14
+LIMIT = 1 << 18
 
 
 class util:
@@ -32,86 +32,63 @@ class util:
         return ip, port
 
 
-class coupler:
-    def __init__(self, label: str, cr: asyncio.StreamReader, cw: asyncio.StreamWriter, pr: asyncio.StreamReader, pw: asyncio.StreamWriter):
-        self._label: str = label
-        self._cr: asyncio.StreamReader = cr
-        self._cw: asyncio.StreamWriter = cw
-        self._pr: asyncio.StreamReader = pr
-        self._pw: asyncio.StreamWriter = pw
+class writer:
+    def __init__(self, sock: socket.socket):
+        self._sock = sock
+        self._buf = bytearray()
+        self._sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
+        self._sock.setsockopt(socket.SOL_TCP, socket.TCP_NODELAY, 1)
 
-    def is_alive(self):
-        return not (self._cw.is_closing() or self._pw.is_closing())
+    def write(self, data: bytes):
+        self._buf.extend(data)
 
-    async def run(self):
-        async with asyncio.TaskGroup() as tg:
-            tg.create_task(self._streaming(self._cr, self._pw))
-            tg.create_task(self._streaming(self._pr, self._cw))
+    def flush(self):
+        if self._buf:
+            self._sock.sendall(self._buf)
+            self._buf.clear()
 
-    async def _streaming(self, r: asyncio.StreamReader, w: asyncio.StreamWriter):
-        try:
-            so: socket.socket = w.get_extra_info("socket")
-            so.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, True)
-            w.transport.set_write_buffer_limits(LIMIT, LIMIT)
-            async with asyncio.timeout(LIFETIME):
-                while self.is_alive() and (b := await r.read(LIMIT)):
-                    await w.drain()
-                    w.write(b)
-        except Exception as err:
-            logging.error(f"Error in coupler {self._label}: {err}")
-        finally:
-            try:
-                w.close()
-                await w.wait_closed()
-            except:
-                pass
+    def close(self):
+        self.flush()
+        self._sock.close()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.close()
 
 
-class server:
-    async def accept(self, cr: asyncio.StreamReader, cw: asyncio.StreamWriter):
-        try:
-            peer: tuple[str, int] = cw.get_extra_info("peername")
-            sock: tuple[str, int] = cw.get_extra_info("sockname")
-            v4 = "." in peer[0]
-            dst: tuple[str, int] = util.get_original_dst(cw.get_extra_info("socket"), v4)
-        except Exception as err:
-            logging.error(f"Failed to get original destination: {err}")
-            await self.abort(cw)
-            return
+def forward(src: socket.socket, dst: socket.socket):
+    try:
+        with writer(dst) as w:
+            while recv := src.recv(LIMIT):
+                w.write(recv)
+                w.flush()
+    except Exception as e:
+        logging.error(f"Error in forward: {e}")
 
-        label = f"{peer[0]}@{peer[1]} <-> {dst[0]}@{dst[1]}"
-        if dst[0] == sock[0] and dst[1] == sock[1]:
-            logging.error(f"Invalid destination: {label}")
-            await self.abort(cw)
-            return
 
-        try:
-            pr, pw = await asyncio.open_connection(*dst, limit=LIMIT)
-        except Exception as err:
-            logging.error(f"Failed to open connection: {label}, {err}")
-            await self.abort(cw)
-            return
+def handle(sock: socket.socket, addr: tuple):
+    v4 = "." in addr[0]
+    dst = util.get_original_dst(sock, v4)
+    try:
+        peer = socket.create_connection(dst)
+    except Exception as e:
+        logging.error(f"Failed to connect to [{dst[0]}]:{dst[1]}: {e}")
+        sock.close()
+        return
 
-        logging.info(f"Connected: {label}")
-        await coupler(label, cr, cw, pr, pw).run()
-        logging.info(f"Disconnected: {label}")
+    logging.info(f"Established connection [{addr[0]}]:{addr[1]} <=> [{dst[0]}]:{dst[1]}")
+    _ = gevent.joinall([gevent.spawn(forward, sock, peer), gevent.spawn(forward, peer, sock)])
+    logging.info(f"Connection closed [{addr[0]}]:{addr[1]} <=> [{dst[0]}]:{dst[1]}")
 
-    async def abort(self, w: asyncio.StreamWriter):
-        try:
-            w.transport.abort()
-            w.close()
-            await w.wait_closed()
-        except:
-            pass
 
-    async def start_server(self):
-        server = await asyncio.start_server(self.accept, port=PORT, limit=LIMIT)
-        logging.info(f"Listening on port {PORT}")
-        async with server:
-            await server.serve_forever()
+def main():
+    logging.basicConfig(level=LOG)
+    server = StreamServer(("", PORT), handle)
+    logging.info(f"Starting transparent proxy on port {PORT}")
+    server.serve_forever()
 
 
 if __name__ == "__main__":
-    logging.basicConfig(level=LOG)
-    uvloop.run(server().start_server())
-    logging.shutdown()
+    main()
