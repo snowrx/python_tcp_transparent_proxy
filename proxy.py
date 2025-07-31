@@ -8,7 +8,7 @@ import uvloop
 LOG = logging.DEBUG
 PORT = 8081
 LIFETIME = 86400
-LIMIT = 1 << 14
+LIMIT = 1 << 18
 
 
 class util:
