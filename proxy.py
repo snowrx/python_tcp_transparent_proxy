@@ -34,8 +34,9 @@ class util:
 
 class proxy:
     async def streaming(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter):
+        so: socket.socket = writer.get_extra_info("socket")
+        peer: tuple[str, int] = writer.get_extra_info("peername")
         try:
-            so: socket.socket = writer.get_extra_info("socket")
             so.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
             writer.transport.set_write_buffer_limits(LIMIT, LIMIT)
             async with asyncio.timeout(LIFETIME):
@@ -43,13 +44,13 @@ class proxy:
                     await writer.drain()
                     writer.write(data)
         except Exception as e:
-            logging.error(f"streaming: {type(e).__name__}: {e}")
+            logging.error(f"streaming: [{peer[0]}]:{peer[1]}: {type(e).__name__}: {e}")
         finally:
             try:
                 writer.close()
                 await writer.wait_closed()
             except Exception as e:
-                logging.debug(f"close: {type(e).__name__}: {e}")
+                logging.debug(f"close: [{peer[0]}]:{peer[1]}: {type(e).__name__}: {e}")
 
     async def accept(self, client_reader: asyncio.StreamReader, client_writer: asyncio.StreamWriter):
         try:
@@ -66,7 +67,7 @@ class proxy:
         try:
             proxy_reader, proxy_writer = await asyncio.open_connection(*orig, limit=LIMIT)
         except Exception as e:
-            logging.error(f"open_connection: {type(e).__name__}: {e}")
+            logging.error(f"open_connection: [{orig[0]}]:{orig[1]}: {type(e).__name__}: {e}")
             client_writer.close()
             await client_writer.wait_closed()
             return
