@@ -8,7 +8,7 @@ import uvloop
 LOG = logging.DEBUG
 PORT = 8081
 LIFETIME = 86400
-LIMIT = 1 << 18
+LIMIT = 1 << 14
 
 
 class util:
@@ -39,10 +39,7 @@ class proxy:
             so.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
             writer.transport.set_write_buffer_limits(LIMIT, LIMIT)
             async with asyncio.timeout(LIFETIME):
-                rt = asyncio.create_task(reader.read(LIMIT))
-                await asyncio.sleep(0)
-                while data := await rt:
-                    rt = asyncio.create_task(reader.read(LIMIT))
+                while not writer.is_closing() and (data := await reader.read(LIMIT)):
                     await writer.drain()
                     writer.write(data)
         except Exception as e:
