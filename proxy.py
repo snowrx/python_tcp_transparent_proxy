@@ -46,8 +46,6 @@ class proxy:
             logging.error(f"streaming: {type(e).__name__}: {e}")
         finally:
             try:
-                writer.write_eof()
-                await writer.drain()
                 writer.close()
                 await writer.wait_closed()
             except Exception as e:
