@@ -32,86 +32,64 @@ class util:
         return ip, port
 
 
-class coupler:
-    def __init__(self, label: str, cr: asyncio.StreamReader, cw: asyncio.StreamWriter, pr: asyncio.StreamReader, pw: asyncio.StreamWriter):
-        self._label: str = label
-        self._cr: asyncio.StreamReader = cr
-        self._cw: asyncio.StreamWriter = cw
-        self._pr: asyncio.StreamReader = pr
-        self._pw: asyncio.StreamWriter = pw
-
-    def is_alive(self):
-        return not (self._cw.is_closing() or self._pw.is_closing())
-
-    async def run(self):
-        async with asyncio.TaskGroup() as tg:
-            tg.create_task(self._streaming(self._cr, self._pw))
-            tg.create_task(self._streaming(self._pr, self._cw))
-
-    async def _streaming(self, r: asyncio.StreamReader, w: asyncio.StreamWriter):
+class proxy:
+    async def streaming(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter):
         try:
-            so: socket.socket = w.get_extra_info("socket")
-            so.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, True)
-            w.transport.set_write_buffer_limits(LIMIT, LIMIT)
+            so: socket.socket = writer.get_extra_info("socket")
+            so.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
+            writer.transport.set_write_buffer_limits(LIMIT, LIMIT)
             async with asyncio.timeout(LIFETIME):
-                while self.is_alive() and (b := await r.read(LIMIT)):
-                    await w.drain()
-                    w.write(b)
-        except Exception as err:
-            logging.error(f"Error in coupler {self._label}: {err}")
+                rt = asyncio.create_task(reader.read(LIMIT))
+                await asyncio.sleep(0)
+                while data := await rt:
+                    rt = asyncio.create_task(reader.read(LIMIT))
+                    await writer.drain()
+                    writer.write(data)
+        except Exception as e:
+            logging.error(f"streaming: {type(e).__name__}: {e}")
         finally:
             try:
-                w.close()
-                await w.wait_closed()
+                writer.write_eof()
+                await writer.drain()
+                writer.close()
+                await writer.wait_closed()
             except:
                 pass
 
-
-class server:
-    async def accept(self, cr: asyncio.StreamReader, cw: asyncio.StreamWriter):
+    async def accept(self, client_reader: asyncio.StreamReader, client_writer: asyncio.StreamWriter):
         try:
-            peer: tuple[str, int] = cw.get_extra_info("peername")
-            sock: tuple[str, int] = cw.get_extra_info("sockname")
+            so: socket.socket = client_writer.get_extra_info("socket")
+            peer: tuple[str, int] = client_writer.get_extra_info("peername")
             v4 = "." in peer[0]
-            dst: tuple[str, int] = util.get_original_dst(cw.get_extra_info("socket"), v4)
-        except Exception as err:
-            logging.error(f"Failed to get original destination: {err}")
-            await self.abort(cw)
-            return
-
-        label = f"{peer[0]}@{peer[1]} <-> {dst[0]}@{dst[1]}"
-        if dst[0] == sock[0] and dst[1] == sock[1]:
-            logging.error(f"Invalid destination: {label}")
-            await self.abort(cw)
+            orig: tuple[str, int] = util.get_original_dst(so, v4)
+        except Exception as e:
+            logging.error(f"get_original_dst: {type(e).__name__}: {e}")
+            client_writer.close()
+            await client_writer.wait_closed()
             return
 
         try:
-            pr, pw = await asyncio.open_connection(*dst, limit=LIMIT)
-        except Exception as err:
-            logging.error(f"Failed to open connection: {label}, {err}")
-            await self.abort(cw)
+            proxy_reader, proxy_writer = await asyncio.open_connection(*orig, limit=LIMIT)
+        except Exception as e:
+            logging.error(f"open_connection: {type(e).__name__}: {e}")
+            client_writer.close()
+            await client_writer.wait_closed()
             return
 
-        logging.info(f"Connected: {label}")
-        await coupler(label, cr, cw, pr, pw).run()
-        logging.info(f"Disconnected: {label}")
+        logging.info(f"open [{peer[0]}]:{peer[1]} <-> [{orig[0]}]:{orig[1]}")
+        async with asyncio.TaskGroup() as tg:
+            tg.create_task(self.streaming(client_reader, proxy_writer))
+            tg.create_task(self.streaming(proxy_reader, client_writer))
+        logging.info(f"close [{peer[0]}]:{peer[1]} <-> [{orig[0]}]:{orig[1]}")
 
-    async def abort(self, w: asyncio.StreamWriter):
-        try:
-            w.transport.abort()
-            w.close()
-            await w.wait_closed()
-        except:
-            pass
-
-    async def start_server(self):
+    async def run(self):
+        asyncio.get_running_loop().set_task_factory(asyncio.eager_task_factory)
         server = await asyncio.start_server(self.accept, port=PORT, limit=LIMIT)
-        logging.info(f"Listening on port {PORT}")
+        logging.info(f"listening on port {PORT}")
         async with server:
             await server.serve_forever()
 
 
 if __name__ == "__main__":
     logging.basicConfig(level=LOG)
-    uvloop.run(server().start_server())
-    logging.shutdown()
+    uvloop.run(proxy().run())
