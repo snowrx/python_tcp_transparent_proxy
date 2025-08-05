@@ -50,8 +50,8 @@ class proxy:
                 await writer.drain()
                 writer.close()
                 await writer.wait_closed()
-            except:
-                pass
+            except Exception as e:
+                logging.debug(f"close: {type(e).__name__}: {e}")
 
     async def accept(self, client_reader: asyncio.StreamReader, client_writer: asyncio.StreamWriter):
         try:
