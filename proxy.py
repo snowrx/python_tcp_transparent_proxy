@@ -8,7 +8,7 @@ import uvloop
 LOG = logging.DEBUG
 PORT = 8081
 LIFETIME = 86400
-LIMIT = 1 << 16
+LIMIT = 1 << 18
 
 
 class util:
@@ -44,6 +44,7 @@ class proxy:
         try:
             so: socket.socket = writer.get_extra_info("socket")
             so.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
+            writer.transport.set_write_buffer_limits(LIMIT)
             async with asyncio.timeout(LIFETIME):
                 while not writer.is_closing() and (data := await reader.read(LIMIT)):
                     await asyncio.create_task(self.write(writer, data))
@@ -71,7 +72,7 @@ class proxy:
         writer = f"[{peer[0]}]:{peer[1]} -> [{orig[0]}]:{orig[1]}"
         reader = f"[{peer[0]}]:{peer[1]} <- [{orig[0]}]:{orig[1]}"
         try:
-            proxy_reader, proxy_writer = await asyncio.open_connection(*orig)
+            proxy_reader, proxy_writer = await asyncio.open_connection(*orig, limit=LIMIT)
         except Exception as e:
             logging.error(f"open_connection: {writer}: {type(e).__name__}: {e}")
             client_writer.close()
@@ -86,7 +87,7 @@ class proxy:
 
     async def run(self):
         asyncio.get_running_loop().set_task_factory(asyncio.eager_task_factory)
-        server = await asyncio.start_server(self.accept, port=PORT)
+        server = await asyncio.start_server(self.accept, port=PORT, limit=LIMIT)
         logging.info(f"listening on port {PORT}")
         async with server:
             await server.serve_forever()
