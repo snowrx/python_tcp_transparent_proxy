@@ -2,13 +2,13 @@ import asyncio
 import logging
 import socket
 import struct
+from mmap import PAGESIZE
 
 import uvloop
 
 LOG = logging.DEBUG
 PORT = 8081
 LIFETIME = 86400
-CWND = 10
 
 
 class util:
@@ -44,11 +44,9 @@ class proxy:
         try:
             so: socket.socket = writer.get_extra_info("socket")
             so.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
-            mss = so.getsockopt(socket.IPPROTO_TCP, socket.TCP_MAXSEG)
-            n = mss * CWND
             async with asyncio.timeout(LIFETIME):
-                while not writer.is_closing() and (data := await reader.read(n)):
-                    await self.write(writer, data)
+                while not writer.is_closing() and (data := await reader.read(PAGESIZE)):
+                    await asyncio.create_task(self.write(writer, data))
         except Exception as e:
             logging.error(f"streaming {label}: {type(e).__name__}: {e}")
         finally:
