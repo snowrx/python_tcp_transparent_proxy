@@ -8,7 +8,7 @@ import uvloop
 LOG = logging.DEBUG
 PORT = 8081
 LIFETIME = 86400
-CHUNK = 1 << 14
+LIMIT = 1 << 16
 
 
 class util:
@@ -33,24 +33,20 @@ class util:
 
 
 class proxy:
-    async def write(self, writer: asyncio.StreamWriter, data: bytes):
-        try:
-            await writer.drain()
-            writer.write(data)
-        except Exception as e:
-            logging.error(f"write: {type(e).__name__}: {e}")
-
     async def streaming(self, label: str, reader: asyncio.StreamReader, writer: asyncio.StreamWriter):
         try:
             so: socket.socket = writer.get_extra_info("socket")
             so.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
             async with asyncio.timeout(LIFETIME):
-                while not writer.is_closing() and (data := await reader.read(CHUNK)):
-                    await asyncio.create_task(self.write(writer, data))
+                while not writer.is_closing() and (data := await reader.read(LIMIT)):
+                    await writer.drain()
+                    writer.write(data)
         except Exception as e:
             logging.error(f"streaming {label}: {type(e).__name__}: {e}")
         finally:
             try:
+                writer.write_eof()
+                await writer.drain()
                 writer.close()
                 await writer.wait_closed()
             except Exception as e:
