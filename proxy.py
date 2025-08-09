@@ -45,13 +45,14 @@ class proxy:
         except Exception as e:
             logging.error(f"streaming {label}: {type(e).__name__}: {e}")
         finally:
-            try:
-                writer.write_eof()
-                await writer.drain()
-                writer.close()
-                await writer.wait_closed()
-            except Exception as e:
-                logging.error(f"close {label}: {type(e).__name__}: {e}")
+            if not writer.is_closing():
+                try:
+                    writer.write_eof()
+                    await writer.drain()
+                    writer.close()
+                    await writer.wait_closed()
+                except Exception as e:
+                    logging.error(f"close {label}: {type(e).__name__}: {e}")
 
     async def accept(self, client_reader: asyncio.StreamReader, client_writer: asyncio.StreamWriter):
         try:
