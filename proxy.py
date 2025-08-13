@@ -34,26 +34,25 @@ class util:
 
 
 class proxy:
-    async def streaming(self, label: str, reader: asyncio.StreamReader, writer: asyncio.StreamWriter):
+    async def relay(self, flag: asyncio.Event, reader: asyncio.StreamReader, writer: asyncio.StreamWriter):
         try:
             so: socket.socket = writer.get_extra_info("socket")
             so.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
             writer.transport.set_write_buffer_limits(WRITE_BUFFER_LIMIT, WRITE_BUFFER_LIMIT)
             async with asyncio.timeout(LIFETIME):
-                while not writer.is_closing() and (data := await reader.read(MSS)):
+                while not flag.is_set() and (data := await reader.read(MSS)):
                     await writer.drain()
                     writer.write(data)
+            logging.debug("EOF")
         except Exception as e:
-            logging.error(f"streaming {label}: {type(e).__name__}: {e}")
+            logging.error(f"Error in relay: {type(e).__name__}: {e}")
         finally:
+            flag.set()
             if not writer.is_closing():
-                try:
-                    writer.write_eof()
-                    await writer.drain()
-                    writer.close()
-                    await writer.wait_closed()
-                except Exception as e:
-                    logging.error(f"close {label}: {type(e).__name__}: {e}")
+                writer.write_eof()
+                await writer.drain()
+                writer.close()
+                await writer.wait_closed()
 
     async def accept(self, client_reader: asyncio.StreamReader, client_writer: asyncio.StreamWriter):
         try:
@@ -61,27 +60,27 @@ class proxy:
             peer: tuple[str, int] = client_writer.get_extra_info("peername")
             v4 = "." in peer[0]
             orig: tuple[str, int] = util.get_original_dst(so, v4)
+            label: str = f"[{peer[0]}]:{peer[1]} -> [{orig[0]}]:{orig[1]}"
         except Exception as e:
-            logging.error(f"get_original_dst: {type(e).__name__}: {e}")
+            logging.error(f"Failed to get original destination: {type(e).__name__}: {e}")
             client_writer.close()
             await client_writer.wait_closed()
             return
 
-        writer = f"[{peer[0]}]:{peer[1]} -> [{orig[0]}]:{orig[1]}"
-        reader = f"[{peer[0]}]:{peer[1]} <- [{orig[0]}]:{orig[1]}"
         try:
             proxy_reader, proxy_writer = await asyncio.open_connection(*orig)
         except Exception as e:
-            logging.error(f"open_connection: {writer}: {type(e).__name__}: {e}")
+            logging.error(f"Failed to connect to {label}: {type(e).__name__}: {e}")
             client_writer.close()
             await client_writer.wait_closed()
             return
 
-        logging.info(f"open: {writer}")
+        flag = asyncio.Event()
+        logging.info(f"Connected {label}")
         async with asyncio.TaskGroup() as tg:
-            tg.create_task(self.streaming(writer, client_reader, proxy_writer))
-            tg.create_task(self.streaming(reader, proxy_reader, client_writer))
-        logging.info(f"close: {writer}")
+            tg.create_task(self.relay(flag, proxy_reader, client_writer))
+            tg.create_task(self.relay(flag, client_reader, proxy_writer))
+        logging.info(f"Disconnected {label}")
 
     async def run(self):
         asyncio.get_running_loop().set_task_factory(asyncio.eager_task_factory)
