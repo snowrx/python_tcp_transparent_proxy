@@ -49,8 +49,6 @@ class proxy:
             while not buffer.is_closed() and (data := await buffer.read(MSS)):
                 await writer.drain()
                 writer.write(data)
-            writer.write_eof()
-            await writer.drain()
         except Exception as e:
             logging.error(f"Failed to write: {type(e).__name__}: {e}")
         finally:
@@ -74,7 +72,7 @@ class proxy:
                 writer.close()
                 await writer.wait_closed()
             except Exception as e:
-                logging.debug(f"Error in close: {type(e).__name__}: {e}")
+                logging.debug(f"Failed to close: {type(e).__name__}: {e}")
 
     async def accept(self, client_reader: asyncio.StreamReader, client_writer: asyncio.StreamWriter):
         try:
