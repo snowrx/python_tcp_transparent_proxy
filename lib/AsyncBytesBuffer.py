@@ -35,7 +35,7 @@ class AsyncBytesBuffer:
             await self._readable.wait()
 
         if self._closed:
-            raise BufferError("Buffer closed")
+            return b""
 
         data = bytes(memoryview(self._buffer)[:n])
         del self._buffer[:n]

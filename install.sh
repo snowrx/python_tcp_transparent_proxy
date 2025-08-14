@@ -13,7 +13,7 @@ if [ -d "$DEST" ]; then
 fi
 
 mkdir -p $DEST
-cp {proxy.py,proxy,requirements.txt} $DEST/
+cp -r {proxy.py,requirements.txt,lib,proxy} $DEST/
 cp proxy.service /etc/systemd/system/
 chown -R proxy:proxy $DEST
 chmod a+rx $DEST/proxy
