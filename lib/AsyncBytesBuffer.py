@@ -27,7 +27,8 @@ class AsyncBytesBuffer:
         self._buffer.clear()
 
     async def read(self, n: int = _DEFAULT_LIMIT):
-        assert n > 0
+        if n <= 0:
+            raise ValueError("n must be positive")
 
         if self._buffer:
             self._readable.set()
@@ -49,7 +50,8 @@ class AsyncBytesBuffer:
         return data
 
     async def write(self, data: bytes):
-        assert data
+        if not data:
+            return
 
         if not self._buffer:
             self._writable.set()
