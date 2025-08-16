@@ -2,23 +2,18 @@ import asyncio
 
 
 class AsyncBytesBuffer:
-
-    _DEFAULT_LIMIT = 1 << 20
+    _DEFAULT_LIMIT = 1 << 30
 
     def __init__(self, limit: int = _DEFAULT_LIMIT):
-        self._buffer = bytearray()
         self._limit = limit
+        self._buffer = bytearray()
         self._readable = asyncio.Event()
         self._writable = asyncio.Event()
+        self._writable.set()
         self._closed = False
 
     def __len__(self):
-        if self._closed:
-            raise BufferError("Buffer closed")
         return len(self._buffer)
-
-    def is_closed(self):
-        return self._closed
 
     def close(self):
         self._closed = True
@@ -30,9 +25,7 @@ class AsyncBytesBuffer:
         if n <= 0:
             raise ValueError("n must be positive")
 
-        if self._buffer:
-            self._readable.set()
-        else:
+        if not self._buffer:
             await self._readable.wait()
 
         if self._closed:
@@ -50,16 +43,11 @@ class AsyncBytesBuffer:
         return data
 
     async def write(self, data: bytes):
-        if not data:
-            return
-
-        if not self._buffer:
-            self._writable.set()
-        else:
+        if self._buffer:
             await self._writable.wait()
 
         if self._closed:
-            raise BufferError("Buffer closed")
+            return
 
         self._buffer.extend(data)
         self._readable.set()

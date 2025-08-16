@@ -33,7 +33,8 @@ class util:
 
 
 class proxy:
-    async def transfer(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter):
+    async def transfer(self, label: str, reader: asyncio.StreamReader, writer: asyncio.StreamWriter):
+        logging.debug(f"started: {label}")
         try:
             so: socket.socket = writer.get_extra_info("socket")
             so.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
@@ -41,7 +42,7 @@ class proxy:
                 await writer.drain()
                 writer.write(v)
         except Exception as e:
-            logging.error(f"transfer: {type(e).__name__}: {e}")
+            logging.error(f"transfer: {label}: {type(e).__name__}: {e}")
         finally:
             if not writer.is_closing():
                 try:
@@ -50,7 +51,8 @@ class proxy:
                     writer.close()
                     await writer.wait_closed()
                 except Exception as e:
-                    logging.error(f"close: {type(e).__name__}: {e}")
+                    logging.error(f"close: {label}: {type(e).__name__}: {e}")
+        logging.debug(f"closed: {label}")
 
     async def accept(self, client_reader: asyncio.StreamReader, client_writer: asyncio.StreamWriter):
         try:
@@ -58,26 +60,39 @@ class proxy:
             v4 = "." in client[0]
             so: socket.socket = client_writer.get_extra_info("socket")
             dest: tuple[str, int] = util.get_original_dst(so, v4)
-            label = f"[{client[0]}]:{client[1]} <-> [{dest[0]}]:{dest[1]}"
-            proxy_reader, proxy_writer = await asyncio.open_connection(*dest, limit=LIMIT)
+            w_label = f"[{client[0]}]:{client[1]} -> [{dest[0]}]:{dest[1]}"
+            r_label = f"[{client[0]}]:{client[1]} <- [{dest[0]}]:{dest[1]}"
         except Exception as e:
-            logging.error(f"accept: {type(e).__name__}: {e}")
+            logging.error(f"get_original_dst: {type(e).__name__}: {e}")
             client_writer.close()
             await client_writer.wait_closed()
             return
 
-        logging.info(f"accept: {label}")
+        try:
+            proxy_reader, proxy_writer = await asyncio.open_connection(*dest, limit=LIMIT)
+        except Exception as e:
+            logging.error(f"open_connection: {w_label}: {type(e).__name__}: {e}")
+            client_writer.close()
+            await client_writer.wait_closed()
+            return
+
+        logging.info(f"connected: {w_label}")
         async with asyncio.TaskGroup() as tg:
-            tg.create_task(self.transfer(client_reader, proxy_writer))
-            tg.create_task(self.transfer(proxy_reader, client_writer))
-        logging.info(f"close: {label}")
+            tg.create_task(self.transfer(w_label, client_reader, proxy_writer))
+            tg.create_task(self.transfer(r_label, proxy_reader, client_writer))
+        logging.info(f"disconnected: {w_label}")
 
     async def run(self):
+        self.running = True
         asyncio.get_running_loop().set_task_factory(asyncio.eager_task_factory)
         server = await asyncio.start_server(self.accept, port=PORT, limit=LIMIT)
-        logging.info(f"listen: {PORT=}")
-        async with server:
-            await server.serve_forever()
+        logging.info(f"Listening on {PORT}")
+        try:
+            async with server:
+                await server.serve_forever()
+        except:
+            pass
+        self.running = False
 
 
 if __name__ == "__main__":
