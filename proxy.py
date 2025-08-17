@@ -8,7 +8,7 @@ import uvloop
 
 LOG = logging.DEBUG
 PORT = 8081
-LIMIT = 1 << 20
+MSS = 1 << 14
 
 
 class util:
@@ -33,66 +33,57 @@ class util:
 
 
 class proxy:
-    async def transfer(self, label: str, reader: asyncio.StreamReader, writer: asyncio.StreamWriter):
-        logging.debug(f"started: {label}")
+    async def _transport(self, label: str, reader: asyncio.StreamReader, writer: asyncio.StreamWriter):
         try:
             so: socket.socket = writer.get_extra_info("socket")
             so.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
-            while not writer.is_closing() and (v := memoryview(await reader.read(LIMIT))):
+            while not writer.is_closing() and (data := await reader.read(MSS)):
                 await writer.drain()
-                writer.write(v)
+                writer.write(data)
         except Exception as e:
-            logging.error(f"transfer: {label}: {type(e).__name__}: {e}")
+            logging.error(f"Failed to transport {label}: {e}")
         finally:
             if not writer.is_closing():
-                try:
-                    writer.write_eof()
-                    await writer.drain()
-                    writer.close()
-                    await writer.wait_closed()
-                except Exception as e:
-                    logging.error(f"close: {label}: {type(e).__name__}: {e}")
-        logging.debug(f"closed: {label}")
+                writer.close()
+                await writer.wait_closed()
 
-    async def accept(self, client_reader: asyncio.StreamReader, client_writer: asyncio.StreamWriter):
+    async def _handle_client(self, client_reader: asyncio.StreamReader, client_writer: asyncio.StreamWriter):
         try:
-            client: tuple[str, int] = client_writer.get_extra_info("peername")
-            v4 = "." in client[0]
             so: socket.socket = client_writer.get_extra_info("socket")
-            dest: tuple[str, int] = util.get_original_dst(so, v4)
-            w_label = f"[{client[0]}]:{client[1]} -> [{dest[0]}]:{dest[1]}"
-            r_label = f"[{client[0]}]:{client[1]} <- [{dest[0]}]:{dest[1]}"
+            peer = client_writer.get_extra_info("peername")
+            v4 = "." in peer[0]
+            dest = util.get_original_dst(so, v4)
+            w_label = f"[{peer[0]}]:{peer[1]} -> [{dest[0]}]:{dest[1]}"
+            r_label = f"[{peer[0]}]:{peer[1]} <- [{dest[0]}]:{dest[1]}"
         except Exception as e:
-            logging.error(f"get_original_dst: {type(e).__name__}: {e}")
+            logging.error(f"Failed to get original destination: {e}")
             client_writer.close()
             await client_writer.wait_closed()
             return
 
         try:
-            proxy_reader, proxy_writer = await asyncio.open_connection(*dest, limit=LIMIT)
+            proxy_reader, proxy_writer = await asyncio.open_connection(*dest)
         except Exception as e:
-            logging.error(f"open_connection: {w_label}: {type(e).__name__}: {e}")
+            logging.error(f"Failed to connect {w_label}: {e}")
             client_writer.close()
             await client_writer.wait_closed()
             return
 
-        logging.info(f"connected: {w_label}")
+        logging.info(f"Connected {w_label}")
         async with asyncio.TaskGroup() as tg:
-            tg.create_task(self.transfer(w_label, client_reader, proxy_writer))
-            tg.create_task(self.transfer(r_label, proxy_reader, client_writer))
-        logging.info(f"disconnected: {w_label}")
+            tg.create_task(self._transport(w_label, client_reader, proxy_writer))
+            tg.create_task(self._transport(r_label, proxy_reader, client_writer))
+        logging.info(f"Disconnected {w_label}")
+
+    async def _start_server(self):
+        server = await asyncio.start_server(self._handle_client, port=PORT)
+        async with server:
+            await server.serve_forever()
 
     async def run(self):
-        self.running = True
-        asyncio.get_running_loop().set_task_factory(asyncio.eager_task_factory)
-        server = await asyncio.start_server(self.accept, port=PORT, limit=LIMIT)
-        logging.info(f"Listening on {PORT}")
-        try:
-            async with server:
-                await server.serve_forever()
-        except:
-            pass
-        self.running = False
+        self._loop = asyncio.get_running_loop()
+        self._loop.set_task_factory(asyncio.eager_task_factory)
+        await self._start_server()
 
 
 if __name__ == "__main__":
