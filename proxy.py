@@ -8,8 +8,7 @@ import uvloop
 
 LOG = logging.DEBUG
 PORT = 8081
-MSS = 1 << 14
-BURST = 1 << 24
+LIMIT = 1 << 18
 
 
 class util:
@@ -38,8 +37,8 @@ class proxy:
         try:
             so: socket.socket = writer.get_extra_info("socket")
             so.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
-            writer.transport.set_write_buffer_limits(BURST, BURST)
-            while not writer.is_closing() and (data := await reader.read(MSS)):
+            writer.transport.set_write_buffer_limits(LIMIT, LIMIT)
+            while not writer.is_closing() and (data := await reader.read(LIMIT)):
                 await writer.drain()
                 writer.write(data)
         except Exception as e:
@@ -66,7 +65,7 @@ class proxy:
             return
 
         try:
-            proxy_reader, proxy_writer = await asyncio.open_connection(*dest)
+            proxy_reader, proxy_writer = await asyncio.open_connection(*dest, limit=LIMIT)
         except Exception as e:
             logging.error(f"Failed to connect {w_label}: {e}")
             client_writer.close()
@@ -80,7 +79,7 @@ class proxy:
         logging.info(f"Disconnected {w_label}")
 
     async def _start_server(self):
-        server = await asyncio.start_server(self._handle_client, port=PORT)
+        server = await asyncio.start_server(self._handle_client, port=PORT, limit=LIMIT)
         async with server:
             await server.serve_forever()
 
