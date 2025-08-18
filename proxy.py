@@ -9,6 +9,7 @@ import uvloop
 LOG = logging.DEBUG
 PORT = 8081
 MSS = 1 << 14
+BURST = 1 << 24
 
 
 class util:
@@ -37,6 +38,7 @@ class proxy:
         try:
             so: socket.socket = writer.get_extra_info("socket")
             so.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
+            writer.transport.set_write_buffer_limits(BURST, BURST)
             while not writer.is_closing() and (data := await reader.read(MSS)):
                 await writer.drain()
                 writer.write(data)
@@ -44,6 +46,8 @@ class proxy:
             logging.error(f"Failed to transport {label}: {e}")
         finally:
             if not writer.is_closing():
+                writer.write_eof()
+                await writer.drain()
                 writer.close()
                 await writer.wait_closed()
 
