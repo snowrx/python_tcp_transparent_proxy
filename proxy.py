@@ -9,6 +9,7 @@ import uvloop
 LOG = logging.DEBUG
 PORT = 8081
 LIMIT = 1 << 18
+PRELOAD = 1 << 24
 
 
 class util:
@@ -37,7 +38,7 @@ class proxy:
         try:
             so: socket.socket = writer.get_extra_info("socket")
             so.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
-            writer.transport.set_write_buffer_limits(LIMIT, LIMIT)
+            writer.transport.set_write_buffer_limits(PRELOAD, PRELOAD)
             while not writer.is_closing() and (data := await reader.read(LIMIT)):
                 await writer.drain()
                 writer.write(data)
