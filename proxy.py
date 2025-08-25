@@ -10,6 +10,7 @@ LOG = logging.DEBUG
 PORT = 8081
 LIMIT = 1 << 18
 PRELOAD = 1 << 24
+TIMEOUT = 3600
 
 
 class util:
@@ -39,9 +40,11 @@ class proxy:
             so: socket.socket = writer.get_extra_info("socket")
             so.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
             writer.transport.set_write_buffer_limits(PRELOAD, PRELOAD)
-            while not writer.is_closing() and (data := await reader.read(LIMIT)):
+            while not writer.is_closing() and (data := await asyncio.wait_for(reader.read(LIMIT), timeout=TIMEOUT)):
                 await writer.drain()
                 writer.write(data)
+        except asyncio.TimeoutError:
+            logging.error(f"Timeout {label}")
         except Exception as e:
             logging.error(f"Failed to transport {label}: {e}")
         finally:
