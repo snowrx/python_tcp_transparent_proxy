@@ -5,11 +5,12 @@ import struct
 
 import uvloop
 
+from lib.AsyncBytesBuffer import AsyncBytesBuffer
+
 
 LOG = logging.DEBUG
 PORT = 8081
 LIMIT = 1 << 18
-PRELOAD = 1 << 24
 TIMEOUT = 3600
 
 
@@ -35,22 +36,50 @@ class util:
 
 
 class proxy:
-    async def _transport(self, label: str, reader: asyncio.StreamReader, writer: asyncio.StreamWriter):
+    async def _provider(self, label: str, reader: asyncio.StreamReader, buffer: AsyncBytesBuffer):
+        provided = 0
         try:
-            so: socket.socket = writer.get_extra_info("socket")
-            so.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
-            writer.transport.set_write_buffer_limits(PRELOAD, PRELOAD)
-            while not writer.is_closing() and (data := await asyncio.wait_for(reader.read(LIMIT), timeout=TIMEOUT)):
-                await writer.drain()
-                writer.write(data)
+            while data := await asyncio.wait_for(reader.read(LIMIT), timeout=TIMEOUT):
+                await buffer.write(data)
+                provided += len(data)
         except asyncio.TimeoutError:
-            logging.error(f"Timeout {label}")
+            logging.error(f"Failed to provide {label} due to timeout")
         except Exception as e:
-            logging.error(f"Failed to transport {label}: {e}")
+            logging.error(f"Failed to provide {label}: {e}")
+        finally:
+            buffer.write_eof()
+            logging.debug(f"Provided {label}: {provided} bytes")
+
+    async def _consumer(self, label: str, writer: asyncio.StreamWriter, buffer: AsyncBytesBuffer):
+        consumed = 0
+        try:
+            while data := await buffer.read(LIMIT):
+                writer.write(data)
+                await writer.drain()
+                consumed += len(data)
+        except Exception as e:
+            logging.error(f"Failed to consume {label}: {e}")
         finally:
             if not writer.is_closing():
                 writer.write_eof()
                 await writer.drain()
+                writer.close()
+                await writer.wait_closed()
+            logging.debug(f"Consumed {label}: {consumed} bytes")
+
+    async def _transport(self, label: str, reader: asyncio.StreamReader, writer: asyncio.StreamWriter):
+        buffer = AsyncBytesBuffer()
+        try:
+            so: socket.socket = writer.get_extra_info("socket")
+            so.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
+            async with asyncio.TaskGroup() as tg:
+                tg.create_task(self._provider(label, reader, buffer))
+                tg.create_task(self._consumer(label, writer, buffer))
+        except Exception as e:
+            logging.error(f"Failed to transport {label}: {e}")
+        finally:
+            buffer.write_eof()
+            if not writer.is_closing():
                 writer.close()
                 await writer.wait_closed()
 
