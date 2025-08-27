@@ -1,4 +1,3 @@
-from concurrent.futures import ProcessPoolExecutor
 import asyncio
 import logging
 import socket
@@ -13,7 +12,6 @@ LOG = logging.DEBUG
 PORT = 8081
 LIMIT = 1 << 18
 TIMEOUT = 3600
-PROCESSES = 2
 
 
 class util:
@@ -92,7 +90,10 @@ class proxy:
             w_label = f"[{peer[0]}]:{peer[1]} -> [{dest[0]}]:{dest[1]}"
             r_label = f"[{peer[0]}]:{peer[1]} <- [{dest[0]}]:{dest[1]}"
         except Exception as e:
-            logging.error(f"Failed to get original destination: {e}")
+            msg = f"Failed to get original destination: {e}"
+            logging.error(msg)
+            client_writer.write(msg.encode())
+            await client_writer.drain()
             client_writer.close()
             await client_writer.wait_closed()
             return
@@ -100,7 +101,10 @@ class proxy:
         try:
             proxy_reader, proxy_writer = await asyncio.open_connection(*dest, limit=LIMIT)
         except Exception as e:
-            logging.error(f"Failed to connect {w_label}: {e}")
+            msg = f"Failed to connect {w_label}: {e}"
+            logging.error(msg)
+            client_writer.write(msg.encode())
+            await client_writer.drain()
             client_writer.close()
             await client_writer.wait_closed()
             return
@@ -112,7 +116,7 @@ class proxy:
         logging.info(f"Disconnected {w_label}")
 
     async def _start_server(self):
-        server = await asyncio.start_server(self._handle_client, port=PORT, limit=LIMIT, reuse_port=True)
+        server = await asyncio.start_server(self._handle_client, port=PORT, limit=LIMIT)
         async with server:
             await server.serve_forever()
 
@@ -122,12 +126,7 @@ class proxy:
         await self._start_server()
 
 
-def main(_=None):
-    uvloop.run(proxy().run())
-
-
 if __name__ == "__main__":
     logging.basicConfig(level=LOG)
-    with ProcessPoolExecutor(PROCESSES) as pool:
-        pool.map(main, range(PROCESSES))
+    uvloop.run(proxy().run())
     logging.shutdown()
