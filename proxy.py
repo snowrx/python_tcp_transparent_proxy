@@ -11,7 +11,7 @@ from lib.AsyncBytesBuffer import AsyncBytesBuffer
 
 LOG = logging.DEBUG
 PORT = 8081
-LIMIT = 1 << 16
+LIMIT = 1 << 18
 TIMEOUT = 3600
 PROCESSES = 2
 
