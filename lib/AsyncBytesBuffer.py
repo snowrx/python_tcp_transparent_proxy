@@ -15,7 +15,6 @@ class AsyncBytesBuffer:
     async def write(self, data: bytes):
         if self._eof:
             raise EOFError("Buffer is closed for writing")
-
         await self._writable.wait()
         self._buffer.extend(data)
         self._readable.set()
@@ -29,15 +28,16 @@ class AsyncBytesBuffer:
     async def read(self, n: int = _DEFAULT_LIMIT):
         if not self._eof:
             await self._readable.wait()
-
         if not self._buffer and self._eof:
             return b""
-
         data = bytes(memoryview(self._buffer)[:n])
         del self._buffer[:n]
         if not self._buffer:
             self._readable.clear()
         if len(self._buffer) < self._limit:
             self._writable.set()
-
         return data
+
+    def close(self):
+        self.write_eof()
+        self._buffer.clear()

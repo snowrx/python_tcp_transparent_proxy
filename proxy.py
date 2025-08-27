@@ -63,8 +63,6 @@ class proxy:
             if not writer.is_closing():
                 writer.write_eof()
                 await writer.drain()
-                writer.close()
-                await writer.wait_closed()
             logging.debug(f"Consumed {label}: {consumed} bytes")
 
     async def _transport(self, label: str, reader: asyncio.StreamReader, writer: asyncio.StreamWriter):
@@ -78,7 +76,7 @@ class proxy:
         except Exception as e:
             logging.error(f"Failed to transport {label}: {e}")
         finally:
-            buffer.write_eof()
+            buffer.close()
             if not writer.is_closing():
                 writer.close()
                 await writer.wait_closed()
