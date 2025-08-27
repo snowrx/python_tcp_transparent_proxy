@@ -2,7 +2,7 @@ import asyncio
 
 
 class AsyncBytesBuffer:
-    _DEFAULT_LIMIT = 1 << 20
+    _DEFAULT_LIMIT = 1 << 16
 
     def __init__(self, limit: int = _DEFAULT_LIMIT):
         self._limit = limit

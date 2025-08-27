@@ -10,7 +10,7 @@ from lib.AsyncBytesBuffer import AsyncBytesBuffer
 
 LOG = logging.DEBUG
 PORT = 8081
-LIMIT = 1 << 20
+LIMIT = 1 << 16
 TIMEOUT = 3600
 
 
