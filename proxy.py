@@ -6,6 +6,7 @@ import struct
 
 import uvloop
 
+from lib.AsyncBytesBuffer import AsyncBytesBuffer
 
 LOG = logging.DEBUG
 PORT = 8081
@@ -35,19 +36,40 @@ class util:
 
 
 class proxy:
-    async def _transport(self, label: str, reader: asyncio.StreamReader, writer: asyncio.StreamWriter):
+    async def _feeder(self, label: str, reader: asyncio.StreamReader, buffer: AsyncBytesBuffer):
         try:
-            so: socket.socket = writer.get_extra_info("socket")
-            so.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
             while data := await reader.read(MSS):
+                await buffer.write(data)
+        except Exception as e:
+            logging.error(f"Failed to feed {label}: {e}")
+        finally:
+            await buffer.write_eof()
+            await buffer.wait_closed()
+
+    async def _drainer(self, label: str, writer: asyncio.StreamWriter, buffer: AsyncBytesBuffer):
+        try:
+            while data := await buffer.read(MSS):
                 await writer.drain()
                 writer.write(data)
         except Exception as e:
-            logging.error(f"Failed to transport {label}: {e}")
+            logging.error(f"Failed to drain {label}: {e}")
         finally:
             if not writer.is_closing():
                 writer.write_eof()
                 await writer.drain()
+
+    async def _transport(self, label: str, reader: asyncio.StreamReader, writer: asyncio.StreamWriter):
+        try:
+            so: socket.socket = writer.get_extra_info("socket")
+            so.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
+            buffer = AsyncBytesBuffer(MSS)
+            async with asyncio.TaskGroup() as tg:
+                tg.create_task(self._feeder(label, reader, buffer))
+                tg.create_task(self._drainer(label, writer, buffer))
+        except Exception as e:
+            logging.error(f"Failed to transport {label}: {e}")
+        finally:
+            if not writer.is_closing():
                 writer.close()
                 await writer.wait_closed()
 

@@ -2,42 +2,48 @@ import asyncio
 
 
 class AsyncBytesBuffer:
-    _DEFAULT_LIMIT = 1 << 20
-
-    def __init__(self, limit: int = _DEFAULT_LIMIT):
+    def __init__(self, limit: int):
+        if limit <= 0:
+            raise ValueError("Limit must be a positive integer.")
         self._limit = limit
         self._buffer = bytearray()
-        self._readable = asyncio.Event()
-        self._writable = asyncio.Event()
-        self._writable.set()
+        self._cond = asyncio.Condition()
         self._eof = False
+
+    def at_eof(self):
+        return self._eof and not self._buffer
+
+    def readable(self):
+        return self._eof or len(self._buffer) > 0
+
+    def writable(self):
+        return not self._eof and len(self._buffer) < self._limit
 
     async def write(self, data: bytes):
         if self._eof:
-            raise EOFError("Buffer is closed for writing")
-        await self._writable.wait()
-        self._buffer.extend(data)
-        self._readable.set()
-        if len(self._buffer) >= self._limit:
-            self._writable.clear()
+            raise EOFError("Buffer is already closed.")
+        async with self._cond:
+            await self._cond.wait_for(self.writable)
+            self._buffer.extend(data)
+            self._cond.notify_all()
 
-    def write_eof(self):
-        self._eof = True
-        self._readable.set()
+    async def read(self, n: int = -1):
+        async with self._cond:
+            await self._cond.wait_for(self.readable)
+            if n == 0 or self.at_eof():
+                return b""
+            if n == -1:
+                n = self._limit
+            data = bytes(memoryview(self._buffer)[:n])
+            del self._buffer[:n]
+            self._cond.notify_all()
+            return data
 
-    async def read(self, n: int = _DEFAULT_LIMIT):
-        if not self._eof:
-            await self._readable.wait()
-        if not self._buffer and self._eof:
-            return b""
-        data = bytes(memoryview(self._buffer)[:n])
-        del self._buffer[:n]
-        if not self._buffer:
-            self._readable.clear()
-        if len(self._buffer) < self._limit:
-            self._writable.set()
-        return data
+    async def write_eof(self):
+        async with self._cond:
+            self._eof = True
+            self._cond.notify_all()
 
-    def close(self):
-        self.write_eof()
-        self._buffer.clear()
+    async def wait_closed(self):
+        async with self._cond:
+            await self._cond.wait_for(self.at_eof)
