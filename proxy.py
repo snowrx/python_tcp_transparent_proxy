@@ -60,7 +60,7 @@ class proxy:
         try:
             so: socket.socket = writer.get_extra_info("socket")
             so.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
-            buffer = AsyncBytesBuffer(MSS)
+            buffer = AsyncBytesBuffer()
             async with asyncio.TaskGroup() as tg:
                 tg.create_task(self._feeder(label, reader, buffer))
                 tg.create_task(self._drainer(label, writer, buffer))

@@ -2,9 +2,9 @@ import asyncio
 
 
 class AsyncBytesBuffer:
-    def __init__(self, limit: int):
-        if limit <= 0:
-            raise ValueError("Limit must be a positive integer.")
+    _DEFAULT_LIMIT = 1 << 20
+
+    def __init__(self, limit: int = _DEFAULT_LIMIT):
         self._limit = limit
         self._buffer = bytearray()
         self._cond = asyncio.Condition()
@@ -32,7 +32,7 @@ class AsyncBytesBuffer:
             await self._cond.wait_for(self.readable)
             if n == 0 or self.at_eof():
                 return b""
-            if n == -1:
+            if n < 0:
                 n = self._limit
             data = bytes(memoryview(self._buffer)[:n])
             del self._buffer[:n]
