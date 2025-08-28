@@ -1,4 +1,3 @@
-from concurrent.futures import ProcessPoolExecutor
 import asyncio
 import logging
 import socket
@@ -11,7 +10,6 @@ from lib.AsyncBytesBuffer import AsyncBytesBuffer
 LOG = logging.DEBUG
 PORT = 8081
 MSS = 64000
-WORKERS = 8
 
 
 class util:
@@ -62,7 +60,6 @@ class proxy:
         try:
             so: socket.socket = writer.get_extra_info("socket")
             so.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
-            writer.transport.set_write_buffer_limits(0)
             buffer = AsyncBytesBuffer(MSS)
             async with asyncio.TaskGroup() as tg:
                 tg.create_task(self._feeder(label, reader, buffer))
@@ -109,7 +106,7 @@ class proxy:
         logging.info(f"Disconnected {w_label}")
 
     async def _start_server(self):
-        server = await asyncio.start_server(self._handle_client, port=PORT, reuse_port=True)
+        server = await asyncio.start_server(self._handle_client, port=PORT)
         async with server:
             await server.serve_forever()
 
@@ -119,12 +116,7 @@ class proxy:
         await self._start_server()
 
 
-def main(_=None):
-    uvloop.run(proxy().run())
-
-
 if __name__ == "__main__":
     logging.basicConfig(level=LOG)
-    with ProcessPoolExecutor(WORKERS) as executor:
-        executor.map(main, range(WORKERS))
+    uvloop.run(proxy().run())
     logging.shutdown()
