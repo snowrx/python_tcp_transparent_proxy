@@ -10,6 +10,7 @@ from lib.AsyncBytesBuffer import AsyncBytesBuffer
 LOG = logging.DEBUG
 PORT = 8081
 MSS = 64000
+TIMEOUT = 86400
 
 
 class util:
@@ -36,13 +37,13 @@ class util:
 class proxy:
     async def _feeder(self, label: str, reader: asyncio.StreamReader, buffer: AsyncBytesBuffer):
         try:
-            while data := await reader.read(MSS):
-                await buffer.write(data)
+            async with asyncio.timeout(TIMEOUT):
+                while data := await reader.read(MSS):
+                    await buffer.write(data)
         except Exception as e:
             logging.error(f"Failed to feed {label}: {e}")
         finally:
-            await buffer.write_eof()
-            await buffer.wait_closed()
+            await buffer.close()
 
     async def _drainer(self, label: str, writer: asyncio.StreamWriter, buffer: AsyncBytesBuffer):
         try:

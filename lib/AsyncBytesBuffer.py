@@ -2,7 +2,7 @@ import asyncio
 
 
 class AsyncBytesBuffer:
-    _DEFAULT_LIMIT = 1 << 20
+    _DEFAULT_LIMIT = 1 << 24
 
     def __init__(self, limit: int = _DEFAULT_LIMIT):
         self._limit = limit
@@ -39,11 +39,8 @@ class AsyncBytesBuffer:
             self._cond.notify_all()
             return data
 
-    async def write_eof(self):
+    async def close(self):
         async with self._cond:
             self._eof = True
             self._cond.notify_all()
-
-    async def wait_closed(self):
-        async with self._cond:
             await self._cond.wait_for(self.at_eof)
