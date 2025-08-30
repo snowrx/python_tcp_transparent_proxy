@@ -2,13 +2,16 @@ import asyncio
 
 
 class AsyncBytesBuffer:
-    _DEFAULT_LIMIT = 1 << 14
+    _DEFAULT_LIMIT = 1 << 16
 
     def __init__(self, limit: int = _DEFAULT_LIMIT):
         self._limit = limit
         self._buffer = bytearray()
         self._cond = asyncio.Condition()
         self._eof = False
+
+    def __len__(self):
+        return len(self._buffer)
 
     def at_eof(self):
         return self._eof and not self._buffer
