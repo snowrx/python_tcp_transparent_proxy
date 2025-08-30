@@ -14,6 +14,8 @@ CHUNK = 1 << 14
 TIMEOUT = 3600 * 6
 WORKERS = 2
 
+NUL = b"\0"
+
 
 class util:
     _SO_ORIGINAL_DST = 80
@@ -44,6 +46,7 @@ class proxy:
                     await buffer.write(data)
         except Exception as e:
             logging.error(f"Failed to feed {label}: {e}")
+            await buffer.write(NUL)
         finally:
             await buffer.close()
 
@@ -84,9 +87,8 @@ class proxy:
             w_label = f"[{peer[0]}]:{peer[1]} → [{dest[0]}]:{dest[1]}"
             r_label = f"[{peer[0]}]:{peer[1]} ← [{dest[0]}]:{dest[1]}"
         except Exception as e:
-            msg = f"Failed to get original destination: {e}"
-            logging.error(msg)
-            client_writer.write(msg.encode())
+            logging.error(f"Failed to get original destination: {e}")
+            client_writer.write(NUL)
             await client_writer.drain()
             client_writer.close()
             await client_writer.wait_closed()
@@ -95,9 +97,8 @@ class proxy:
         try:
             proxy_reader, proxy_writer = await asyncio.open_connection(*dest)
         except Exception as e:
-            msg = f"Failed to connect {w_label}: {e}"
-            logging.error(msg)
-            client_writer.write(msg.encode())
+            logging.error(f"Failed to connect {w_label}: {e}")
+            client_writer.write(NUL)
             await client_writer.drain()
             client_writer.close()
             await client_writer.wait_closed()
