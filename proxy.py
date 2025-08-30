@@ -1,3 +1,4 @@
+from concurrent.futures import ProcessPoolExecutor
 import asyncio
 import logging
 import socket
@@ -10,7 +11,8 @@ from lib.AsyncBytesBuffer import AsyncBytesBuffer
 LOG = logging.DEBUG
 PORT = 8081
 CHUNK = 1 << 14
-TIMEOUT = 86400
+TIMEOUT = 3600 * 6
+WORKERS = 2
 
 
 class util:
@@ -108,7 +110,7 @@ class proxy:
         logging.info(f"Disconnected {w_label}")
 
     async def _start_server(self):
-        server = await asyncio.start_server(self._handle_client, port=PORT)
+        server = await asyncio.start_server(self._handle_client, port=PORT, reuse_port=True)
         async with server:
             await server.serve_forever()
 
@@ -118,7 +120,12 @@ class proxy:
         await self._start_server()
 
 
+def main(_=None):
+    uvloop.run(proxy().run())
+
+
 if __name__ == "__main__":
     logging.basicConfig(level=LOG)
-    uvloop.run(proxy().run())
+    with ProcessPoolExecutor(WORKERS) as pool:
+        pool.map(main, range(WORKERS))
     logging.shutdown()
