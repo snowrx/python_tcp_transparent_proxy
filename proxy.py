@@ -44,6 +44,7 @@ class proxy:
             async with asyncio.timeout(TIMEOUT):
                 while data := await reader.read(CHUNK):
                     await buffer.write(data)
+                    del data
         except Exception as e:
             logging.error(f"Failed to feed {label}: {e}")
             await buffer.write(NUL)
@@ -55,6 +56,7 @@ class proxy:
             while data := await buffer.read(CHUNK):
                 await writer.drain()
                 writer.write(data)
+                del data
         except Exception as e:
             logging.error(f"Failed to drain {label}: {e}")
         finally:
@@ -63,11 +65,11 @@ class proxy:
                 await writer.drain()
 
     async def _transport(self, label: str, reader: asyncio.StreamReader, writer: asyncio.StreamWriter):
+        buffer = AsyncBytesBuffer()
         try:
             so: socket.socket = writer.get_extra_info("socket")
             so.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
             writer.transport.set_write_buffer_limits(CHUNK, CHUNK)
-            buffer = AsyncBytesBuffer()
             async with asyncio.TaskGroup() as tg:
                 tg.create_task(self._feeder(label, reader, buffer))
                 tg.create_task(self._drainer(label, writer, buffer))
@@ -77,6 +79,7 @@ class proxy:
             if not writer.is_closing():
                 writer.close()
                 await writer.wait_closed()
+        del buffer
 
     async def _handle_client(self, client_reader: asyncio.StreamReader, client_writer: asyncio.StreamWriter):
         try:
@@ -105,10 +108,14 @@ class proxy:
             return
 
         logging.info(f"Connected {w_label}")
+        start = self._loop.time()
         async with asyncio.TaskGroup() as tg:
             tg.create_task(self._transport(w_label, client_reader, proxy_writer))
             tg.create_task(self._transport(r_label, proxy_reader, client_writer))
-        logging.info(f"Disconnected {w_label}")
+        del proxy_reader, proxy_writer
+        del client_reader, client_writer
+        end = self._loop.time()
+        logging.info(f"Disconnected {w_label} in {end - start:.2f}s")
 
     async def _start_server(self):
         server = await asyncio.start_server(self._handle_client, port=PORT, reuse_port=True)
