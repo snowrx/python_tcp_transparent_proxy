@@ -9,8 +9,6 @@ from lib import buffer
 
 LOG = logging.DEBUG
 PORT = 8081
-TIMEOUT = 3600
-MSS = 64000
 
 
 class util:
@@ -35,12 +33,12 @@ class util:
 
 
 class proxy:
+    _DEFAULT_LIMIT = 1 << 16
+
     async def _feeder(self, label: str, reader: asyncio.StreamReader, buf: buffer):
         try:
-            while data := await asyncio.wait_for(reader.read(MSS), TIMEOUT):
+            while data := await reader.read(buf.limit):
                 await buf.write(data)
-        except TimeoutError:
-            logging.error(f"Timeout {label}")
         except Exception as e:
             logging.error(f"Failed to feed {label}: {e}")
         finally:
@@ -49,7 +47,7 @@ class proxy:
 
     async def _drainer(self, label: str, writer: asyncio.StreamWriter, buf: buffer):
         try:
-            while data := await buf.read(MSS):
+            while data := await buf.read(buf.limit):
                 await writer.drain()
                 writer.write(data)
         except Exception as e:
@@ -64,7 +62,11 @@ class proxy:
         try:
             so: socket.socket = writer.get_extra_info("socket")
             so.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
-            buf = buffer()
+            mss = so.getsockopt(socket.IPPROTO_TCP, socket.TCP_MAXSEG)
+            limit = (self._DEFAULT_LIMIT // mss) * mss
+            writer.transport.set_write_buffer_limits(mss, mss)
+            buf = buffer(limit)
+            logging.debug(f"{label} {mss=} {limit=}")
             async with asyncio.TaskGroup() as tg:
                 tg.create_task(self._feeder(label, reader, buf))
                 tg.create_task(self._drainer(label, writer, buf))
@@ -98,12 +100,16 @@ class proxy:
             return
 
         logging.info(f"Established {write_label}")
+        start = self._loop.time()
         async with asyncio.TaskGroup() as tg:
             tg.create_task(self._transport(read_label, proxy_reader, client_writer))
             tg.create_task(self._transport(write_label, client_reader, proxy_writer))
-        logging.info(f"Closed {write_label}")
+        end = self._loop.time()
+        logging.info(f"Closed {write_label} ({end - start:.2f}s)")
 
     async def run(self):
+        self._loop = asyncio.get_running_loop()
+        self._loop.set_task_factory(asyncio.eager_task_factory)
         server = await asyncio.start_server(self._accept, port=PORT)
         async with server:
             logging.info(f"Listening on {PORT}")

@@ -2,7 +2,7 @@ import asyncio
 
 
 class buffer:
-    _DEFAULT_LIMIT = 1 << 20
+    _DEFAULT_LIMIT = 1 << 16
 
     def __init__(self, limit: int = _DEFAULT_LIMIT):
         self._buffer = bytearray()
@@ -16,6 +16,14 @@ class buffer:
 
     def __len__(self):
         return len(self._buffer)
+
+    @property
+    def limit(self):
+        return self._limit
+
+    @limit.setter
+    def limit(self, limit: int):
+        self._limit = limit
 
     def at_eof(self):
         return (self._eof and not self._buffer) or self._abort
