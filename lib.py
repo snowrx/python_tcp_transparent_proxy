@@ -2,7 +2,7 @@ import asyncio
 
 
 class buffer:
-    _DEFAULT_LIMIT = 1 << 16
+    _DEFAULT_LIMIT = 1 << 18
 
     def __init__(self, limit: int = _DEFAULT_LIMIT):
         self._buffer = bytearray()

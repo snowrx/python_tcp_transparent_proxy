@@ -9,6 +9,7 @@ from lib import buffer
 
 LOG = logging.DEBUG
 PORT = 8081
+LIMIT = 1 << 18
 
 
 class util:
@@ -33,11 +34,9 @@ class util:
 
 
 class proxy:
-    _DEFAULT_LIMIT = 1 << 16
-
     async def _feeder(self, label: str, reader: asyncio.StreamReader, buf: buffer):
         try:
-            while data := await reader.read(buf.limit):
+            while data := await reader.read(LIMIT):
                 await buf.write(data)
         except Exception as e:
             logging.error(f"Failed to feed {label}: {e}")
@@ -47,7 +46,7 @@ class proxy:
 
     async def _drainer(self, label: str, writer: asyncio.StreamWriter, buf: buffer):
         try:
-            while data := await buf.read(buf.limit):
+            while data := await buf.read(LIMIT):
                 await writer.drain()
                 writer.write(data)
         except Exception as e:
@@ -62,11 +61,7 @@ class proxy:
         try:
             so: socket.socket = writer.get_extra_info("socket")
             so.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
-            mss = so.getsockopt(socket.IPPROTO_TCP, socket.TCP_MAXSEG)
-            limit = (self._DEFAULT_LIMIT // mss) * mss
-            writer.transport.set_write_buffer_limits(mss, mss)
-            buf = buffer(limit)
-            logging.debug(f"{label} {mss=} {limit=}")
+            buf = buffer()
             async with asyncio.TaskGroup() as tg:
                 tg.create_task(self._feeder(label, reader, buf))
                 tg.create_task(self._drainer(label, writer, buf))
@@ -92,7 +87,7 @@ class proxy:
             return
 
         try:
-            proxy_reader, proxy_writer = await asyncio.open_connection(*origname)
+            proxy_reader, proxy_writer = await asyncio.open_connection(*origname, limit=LIMIT)
         except Exception as e:
             logging.error(f"Failed to connect {write_label}")
             client_writer.close()
@@ -110,7 +105,7 @@ class proxy:
     async def run(self):
         self._loop = asyncio.get_running_loop()
         self._loop.set_task_factory(asyncio.eager_task_factory)
-        server = await asyncio.start_server(self._accept, port=PORT)
+        server = await asyncio.start_server(self._accept, port=PORT, limit=LIMIT)
         async with server:
             logging.info(f"Listening on {PORT}")
             await server.serve_forever()
