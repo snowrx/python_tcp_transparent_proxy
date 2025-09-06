@@ -5,8 +5,6 @@ import struct
 
 import uvloop
 
-from lib import buffer
-
 LOG = logging.DEBUG
 PORT = 8081
 LIMIT = 1 << 18
@@ -34,41 +32,19 @@ class util:
 
 
 class proxy:
-    async def _feeder(self, label: str, reader: asyncio.StreamReader, buf: buffer):
-        try:
-            while data := await reader.read(LIMIT):
-                await buf.write(data)
-        except Exception as e:
-            logging.error(f"Failed to feed {label}: {e}")
-        finally:
-            await buf.write_eof()
-            await buf.wait_closed()
-
-    async def _drainer(self, label: str, writer: asyncio.StreamWriter, buf: buffer):
-        try:
-            while data := await buf.read(LIMIT):
-                await writer.drain()
-                writer.write(data)
-        except Exception as e:
-            logging.error(f"Failed to drain {label}: {e}")
-            await buf.abort()
-        finally:
-            if not writer.is_closing():
-                writer.write_eof()
-                await writer.drain()
-
     async def _transport(self, label: str, reader: asyncio.StreamReader, writer: asyncio.StreamWriter):
         try:
             so: socket.socket = writer.get_extra_info("socket")
             so.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
-            buf = buffer()
-            async with asyncio.TaskGroup() as tg:
-                tg.create_task(self._feeder(label, reader, buf))
-                tg.create_task(self._drainer(label, writer, buf))
+            while not writer.is_closing() and (data := await reader.read(LIMIT)):
+                await writer.drain()
+                writer.write(data)
         except Exception as e:
             logging.error(f"Failed to transport {label}: {e}")
         finally:
             if not writer.is_closing():
+                writer.write_eof()
+                await writer.drain()
                 writer.close()
                 await writer.wait_closed()
 
