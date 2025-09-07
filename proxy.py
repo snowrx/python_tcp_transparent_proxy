@@ -2,12 +2,14 @@ import asyncio
 import logging
 import socket
 import struct
+from concurrent.futures import ThreadPoolExecutor
 
 import uvloop
 
 LOG = logging.DEBUG
 PORT = 8081
 LIMIT = 1 << 18
+WORKERS = 4
 
 
 class util:
@@ -81,13 +83,18 @@ class proxy:
     async def run(self):
         self._loop = asyncio.get_running_loop()
         self._loop.set_task_factory(asyncio.eager_task_factory)
-        server = await asyncio.start_server(self._accept, port=PORT, limit=LIMIT)
+        server = await asyncio.start_server(self._accept, port=PORT, reuse_port=True, limit=LIMIT)
         async with server:
             logging.info(f"Listening on {PORT}")
             await server.serve_forever()
 
 
+def run(_=None):
+    uvloop.run(proxy().run())
+
+
 if __name__ == "__main__":
     logging.basicConfig(level=LOG)
-    uvloop.run(proxy().run())
+    with ThreadPoolExecutor(WORKERS) as pool:
+        pool.map(run, range(WORKERS))
     logging.shutdown()
