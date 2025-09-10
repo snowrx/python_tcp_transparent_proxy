@@ -2,15 +2,12 @@ import asyncio
 import logging
 import socket
 import struct
-from concurrent.futures import ThreadPoolExecutor
+from sys import maxsize
 
 import uvloop
 
 LOG = logging.DEBUG
 PORT = 8081
-MSS = 64000
-FLUSH = 1600
-WORKERS = 4
 
 
 class util:
@@ -39,8 +36,7 @@ class proxy:
         try:
             so: socket.socket = writer.get_extra_info("socket")
             so.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
-            writer.transport.set_write_buffer_limits(FLUSH)
-            while not writer.is_closing() and (data := await reader.read(MSS)):
+            while not writer.is_closing() and (data := await reader.read(maxsize)):
                 await writer.drain()
                 writer.write(data)
         except Exception as e:
@@ -85,18 +81,13 @@ class proxy:
     async def run(self):
         self._loop = asyncio.get_running_loop()
         self._loop.set_task_factory(asyncio.eager_task_factory)
-        server = await asyncio.start_server(self._accept, port=PORT, reuse_port=True)
+        server = await asyncio.start_server(self._accept, port=PORT)
         async with server:
             logging.info(f"Listening on {PORT}")
             await server.serve_forever()
 
 
-def run(_=None):
-    uvloop.run(proxy().run())
-
-
 if __name__ == "__main__":
     logging.basicConfig(level=LOG)
-    with ThreadPoolExecutor(WORKERS) as pool:
-        pool.map(run, range(WORKERS))
+    uvloop.run(proxy().run())
     logging.shutdown()
