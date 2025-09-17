@@ -91,5 +91,10 @@ class proxy:
 
 if __name__ == "__main__":
     logging.basicConfig(level=LOG)
-    uvloop.run(proxy().run())
+    try:
+        uvloop.run(proxy().run())
+    except KeyboardInterrupt:
+        logging.info("Shutting down.")
+    except Exception as e:
+        logging.error(f"Unhandled exception: {e}")
     logging.shutdown()
