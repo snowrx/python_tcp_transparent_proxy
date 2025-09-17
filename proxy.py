@@ -2,6 +2,7 @@ import asyncio
 import logging
 import socket
 import struct
+import gc
 
 import uvloop
 
@@ -91,6 +92,8 @@ class proxy:
 
 if __name__ == "__main__":
     logging.basicConfig(level=LOG)
+    gc.set_threshold(10000)
+    gc.set_debug(gc.DEBUG_STATS)
     try:
         uvloop.run(proxy().run())
     except KeyboardInterrupt:
