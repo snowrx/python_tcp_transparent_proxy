@@ -3,12 +3,12 @@ import logging
 import socket
 import struct
 import gc
+from sys import maxsize
 
 import uvloop
 
 LOG = logging.DEBUG
 PORT = 8081
-MSS = 64000
 
 
 class util:
@@ -37,9 +37,7 @@ class proxy:
         try:
             so: socket.socket = writer.get_extra_info("socket")
             so.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
-            so.setsockopt(socket.SOL_TCP, socket.TCP_QUICKACK, 1)
-            writer.transport.set_write_buffer_limits(MSS)
-            while not writer.is_closing() and (data := await reader.read(MSS)):
+            while not writer.is_closing() and (data := await reader.read(maxsize)):
                 await writer.drain()
                 writer.write(data)
         except Exception as e:
