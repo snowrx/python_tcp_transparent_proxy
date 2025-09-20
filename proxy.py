@@ -3,12 +3,12 @@ import logging
 import socket
 import struct
 import gc
-from sys import maxsize
 
 import uvloop
 
 LOG = logging.DEBUG
 PORT = 8081
+LIMIT = 1 << 18
 
 
 class util:
@@ -37,17 +37,19 @@ class proxy:
         try:
             so: socket.socket = writer.get_extra_info("socket")
             so.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
-            while not writer.is_closing() and (data := await reader.read(maxsize)):
+            writer.transport.set_write_buffer_limits(LIMIT)
+            while not writer.is_closing() and (data := await reader.read(LIMIT)):
                 await writer.drain()
                 writer.write(data)
         except Exception as e:
             logging.error(f"Failed to transport {label}: {e}")
+            writer.transport.abort()
         finally:
-            if not writer.is_closing():
-                writer.write_eof()
-                await writer.drain()
+            try:
                 writer.close()
                 await writer.wait_closed()
+            except Exception as e:
+                logging.debug(f"Failed to close {label}: {e}")
 
     async def _accept(self, client_reader: asyncio.StreamReader, client_writer: asyncio.StreamWriter):
         try:
@@ -59,14 +61,16 @@ class proxy:
             write_label = f"[{peername[0]}]:{peername[1]} → [{origname[0]}]:{origname[1]}"
         except Exception as e:
             logging.error(f"Failed to prepare: {e}")
+            client_writer.transport.abort()
             client_writer.close()
             await client_writer.wait_closed()
             return
 
         try:
-            proxy_reader, proxy_writer = await asyncio.open_connection(*origname)
+            proxy_reader, proxy_writer = await asyncio.open_connection(*origname, limit=LIMIT)
         except Exception as e:
             logging.error(f"Failed to connect {write_label}")
+            client_writer.transport.abort()
             client_writer.close()
             await client_writer.wait_closed()
             return
@@ -82,7 +86,7 @@ class proxy:
     async def run(self):
         self._loop = asyncio.get_running_loop()
         self._loop.set_task_factory(asyncio.eager_task_factory)
-        server = await asyncio.start_server(self._accept, port=PORT)
+        server = await asyncio.start_server(self._accept, port=PORT, limit=LIMIT)
         async with server:
             logging.info(f"Listening on {PORT}")
             await server.serve_forever()
