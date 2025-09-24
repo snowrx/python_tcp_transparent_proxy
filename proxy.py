@@ -8,7 +8,8 @@ import uvloop
 
 LOG_LEVEL = logging.DEBUG
 PORT = 8081
-MSS = 64000
+LIMIT = 1 << 18
+TIMEOUT = 3600 * 6
 
 
 class Utility:
@@ -32,118 +33,40 @@ class Utility:
         return ip, port
 
 
-class Buffer:
-    _DEFAULT_LIMIT = 1 << 20
-
-    def __init__(self, limit: int = _DEFAULT_LIMIT):
-        if limit <= 0:
-            raise ValueError("Limit cannot be <= 0")
-        self._buffer = bytearray()
-        self._limit = limit
-        self._cond = asyncio.Condition()
-        self._eof = False
-        self._abort = False
-
-    def __len__(self):
-        return len(self._buffer)
-
-    def readable(self):
-        return len(self._buffer) > 0 or self._eof or self._abort
-
-    def writable(self):
-        return len(self._buffer) < self._limit or self._abort
-
-    def at_eof(self):
-        return (self._eof and not self._buffer) or self._abort
-
-    async def write_eof(self):
-        async with self._cond:
-            self._eof = True
-            self._cond.notify_all()
-
-    async def wait_closed(self):
-        async with self._cond:
-            await self._cond.wait_for(self.at_eof)
-            self._cond.notify_all()
-
-    async def abort(self):
-        async with self._cond:
-            self._abort = True
-            self._cond.notify_all()
-
-    async def read(self, n: int = -1) -> bytes:
-        if n == 0:
-            return b""
-        async with self._cond:
-            await self._cond.wait_for(self.readable)
-            if self._abort:
-                raise ConnectionResetError("Connection aborted")
-            if n < 0 or n > len(self._buffer):
-                n = len(self._buffer)
-            data = bytes(memoryview(self._buffer)[:n])
-            del self._buffer[:n]
-            self._cond.notify_all()
-            return data
-
-    async def write(self, data: bytes):
-        if not data:
-            return
-        async with self._cond:
-            await self._cond.wait_for(self.writable)
-            if self._abort:
-                raise ConnectionResetError("Connection aborted")
-            self._buffer.extend(data)
-            self._cond.notify_all()
-
-
-class Proxy:
-    async def _feeder(self, flow: str, reader: asyncio.StreamReader, buffer: Buffer):
+class Server:
+    async def _connection(self, flow: str, reader: asyncio.StreamReader, writer: asyncio.StreamWriter):
         try:
-            while data := await reader.read(MSS):
-                await buffer.write(data)
+            so: socket.socket = writer.get_extra_info("socket")
+            so.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
+            async with asyncio.timeout(TIMEOUT):
+                while data := await reader.read(LIMIT):
+                    await writer.drain()
+                    writer.write(data)
+        except TimeoutError:
+            logging.error(f"Connection timed out for {flow}")
+        except ConnectionResetError:
+            logging.error(f"Connection reset for {flow}")
         except Exception as e:
-            logging.debug(f"Error in feeder {flow}: {e}")
-            await buffer.abort()
+            logging.error(f"Unexpected error for {flow}: [{type(e).__name__}] {e}")
         finally:
-            await buffer.write_eof()
-            await buffer.wait_closed()
+            if not writer.is_closing():
+                try:
+                    writer.write_eof()
+                    await writer.drain()
+                    writer.close()
+                    await writer.wait_closed()
+                except Exception as e:
+                    logging.debug(f"Error closing connection {flow}: {e}")
 
-    async def _writer(self, flow: str, buffer: Buffer, writer: asyncio.StreamWriter):
-        try:
-            while data := await buffer.read(MSS):
-                await writer.drain()
-                writer.write(data)
-        except Exception as e:
-            logging.debug(f"Error in writer {flow}: {e}")
-            await buffer.abort()
-            writer.transport.abort()
-        finally:
-            try:
-                writer.close()
-                await writer.wait_closed()
-            except Exception as e:
-                logging.debug(f"Error in closing writer {flow}: {e}")
-
-    async def _transport(self, flow: str, reader: asyncio.StreamReader, writer: asyncio.StreamWriter):
-        try:
-            s: socket.socket = writer.get_extra_info("socket")
-            s.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
-            buffer = Buffer()
-            async with asyncio.TaskGroup() as tg:
-                tg.create_task(self._feeder(flow, reader, buffer))
-                tg.create_task(self._writer(flow, buffer, writer))
-        except Exception as e:
-            logging.debug(f"Error in transport {flow}: {e}")
-
-    async def _handle_client(self, client_reader: asyncio.StreamReader, client_writer: asyncio.StreamWriter):
+    async def _handler(self, client_reader: asyncio.StreamReader, client_writer: asyncio.StreamWriter):
         try:
             peername = client_writer.get_extra_info("peername")
             logging.debug(f"New connection from [{peername[0]}]:{peername[1]}")
-            is_v4 = "." in peername[0]
-            s: socket.socket = client_writer.get_extra_info("socket")
-            dst = Utility.get_original_dst(s, is_v4)
-            writer_label = f"[{peername[0]}]:{peername[1]} → [{dst[0]}]:{dst[1]}"
-            reader_label = f"[{peername[0]}]:{peername[1]} ← [{dst[0]}]:{dst[1]}"
+            so: socket.socket = client_writer.get_extra_info("socket")
+            v4 = "." in peername[0]
+            dst = Utility.get_original_dst(so, v4)
+            write_flow = f"[{peername[0]}]:{peername[1]} → [{dst[0]}]:{dst[1]}"
+            read_flow = f"[{peername[0]}]:{peername[1]} ← [{dst[0]}]:{dst[1]}"
         except Exception as e:
             logging.error(f"Failed to gather connection info: {e}")
             client_writer.transport.abort()
@@ -152,24 +75,28 @@ class Proxy:
             return
 
         try:
-            proxy_reader, proxy_writer = await asyncio.open_connection(*dst)
+            proxy_reader, proxy_writer = await asyncio.open_connection(*dst, limit=LIMIT)
         except Exception as e:
-            logging.error(f"Failed to connect {writer_label}: {e}")
+            logging.error(f"Failed to connect {write_flow}: {e}")
             client_writer.transport.abort()
             client_writer.close()
             await client_writer.wait_closed()
             return
 
-        logging.info(f"Established {writer_label}")
-        async with asyncio.TaskGroup() as tg:
-            tg.create_task(self._transport(writer_label, client_reader, proxy_writer))
-            tg.create_task(self._transport(reader_label, proxy_reader, client_writer))
-        logging.info(f"Closed {writer_label}")
+        try:
+            logging.info(f"Established {write_flow}")
+            async with asyncio.TaskGroup() as tg:
+                tg.create_task(self._connection(write_flow, client_reader, proxy_writer))
+                tg.create_task(self._connection(read_flow, proxy_reader, client_writer))
+        except* Exception as e:
+            logging.error(f"Error in task group for {write_flow}: {e.exceptions}")
+        finally:
+            logging.info(f"Closed {write_flow}")
 
-    async def run(self):
+    async def serve(self):
         self._loop = asyncio.get_running_loop()
         self._loop.set_task_factory(asyncio.eager_task_factory)
-        server = await asyncio.start_server(self._handle_client, port=PORT)
+        server = await asyncio.start_server(self._handler, port=PORT, limit=LIMIT)
         logging.info(f"Listening on port {PORT}")
         async with server:
             await server.serve_forever()
@@ -180,7 +107,9 @@ if __name__ == "__main__":
     gc.set_debug(gc.DEBUG_STATS)
     gc.set_threshold(10000)
     try:
-        uvloop.run(Proxy().run())
+        uvloop.run(Server().serve())
     except KeyboardInterrupt:
-        logging.info("Shutting down")
+        logging.info("Server stopped by user")
+    except Exception as e:
+        logging.critical(f"Server stopped due to an unhandled exception: {e}")
     logging.shutdown()
