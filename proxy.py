@@ -3,13 +3,13 @@ import logging
 import socket
 import struct
 import gc
-from sys import maxsize
 
 import uvloop
 
 LOG_LEVEL = logging.DEBUG
 PORT = 8081
 TIMEOUT = 3600 * 6
+LIMIT = 1 << 18
 
 
 class Utility:
@@ -39,7 +39,7 @@ class Server:
             so: socket.socket = writer.get_extra_info("socket")
             so.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
             async with asyncio.timeout(TIMEOUT):
-                while data := await reader.read(maxsize):
+                while data := await reader.read(LIMIT):
                     await writer.drain()
                     writer.write(data)
         except TimeoutError:
@@ -75,7 +75,7 @@ class Server:
             return
 
         try:
-            proxy_reader, proxy_writer = await asyncio.open_connection(*dst)
+            proxy_reader, proxy_writer = await asyncio.open_connection(*dst, limit=LIMIT)
         except Exception as e:
             logging.error(f"Failed to connect {write_flow}: {e}")
             client_writer.transport.abort()
@@ -96,7 +96,7 @@ class Server:
     async def serve(self):
         self._loop = asyncio.get_running_loop()
         self._loop.set_task_factory(asyncio.eager_task_factory)
-        server = await asyncio.start_server(self._handler, port=PORT)
+        server = await asyncio.start_server(self._handler, port=PORT, limit=LIMIT)
         logging.info(f"Listening on port {PORT}")
         async with server:
             await server.serve_forever()
@@ -105,7 +105,6 @@ class Server:
 if __name__ == "__main__":
     logging.basicConfig(level=LOG_LEVEL)
     gc.set_debug(gc.DEBUG_STATS)
-    gc.set_threshold(10000)
     try:
         uvloop.run(Server().serve())
     except KeyboardInterrupt:
