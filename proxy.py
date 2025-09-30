@@ -1,15 +1,18 @@
+from concurrent.futures import ThreadPoolExecutor
 import asyncio
+import gc
 import logging
 import socket
 import struct
-import gc
 
 import uvloop
 
 LOG_LEVEL = logging.DEBUG
+LOG_INTERVAL = 60
 PORT = 8081
 TIMEOUT = 3600 * 6
 LIMIT = 1 << 18
+WORKERS = 4
 
 
 class Utility:
@@ -42,12 +45,8 @@ class Server:
                 while data := await reader.read(LIMIT):
                     await writer.drain()
                     writer.write(data)
-        except TimeoutError:
-            logging.error(f"Connection timed out for {flow}")
-        except ConnectionResetError:
-            logging.error(f"Connection reset for {flow}")
         except Exception as e:
-            logging.error(f"Unexpected error for {flow}: [{type(e).__name__}] {e}")
+            logging.error(f"[{self._id}] {type(e).__name__} {flow}: {e}")
         finally:
             if not writer.is_closing():
                 try:
@@ -56,19 +55,18 @@ class Server:
                     writer.close()
                     await writer.wait_closed()
                 except Exception as e:
-                    logging.debug(f"Error closing connection {flow}: {e}")
+                    logging.debug(f"[{self._id}] {type(e).__name__} {flow}: {e}")
 
     async def _handler(self, client_reader: asyncio.StreamReader, client_writer: asyncio.StreamWriter):
         try:
             peername = client_writer.get_extra_info("peername")
-            logging.debug(f"New connection from [{peername[0]}]:{peername[1]}")
             so: socket.socket = client_writer.get_extra_info("socket")
             v4 = "." in peername[0]
             dst = Utility.get_original_dst(so, v4)
             write_flow = f"[{peername[0]}]:{peername[1]} → [{dst[0]}]:{dst[1]}"
             read_flow = f"[{peername[0]}]:{peername[1]} ← [{dst[0]}]:{dst[1]}"
         except Exception as e:
-            logging.error(f"Failed to gather connection info: {e}")
+            logging.error(f"[{self._id}] Failed to gather connection info: {e}")
             client_writer.transport.abort()
             client_writer.close()
             await client_writer.wait_closed()
@@ -77,38 +75,55 @@ class Server:
         try:
             proxy_reader, proxy_writer = await asyncio.open_connection(*dst, limit=LIMIT)
         except Exception as e:
-            logging.error(f"Failed to connect {write_flow}: {e}")
+            logging.error(f"[{self._id}] Failed to connect {write_flow}: {e}")
             client_writer.transport.abort()
             client_writer.close()
             await client_writer.wait_closed()
             return
 
+        logging.info(f"[{self._id}] Established {write_flow}")
+        start = self._loop.time()
+        self._active_connections[write_flow] = start
         try:
-            logging.info(f"Established {write_flow}")
             async with asyncio.TaskGroup() as tg:
                 tg.create_task(self._connection(write_flow, client_reader, proxy_writer))
                 tg.create_task(self._connection(read_flow, proxy_reader, client_writer))
         except* Exception as e:
-            logging.error(f"Error in task group for {write_flow}: {e.exceptions}")
+            logging.error(f"[{self._id}] Error in task group for {write_flow}: {e.exceptions}")
         finally:
-            logging.info(f"Closed {write_flow}")
+            logging.info(f"[{self._id}] Closed {write_flow} {self._loop.time() - start:.2f}s")
+        del self._active_connections[write_flow]
 
-    async def serve(self):
+        if (now := self._loop.time()) - self._ts > LOG_INTERVAL:
+            self._ts = now
+            logging.debug(f"[{self._id}] * Active connections: {len(self._active_connections)}")
+            if self._active_connections:
+                for flow, ts in self._active_connections.items():
+                    logging.debug(f"[{self._id}] * {flow}: {now - ts:.2f}s")
+
+    async def serve(self, id: int = 0):
+        self._id = id
         self._loop = asyncio.get_running_loop()
         self._loop.set_task_factory(asyncio.eager_task_factory)
-        server = await asyncio.start_server(self._handler, port=PORT, limit=LIMIT)
-        logging.info(f"Listening on port {PORT}")
+        self._active_connections: dict[str, float] = {}
+        self._ts = self._loop.time()
+        server = await asyncio.start_server(self._handler, port=PORT, reuse_port=True, limit=LIMIT)
+        logging.info(f"[{self._id}] Listening on port {PORT}")
         async with server:
             await server.serve_forever()
 
 
+def run_server(id: int = 0):
+    try:
+        uvloop.run(Server().serve(id))
+    except Exception as e:
+        logging.critical(f"Worker {id} stopped due to an unhandled exception: {e}")
+
+
 if __name__ == "__main__":
     logging.basicConfig(level=LOG_LEVEL)
+    gc.set_threshold(10000)
     gc.set_debug(gc.DEBUG_STATS)
-    try:
-        uvloop.run(Server().serve())
-    except KeyboardInterrupt:
-        logging.info("Server stopped by user")
-    except Exception as e:
-        logging.critical(f"Server stopped due to an unhandled exception: {e}")
+    with ThreadPoolExecutor(WORKERS) as pool:
+        pool.map(run_server, range(WORKERS))
     logging.shutdown()
