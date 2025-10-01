@@ -2,28 +2,31 @@
 
 DEST=/opt/proxy
 
+# check privileges
 if [ "$EUID" -ne 0 ]; then
   echo "Please run as root"
   exit
 fi
 
-if [ -d "$DEST" ]; then
-  systemctl disable --now proxy.service
-  rm -rf $DEST
+# check if proxy is already installed
+if [ -f "$DEST/proxy.py" ]; then
+  systemctl stop proxy.service
+else
+  mkdir -p $DEST
 fi
 
-mkdir -p $DEST
-cp -r {proxy.py,requirements.txt,proxy} $DEST/
+cp {proxy.py,requirements.txt,proxy} $DEST
 cp proxy.service /etc/systemd/system/
-chown -R proxy:proxy $DEST
-chmod a+rx $DEST/proxy
 
 cd $DEST
 python3 -m venv .venv
 source .venv/bin/activate
-pip install -r requirements.txt
+pip install -U -r requirements.txt
 deactivate
 
+chown -R proxy:proxy $DEST
+chmod +x $DEST/proxy
+
 systemctl daemon-reload
-systemctl enable --now proxy.service
-systemctl restart proxy.service
+systemctl enable proxy.service
+systemctl start proxy.service
