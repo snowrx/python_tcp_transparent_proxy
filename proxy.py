@@ -8,9 +8,9 @@ import struct
 import uvloop
 
 LOG_LEVEL = logging.DEBUG
-LOG_INTERVAL = 60
+LOG_INTERVAL = 3600
 PORT = 8081
-TIMEOUT = 3600 * 6
+TIMEOUT = 3600
 LIMIT = 1 << 18
 WORKERS = 4
 
@@ -41,10 +41,9 @@ class Server:
         try:
             so: socket.socket = writer.get_extra_info("socket")
             so.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
-            async with asyncio.timeout(TIMEOUT):
-                while data := await reader.read(LIMIT):
-                    await writer.drain()
-                    writer.write(data)
+            while data := await asyncio.wait_for(reader.read(LIMIT), TIMEOUT):
+                await writer.drain()
+                writer.write(data)
         except Exception as e:
             logging.error(f"[{self._id}] {type(e).__name__} {flow}: {e}")
         finally:
