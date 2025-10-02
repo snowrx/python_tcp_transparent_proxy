@@ -48,8 +48,10 @@ class Proxy:
                 await dst.send_all(chunk)
         except (trio.ClosedResourceError, trio.BrokenResourceError) as e:
             logging.debug(f"{type(e).__name__} {flow}: {e}")
+            nursery.cancel_scope.cancel(type(e).__name__)
         except Exception as e:
             logging.error(f"{type(e).__name__} {flow}: {e}")
+            nursery.cancel_scope.cancel(type(e).__name__)
         finally:
             logging.debug(f"Closing {flow}")
 
