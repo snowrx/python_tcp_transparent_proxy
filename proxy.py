@@ -6,6 +6,7 @@ import trio
 LOG_LEVEL = logging.DEBUG
 PORT = 8081
 IDLE_TIMEOUT = 3600
+CLOSE_WAIT = 60
 
 
 class Utility:
@@ -54,6 +55,7 @@ class Proxy:
             nursery.cancel_scope.cancel(type(e).__name__)
         finally:
             logging.debug(f"Closing {flow}")
+            nursery.cancel_scope.relative_deadline = CLOSE_WAIT
 
     async def run(self):
         logging.info(f"Start proxy {self._up}")
