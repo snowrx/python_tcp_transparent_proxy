@@ -33,8 +33,6 @@ class Utility:
 
 
 class Proxy:
-    _NUL = b"\0"
-
     def __init__(self, client_stream: trio.SocketStream, proxy_stream: trio.SocketStream):
         self._client_stream = client_stream
         self._proxy_stream = proxy_stream
@@ -46,10 +44,12 @@ class Proxy:
     async def _proxy(self, nursery: trio.Nursery, flow: str, src: trio.SocketStream, dst: trio.SocketStream):
         try:
             dst.setsockopt(trio.socket.SOL_SOCKET, trio.socket.SO_KEEPALIVE, 1)
+            dst.setsockopt(trio.socket.SOL_TCP, trio.socket.TCP_QUICKACK, 1)
             async for chunk in src:
                 nursery.cancel_scope.relative_deadline = IDLE_TIMEOUT
                 await dst.send_all(chunk)
-            await dst.send_all(self._NUL)
+            await dst.send_eof()
+            logging.debug(f"EOF {flow}")
         except (trio.ClosedResourceError, trio.BrokenResourceError) as e:
             logging.debug(f"{type(e).__name__} {flow}: {e}")
             nursery.cancel_scope.cancel(type(e).__name__)
@@ -57,7 +57,6 @@ class Proxy:
             logging.error(f"{type(e).__name__} {flow}: {e}")
             nursery.cancel_scope.cancel(type(e).__name__)
         finally:
-            logging.debug(f"Closing {flow}")
             nursery.cancel_scope.relative_deadline = CLOSE_WAIT
 
     async def run(self):
