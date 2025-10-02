@@ -40,7 +40,6 @@ class Proxy:
         p = proxy_stream.socket.getpeername()
         self._up = f"[{c[0]}]:{c[1]} -> [{p[0]}]:{p[1]}"
         self._down = f"[{c[0]}]:{c[1]} <- [{p[0]}]:{p[1]}"
-        self._closed = False
 
     async def _proxy(self, nursery: trio.Nursery, flow: str, src: trio.SocketStream, dst: trio.SocketStream):
         try:
@@ -56,9 +55,7 @@ class Proxy:
             nursery.cancel_scope.cancel(type(e).__name__)
         finally:
             logging.debug(f"Closing {flow}")
-            if not self._closed:
-                self._closed = True
-                nursery.cancel_scope.relative_deadline = CLOSE_WAIT
+            nursery.cancel_scope.relative_deadline = CLOSE_WAIT
 
     async def run(self):
         logging.info(f"Start proxy {self._up}")
