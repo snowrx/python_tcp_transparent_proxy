@@ -6,7 +6,7 @@ import trio
 LOG_LEVEL = logging.DEBUG
 PORT = 8081
 IDLE_TIMEOUT = 3600
-CLOSE_WAIT = 60
+CLOSE_WAIT = 10
 
 
 class Utility:
@@ -33,6 +33,8 @@ class Utility:
 
 
 class Proxy:
+    _NUL = b"\0"
+
     def __init__(self, client_stream: trio.SocketStream, proxy_stream: trio.SocketStream):
         self._client_stream = client_stream
         self._proxy_stream = proxy_stream
@@ -47,6 +49,7 @@ class Proxy:
             async for chunk in src:
                 nursery.cancel_scope.relative_deadline = IDLE_TIMEOUT
                 await dst.send_all(chunk)
+            await dst.send_all(self._NUL)
         except (trio.ClosedResourceError, trio.BrokenResourceError) as e:
             logging.debug(f"{type(e).__name__} {flow}: {e}")
             nursery.cancel_scope.cancel(type(e).__name__)
