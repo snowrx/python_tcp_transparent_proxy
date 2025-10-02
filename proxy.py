@@ -77,10 +77,15 @@ class Server:
                 v4 = "." in peername[0]
                 dstname = Utility.get_original_dst(client_stream, v4)
                 proxy_stream = await trio.open_tcp_stream(*dstname)
-                proxy = Proxy(client_stream, proxy_stream)
-                await proxy.run()
             except Exception as e:
                 logging.error(f"{type(e).__name__}: {e}")
+                return
+
+            async with proxy_stream:
+                try:
+                    await Proxy(client_stream, proxy_stream).run()
+                except Exception as e:
+                    logging.error(f"{type(e).__name__}: {e}")
 
     async def serve(self):
         logging.info(f"Listening on port {PORT}")
