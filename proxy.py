@@ -47,7 +47,7 @@ class Proxy:
             async for chunk in src:
                 self._cancel_scope.relative_deadline = IDLE_TIMEOUT
                 await dst.send_all(chunk)
-        except trio.ClosedResourceError as e:
+        except (trio.ClosedResourceError, trio.BrokenResourceError) as e:
             logging.debug(f"{type(e).__name__} {flow}: {e}")
         except Exception as e:
             logging.error(f"{type(e).__name__} {flow}: {e}")
