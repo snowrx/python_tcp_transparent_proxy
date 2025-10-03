@@ -44,6 +44,7 @@ class Proxy:
     async def _proxy(self, nursery: trio.Nursery, flow: str, src: trio.SocketStream, dst: trio.SocketStream):
         try:
             src.setsockopt(trio.socket.SOL_SOCKET, trio.socket.SO_KEEPALIVE, 1)
+            src.setsockopt(trio.socket.SOL_TCP, trio.socket.TCP_QUICKACK, 1)
             async for chunk in src:
                 nursery.cancel_scope.relative_deadline = IDLE_TIMEOUT
                 await dst.send_all(chunk)
