@@ -1,12 +1,13 @@
 import logging
 import struct
+import gc
 
 import trio
 
 LOG_LEVEL = logging.DEBUG
 PORT = 8081
 IDLE_TIMEOUT = 3600
-CLOSE_WAIT = 10
+CLOSE_WAIT = 60
 
 
 class Utility:
@@ -98,5 +99,8 @@ class Server:
 
 
 if __name__ == "__main__":
+    gc.collect()
+    gc.set_threshold(10000)
+    gc.set_debug(gc.DEBUG_STATS)
     logging.basicConfig(level=LOG_LEVEL)
     trio.run(Server().serve)
