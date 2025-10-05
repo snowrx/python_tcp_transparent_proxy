@@ -48,6 +48,7 @@ class Proxy:
             src.setsockopt(trio.socket.SOL_TCP, trio.socket.TCP_QUICKACK, 1)
             async for chunk in src:
                 nursery.cancel_scope.relative_deadline = IDLE_TIMEOUT
+                await dst.wait_send_all_might_not_block()
                 await dst.send_all(chunk)
             await dst.send_eof()
             logging.debug(f"EOF {flow}")
