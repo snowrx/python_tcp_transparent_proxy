@@ -11,6 +11,13 @@ fi
 # check if proxy is already installed
 if [ -f "$DEST/proxy.py" ]; then
   systemctl stop proxy.service
+  for arg in "$@"; do
+    if [ "$arg" == "--clean" ]; then
+      echo "Cleaning up old installation"
+      rm -rf $DEST
+      mkdir -p $DEST
+    fi
+  done
 else
   mkdir -p $DEST
 fi
