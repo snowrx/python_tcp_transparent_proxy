@@ -3,6 +3,8 @@ import socket
 import struct
 import logging
 from sys import maxsize
+from concurrent.futures import ProcessPoolExecutor
+from os import cpu_count
 
 import uvloop
 
@@ -86,13 +88,13 @@ class Server:
         logging.info(f"Closed {up_flow}")
 
     async def run(self):
-        self._server = await asyncio.start_server(self._accept, port=PORT)
+        self._server = await asyncio.start_server(self._accept, port=PORT, reuse_port=True)
         logging.info(f"Listening on {PORT}")
         async with self._server:
             await self._server.serve_forever()
 
 
-def main():
+def main(_=None):
     try:
         uvloop.run(Server().run())
     except KeyboardInterrupt:
@@ -101,5 +103,7 @@ def main():
 
 if __name__ == "__main__":
     logging.basicConfig(level=LOG_LEVEL)
-    main()
+    n = cpu_count() or 1
+    with ProcessPoolExecutor(max_workers=n) as executor:
+        executor.map(main, range(n))
     logging.shutdown()
