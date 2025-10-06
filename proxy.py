@@ -44,8 +44,9 @@ class Server:
             while data := await asyncio.wait_for(reader.read(maxsize), IDLE_TIMEOUT):
                 await writer.drain()
                 writer.write(data)
-            writer.write_eof()
-            await writer.drain()
+            if not writer.is_closing():
+                writer.write_eof()
+                await writer.drain()
         except Exception as e:
             logging.debug(f"{type(e).__name__} {flow} {e}")
         finally:
