@@ -11,6 +11,7 @@ import uvloop
 LOG_LEVEL = logging.DEBUG
 PORT = 8081
 IDLE_TIMEOUT = 3600
+FAST_FAIL = True
 
 
 class Server:
@@ -50,11 +51,17 @@ class Server:
                 writer.write_eof()
                 await writer.drain()
         except Exception as e:
-            logging.debug(f"{type(e).__name__} {flow} {e}")
+            logging.error(f"{type(e).__name__} {flow} {e}")
         finally:
             if not writer.is_closing():
                 writer.close()
                 await writer.wait_closed()
+
+    async def _http_502(self, writer: asyncio.StreamWriter, msg: str):
+        writer.write(f"HTTP/1.1 502 Bad Gateway\r\nContent-Length: {len(msg)}\r\n\r\n{msg}".encode())
+        await writer.drain()
+        writer.close()
+        await writer.wait_closed()
 
     async def _accept(self, client_reader: asyncio.StreamReader, client_writer: asyncio.StreamWriter):
         try:
@@ -63,19 +70,20 @@ class Server:
             up_flow = f"[{peername[0]}]:{peername[1]} -> [{dstname[0]}]:{dstname[1]}"
             down_flow = f"[{peername[0]}]:{peername[1]} <- [{dstname[0]}]:{dstname[1]}"
         except Exception as e:
-            logging.error(f"Failed to get original destination: {e}")
-            client_writer.transport.abort()
-            client_writer.close()
-            await client_writer.wait_closed()
+            msg = f"Failed to get original destination: {type(e).__name__}"
+            logging.error(msg)
+            await self._http_502(client_writer, msg)
             return
 
         try:
-            proxy_reader, proxy_writer = await asyncio.open_connection(*dstname)
+            if FAST_FAIL:
+                proxy_reader, proxy_writer = await asyncio.wait_for(asyncio.open_connection(*dstname), 1)
+            else:
+                proxy_reader, proxy_writer = await asyncio.open_connection(*dstname)
         except Exception as e:
-            logging.error(f"Failed to connect {up_flow}: {e}")
-            client_writer.transport.abort()
-            client_writer.close()
-            await client_writer.wait_closed()
+            msg = f"Failed to connect {up_flow}: {type(e).__name__}"
+            logging.error(msg)
+            await self._http_502(client_writer, msg)
             return
 
         logging.info(f"Established {up_flow}")
