@@ -44,9 +44,9 @@ class Server:
             sock: socket.socket = writer.get_extra_info("socket")
             sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
             sock.setsockopt(socket.SOL_TCP, socket.TCP_QUICKACK, 1)
-            while data := await asyncio.wait_for(reader.read(maxsize), IDLE_TIMEOUT):
+            while mv := memoryview(await asyncio.wait_for(reader.read(maxsize), IDLE_TIMEOUT)):
                 await writer.drain()
-                writer.write(data)
+                writer.write(mv)
             if not writer.is_closing():
                 writer.write_eof()
                 await writer.drain()
