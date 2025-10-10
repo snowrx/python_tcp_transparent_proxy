@@ -9,6 +9,7 @@ import uvloop
 LOG_LEVEL = logging.DEBUG
 PORT = 8081
 IDLE_TIMEOUT = 3600
+PROXY_BUFFER_SIZE = 1 << 20
 
 
 class Server:
@@ -41,6 +42,7 @@ class Server:
             sock: socket.socket = writer.get_extra_info("socket")
             sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
             sock.setsockopt(socket.SOL_TCP, socket.TCP_QUICKACK, 1)
+            writer.transport.set_write_buffer_limits(PROXY_BUFFER_SIZE, PROXY_BUFFER_SIZE)
             while mv := memoryview(await asyncio.wait_for(reader.read(maxsize), IDLE_TIMEOUT)):
                 await writer.drain()
                 writer.write(mv)
