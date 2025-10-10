@@ -3,15 +3,12 @@ import socket
 import struct
 import logging
 from sys import maxsize
-from concurrent.futures import ProcessPoolExecutor
-from os import cpu_count
 
 import uvloop
 
 LOG_LEVEL = logging.DEBUG
 PORT = 8081
 IDLE_TIMEOUT = 3600
-FAST_FAIL = True
 
 
 class Server:
@@ -57,12 +54,6 @@ class Server:
                 writer.close()
                 await writer.wait_closed()
 
-    async def _http_502(self, writer: asyncio.StreamWriter, msg: str):
-        writer.write(f"HTTP/1.1 502 Bad Gateway\r\nContent-Length: {len(msg)}\r\n\r\n{msg}".encode())
-        await writer.drain()
-        writer.close()
-        await writer.wait_closed()
-
     async def _accept(self, client_reader: asyncio.StreamReader, client_writer: asyncio.StreamWriter):
         try:
             peername = client_writer.get_extra_info("peername")
@@ -70,20 +61,19 @@ class Server:
             up_flow = f"[{peername[0]}]:{peername[1]} -> [{dstname[0]}]:{dstname[1]}"
             down_flow = f"[{peername[0]}]:{peername[1]} <- [{dstname[0]}]:{dstname[1]}"
         except Exception as e:
-            msg = f"Failed to get original destination: {type(e).__name__}"
-            logging.error(msg)
-            await self._http_502(client_writer, msg)
+            logging.error(f"Failed to get original destination: {type(e).__name__} {e}")
+            client_writer.transport.abort()
+            client_writer.close()
+            await client_writer.wait_closed()
             return
 
         try:
-            if FAST_FAIL:
-                proxy_reader, proxy_writer = await asyncio.wait_for(asyncio.open_connection(*dstname), 1)
-            else:
-                proxy_reader, proxy_writer = await asyncio.open_connection(*dstname)
+            proxy_reader, proxy_writer = await asyncio.open_connection(*dstname)
         except Exception as e:
-            msg = f"Failed to connect {up_flow}: {type(e).__name__}"
-            logging.error(msg)
-            await self._http_502(client_writer, msg)
+            logging.error(f"Failed to connect {up_flow}: {type(e).__name__} {e}")
+            client_writer.transport.abort()
+            client_writer.close()
+            await client_writer.wait_closed()
             return
 
         logging.info(f"Established {up_flow}")
@@ -98,22 +88,17 @@ class Server:
     async def run(self):
         self._loop = asyncio.get_running_loop()
         self._loop.set_task_factory(asyncio.eager_task_factory)
-        self._server = await asyncio.start_server(self._accept, port=PORT, reuse_port=True)
+        self._server = await asyncio.start_server(self._accept, port=PORT)
         logging.info(f"Listening on {PORT}")
         async with self._server:
             await self._server.serve_forever()
 
 
-def main(_=None):
+if __name__ == "__main__":
     try:
+        logging.basicConfig(level=LOG_LEVEL)
         uvloop.run(Server().run())
     except KeyboardInterrupt:
         pass
-
-
-if __name__ == "__main__":
-    logging.basicConfig(level=LOG_LEVEL)
-    n = cpu_count() or 1
-    with ProcessPoolExecutor(max_workers=n) as executor:
-        executor.map(main, range(n))
-    logging.shutdown()
+    finally:
+        logging.shutdown()
