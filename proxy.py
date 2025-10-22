@@ -2,6 +2,7 @@ import asyncio
 import socket
 import struct
 import logging
+import gc
 
 import uvloop
 
@@ -96,4 +97,6 @@ async def main():
 
 
 if __name__ == "__main__":
+    gc.set_threshold(3000)
+    gc.set_debug(gc.DEBUG_STATS)
     uvloop.run(main())
