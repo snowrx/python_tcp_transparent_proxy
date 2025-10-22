@@ -2,13 +2,13 @@ import asyncio
 import socket
 import struct
 import logging
-from sys import maxsize
 
 import uvloop
 
 LOG_LEVEL = logging.DEBUG
 PORT = 8081
-IDLE_TIMEOUT = 3600
+CONN_LIFE = 86400
+CHUNK_SIZE = 1 << 14
 
 
 class Server:
@@ -41,18 +41,17 @@ class Server:
             sock: socket.socket = writer.get_extra_info("socket")
             sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
             sock.setsockopt(socket.SOL_TCP, socket.TCP_QUICKACK, 1)
-            while mv := memoryview(await asyncio.wait_for(reader.read(maxsize), IDLE_TIMEOUT)):
-                await writer.drain()
-                writer.write(mv)
-            if not writer.is_closing():
-                writer.write_eof()
-                await writer.drain()
+            async with asyncio.timeout(CONN_LIFE):
+                while v := memoryview(await reader.read(CHUNK_SIZE)):
+                    await writer.drain()
+                    writer.write(v)
         except Exception as e:
             logging.error(f"{type(e).__name__} {flow} {e}")
         finally:
             if not writer.is_closing():
                 writer.close()
                 await writer.wait_closed()
+            logging.debug(f"Closed flow {flow}")
 
     async def _accept(self, client_reader: asyncio.StreamReader, client_writer: asyncio.StreamWriter):
         try:
@@ -63,8 +62,6 @@ class Server:
         except Exception as e:
             logging.error(f"Failed to get original destination: {type(e).__name__} {e}")
             client_writer.transport.abort()
-            client_writer.close()
-            await client_writer.wait_closed()
             return
 
         try:
@@ -72,8 +69,6 @@ class Server:
         except Exception as e:
             logging.error(f"Failed to connect {up_flow}: {type(e).__name__} {e}")
             client_writer.transport.abort()
-            client_writer.close()
-            await client_writer.wait_closed()
             return
 
         logging.info(f"Established {up_flow}")
@@ -86,19 +81,17 @@ class Server:
         logging.info(f"Closed {up_flow}")
 
     async def run(self):
-        self._loop = asyncio.get_running_loop()
-        self._loop.set_task_factory(asyncio.eager_task_factory)
-        self._server = await asyncio.start_server(self._accept, port=PORT)
-        logging.info(f"Listening on {PORT}")
-        async with self._server:
-            await self._server.serve_forever()
+        server = await asyncio.start_server(self._accept, port=PORT)
+        logging.info(f"Listening on port {PORT}")
+        async with server:
+            await server.serve_forever()
+
+
+async def main():
+    logging.basicConfig(level=LOG_LEVEL)
+    await Server().run()
+    logging.info("Server stopped")
 
 
 if __name__ == "__main__":
-    try:
-        logging.basicConfig(level=LOG_LEVEL)
-        uvloop.run(Server().run())
-    except KeyboardInterrupt:
-        pass
-    finally:
-        logging.shutdown()
+    uvloop.run(main())
