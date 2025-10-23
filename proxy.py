@@ -1,16 +1,18 @@
-import logging
+import asyncio
+import socket
 import struct
+import logging
 import gc
 
-import trio
+import uvloop
 
 LOG_LEVEL = logging.DEBUG
 PORT = 8081
-IDLE_TIMEOUT = 3600
-CLOSE_WAIT = 60
+CONN_LIFE = 86400
+CHUNK_SIZE = 1 << 14
 
 
-class Utility:
+class Server:
     _SO_ORIGINAL_DST = 80
     _SOL_IPV6 = 41
     _V4_LEN = 16
@@ -18,90 +20,83 @@ class Utility:
     _V6_LEN = 28
     _V6_FMT = "!2xH4x16s"
 
-    @staticmethod
-    def get_original_dst(stream: trio.SocketStream, v4: bool):
-        ip: str
-        port: int
-        if v4:
-            dst = stream.getsockopt(trio.socket.SOL_IP, Utility._SO_ORIGINAL_DST, Utility._V4_LEN)
-            port, raw_ip = struct.unpack_from(Utility._V4_FMT, dst)
-            ip = trio.socket.inet_ntop(trio.socket.AF_INET, raw_ip)
-        else:
-            dst = stream.getsockopt(Utility._SOL_IPV6, Utility._SO_ORIGINAL_DST, Utility._V6_LEN)
-            port, raw_ip = struct.unpack_from(Utility._V6_FMT, dst)
-            ip = trio.socket.inet_ntop(trio.socket.AF_INET6, raw_ip)
+    def _get_original_dst(self, writer: asyncio.StreamWriter):
+        ip: str = ""
+        port: int = 0
+        sock: socket.socket = writer.get_extra_info("socket")
+        match sock.family:
+            case socket.AF_INET:
+                dst = sock.getsockopt(socket.SOL_IP, self._SO_ORIGINAL_DST, self._V4_LEN)
+                port, raw_ip = struct.unpack_from(self._V4_FMT, dst)
+                ip = socket.inet_ntop(socket.AF_INET, raw_ip)
+            case socket.AF_INET6:
+                dst = sock.getsockopt(self._SOL_IPV6, self._SO_ORIGINAL_DST, self._V6_LEN)
+                port, raw_ip = struct.unpack_from(self._V6_FMT, dst)
+                ip = socket.inet_ntop(socket.AF_INET6, raw_ip)
+            case _:
+                raise Exception(f"Unknown socket family: {sock.family}")
         return ip, port
 
-
-class Proxy:
-    def __init__(self, client_stream: trio.SocketStream, proxy_stream: trio.SocketStream):
-        self._client_stream = client_stream
-        self._proxy_stream = proxy_stream
-        c = client_stream.socket.getpeername()
-        p = proxy_stream.socket.getpeername()
-        self._up = f"[{c[0]}]:{c[1]} -> [{p[0]}]:{p[1]}"
-        self._down = f"[{c[0]}]:{c[1]} <- [{p[0]}]:{p[1]}"
-
-    async def _proxy(self, nursery: trio.Nursery, flow: str, src: trio.SocketStream, dst: trio.SocketStream):
+    async def _stream(self, flow: str, reader: asyncio.StreamReader, writer: asyncio.StreamWriter):
         try:
-            src.setsockopt(trio.socket.SOL_SOCKET, trio.socket.SO_KEEPALIVE, 1)
-            src.setsockopt(trio.socket.SOL_TCP, trio.socket.TCP_QUICKACK, 1)
-            async for chunk in src:
-                nursery.cancel_scope.relative_deadline = IDLE_TIMEOUT
-                await dst.wait_send_all_might_not_block()
-                await dst.send_all(chunk)
-            await dst.send_eof()
-            logging.debug(f"EOF {flow}")
-        except (trio.ClosedResourceError, trio.BrokenResourceError) as e:
-            logging.debug(f"{type(e).__name__} {flow}: {e}")
-            nursery.cancel_scope.cancel(type(e).__name__)
+            sock: socket.socket = writer.get_extra_info("socket")
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
+            sock.setsockopt(socket.SOL_TCP, socket.TCP_QUICKACK, 1)
+            mss = sock.getsockopt(socket.SOL_TCP, socket.TCP_MAXSEG)
+            writer.transport.set_write_buffer_limits(mss, mss)
+            async with asyncio.timeout(CONN_LIFE):
+                while v := memoryview(await reader.read(CHUNK_SIZE)):
+                    await writer.drain()
+                    writer.write(v)
         except Exception as e:
-            logging.error(f"{type(e).__name__} {flow}: {e}")
-            nursery.cancel_scope.cancel(type(e).__name__)
+            logging.error(f"{type(e).__name__} {flow} {e}")
         finally:
-            nursery.cancel_scope.relative_deadline = CLOSE_WAIT
+            if not writer.is_closing():
+                writer.close()
+                await writer.wait_closed()
+            logging.debug(f"Closed flow {flow}")
+
+    async def _accept(self, client_reader: asyncio.StreamReader, client_writer: asyncio.StreamWriter):
+        try:
+            peername = client_writer.get_extra_info("peername")
+            dstname = self._get_original_dst(client_writer)
+            up_flow = f"[{peername[0]}]:{peername[1]} -> [{dstname[0]}]:{dstname[1]}"
+            down_flow = f"[{peername[0]}]:{peername[1]} <- [{dstname[0]}]:{dstname[1]}"
+        except Exception as e:
+            logging.error(f"Failed to get original destination: {type(e).__name__} {e}")
+            client_writer.transport.abort()
+            return
+
+        try:
+            proxy_reader, proxy_writer = await asyncio.open_connection(*dstname)
+        except Exception as e:
+            logging.error(f"Failed to connect {up_flow}: {type(e).__name__} {e}")
+            client_writer.transport.abort()
+            return
+
+        logging.info(f"Established {up_flow}")
+        try:
+            async with asyncio.TaskGroup() as tg:
+                tg.create_task(self._stream(up_flow, client_reader, proxy_writer))
+                tg.create_task(self._stream(down_flow, proxy_reader, client_writer))
+        except Exception as e:
+            logging.error(f"{type(e).__name__} {up_flow} {e}")
+        logging.info(f"Closed {up_flow}")
 
     async def run(self):
-        logging.info(f"Start proxy {self._up}")
-        conn_start = trio.current_time()
-        async with self._client_stream, self._proxy_stream:
-            async with trio.open_nursery() as nursery:
-                nursery.cancel_scope.relative_deadline = IDLE_TIMEOUT
-                nursery.start_soon(self._proxy, nursery, self._up, self._client_stream, self._proxy_stream)
-                nursery.start_soon(self._proxy, nursery, self._down, self._proxy_stream, self._client_stream)
-        conn_duration = trio.current_time() - conn_start
-        logging.info(f"End proxy {self._up} in {conn_duration:.2f}s")
-
-
-class Server:
-    async def _accept_client(self, client_stream: trio.SocketStream):
-        async with client_stream:
-            try:
-                peername = client_stream.socket.getpeername()
-                v4 = "." in peername[0]
-                dstname = Utility.get_original_dst(client_stream, v4)
-                proxy_stream = await trio.open_tcp_stream(*dstname)
-            except Exception as e:
-                logging.error(f"{type(e).__name__}: {e}")
-                return
-
-            async with proxy_stream:
-                try:
-                    await Proxy(client_stream, proxy_stream).run()
-                except Exception as e:
-                    logging.error(f"{type(e).__name__}: {e}")
-
-    async def serve(self):
+        server = await asyncio.start_server(self._accept, port=PORT)
         logging.info(f"Listening on port {PORT}")
-        try:
-            await trio.serve_tcp(self._accept_client, PORT)
-        except Exception as e:
-            logging.error(f"{type(e).__name__}: {e}")
+        async with server:
+            await server.serve_forever()
+
+
+async def main():
+    logging.basicConfig(level=LOG_LEVEL)
+    await Server().run()
+    logging.info("Server stopped")
 
 
 if __name__ == "__main__":
-    gc.collect()
-    gc.set_threshold(10000)
+    gc.set_threshold(3000)
     gc.set_debug(gc.DEBUG_STATS)
-    logging.basicConfig(level=LOG_LEVEL)
-    trio.run(Server().serve)
+    uvloop.run(main())
