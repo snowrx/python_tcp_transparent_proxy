@@ -82,6 +82,8 @@ class Server:
         logging.info(f"Closed {up_flow}")
 
     async def run(self):
+        self._loop = asyncio.get_running_loop()
+        self._loop.set_task_factory(asyncio.eager_task_factory)
         server = await asyncio.start_server(self._accept, port=PORT)
         logging.info(f"Listening on port {PORT}")
         async with server:
