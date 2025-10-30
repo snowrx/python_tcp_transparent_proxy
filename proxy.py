@@ -9,7 +9,8 @@ import uvloop
 LOG_LEVEL = logging.DEBUG
 PORT = 8081
 CONN_LIFE = 86400
-CHUNK_SIZE = 64000
+# proxy_buffer_size 16k
+PROXY_BUFFER_SIZE = 1 << 14
 
 
 class Server:
@@ -42,9 +43,8 @@ class Server:
             sock: socket.socket = writer.get_extra_info("socket")
             sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
             sock.setsockopt(socket.SOL_TCP, socket.TCP_QUICKACK, 1)
-            writer.transport.set_write_buffer_limits(0)
             async with asyncio.timeout(CONN_LIFE):
-                while v := memoryview(await reader.read(CHUNK_SIZE)):
+                while v := memoryview(await reader.read(PROXY_BUFFER_SIZE)):
                     await writer.drain()
                     writer.write(v)
         except Exception as e:
