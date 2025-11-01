@@ -9,8 +9,6 @@ import uvloop
 LOG_LEVEL = logging.DEBUG
 PORT = 8081
 CONN_LIFE = 86400
-# proxy_buffer_size 16k
-PROXY_BUFFER_SIZE = 1 << 14
 
 
 class Server:
@@ -43,17 +41,21 @@ class Server:
             sock: socket.socket = writer.get_extra_info("socket")
             sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
             sock.setsockopt(socket.SOL_TCP, socket.TCP_QUICKACK, 1)
+            mss = sock.getsockopt(socket.SOL_TCP, socket.TCP_MAXSEG)
             async with asyncio.timeout(CONN_LIFE):
-                while v := memoryview(await reader.read(PROXY_BUFFER_SIZE)):
+                while v := memoryview(await reader.read(mss)):
                     await writer.drain()
                     writer.write(v)
+            writer.write_eof()
+            await writer.drain()
+            logging.debug(f"EOF {flow}")
         except Exception as e:
             logging.error(f"{type(e).__name__} {flow} {e}")
         finally:
             if not writer.is_closing():
                 writer.close()
                 await writer.wait_closed()
-            logging.debug(f"Closed flow {flow}")
+            logging.debug(f"Flow closed {flow}")
 
     async def _accept(self, client_reader: asyncio.StreamReader, client_writer: asyncio.StreamWriter):
         try:
