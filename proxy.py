@@ -79,11 +79,12 @@ class Server:
                 tg.create_task(self._stream(down_flow, proxy_reader, client_writer))
         except Exception as e:
             logging.error(f"{type(e).__name__} {up_flow} {e}")
+        finally:
+            proxy_writer.transport.abort()
+            client_writer.transport.abort()
         logging.info(f"Closed {up_flow}")
 
     async def run(self):
-        self._loop = asyncio.get_running_loop()
-        self._loop.set_task_factory(asyncio.eager_task_factory)
         server = await asyncio.start_server(self._accept, port=PORT, limit=LIMIT)
         logging.info(f"Listening on port {PORT}")
         async with server:
@@ -97,6 +98,6 @@ async def main():
 
 
 if __name__ == "__main__":
-    gc.set_threshold(3000)
+    gc.collect()
     gc.set_debug(gc.DEBUG_STATS)
     uvloop.run(main())
