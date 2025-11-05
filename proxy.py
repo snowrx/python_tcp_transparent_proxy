@@ -9,8 +9,7 @@ import uvloop
 LOG_LEVEL = logging.DEBUG
 PORT = 8081
 CONN_LIFE = 86400
-CHUNK_SIZE = 1 << 16
-FAST_ABORT = True
+LIMIT = 1 << 20
 
 
 class Server:
@@ -44,13 +43,15 @@ class Server:
             sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
             sock.setsockopt(socket.SOL_TCP, socket.TCP_QUICKACK, 1)
             async with asyncio.timeout(CONN_LIFE):
-                while v := memoryview(await reader.read(CHUNK_SIZE)):
+                while v := memoryview(await reader.read(LIMIT)):
                     await writer.drain()
                     writer.write(v)
         except Exception as e:
             logging.error(f"{type(e).__name__} {flow} {e}")
         finally:
             if not writer.is_closing():
+                writer.write_eof()
+                await writer.drain()
                 writer.close()
                 await writer.wait_closed()
             logging.debug(f"Closed flow {flow}")
@@ -72,10 +73,7 @@ class Server:
             return
 
         try:
-            if FAST_ABORT:
-                proxy_reader, proxy_writer = await asyncio.wait_for(asyncio.open_connection(*dstname), timeout=1)
-            else:
-                proxy_reader, proxy_writer = await asyncio.open_connection(*dstname)
+            proxy_reader, proxy_writer = await asyncio.open_connection(*dstname, limit=LIMIT)
         except Exception as e:
             client_writer.transport.abort()
             logging.error(f"Failed to connect {up_flow}: {type(e).__name__} {e}")
@@ -94,7 +92,7 @@ class Server:
         logging.info(f"Closed {up_flow}")
 
     async def run(self):
-        server = await asyncio.start_server(self._accept, port=PORT)
+        server = await asyncio.start_server(self._accept, port=PORT, limit=LIMIT)
         async with server:
             for sock in server.sockets:
                 sock.setsockopt(socket.SOL_TCP, socket.TCP_FASTOPEN, 1)
