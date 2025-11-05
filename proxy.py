@@ -10,6 +10,7 @@ LOG_LEVEL = logging.DEBUG
 PORT = 8081
 CONN_LIFE = 86400
 CHUNK_SIZE = 1 << 16
+FAST_ABORT = True
 
 
 class Server:
@@ -56,20 +57,28 @@ class Server:
 
     async def _accept(self, client_reader: asyncio.StreamReader, client_writer: asyncio.StreamWriter):
         try:
+            sockname = client_writer.get_extra_info("sockname")
             peername = client_writer.get_extra_info("peername")
             dstname = self._get_original_dst(client_writer)
+            if dstname[0] == sockname[0] and dstname[1] == sockname[1]:
+                client_writer.transport.abort()
+                logging.error(f"[{peername[0]}]:{peername[1]} Attempted to connect directly to the server")
+                return
             up_flow = f"[{peername[0]}]:{peername[1]} -> [{dstname[0]}]:{dstname[1]}"
             down_flow = f"[{peername[0]}]:{peername[1]} <- [{dstname[0]}]:{dstname[1]}"
         except Exception as e:
-            logging.error(f"Failed to get original destination: {type(e).__name__} {e}")
             client_writer.transport.abort()
+            logging.error(f"Failed to get original destination: {type(e).__name__} {e}")
             return
 
         try:
-            proxy_reader, proxy_writer = await asyncio.open_connection(*dstname)
+            if FAST_ABORT:
+                proxy_reader, proxy_writer = await asyncio.wait_for(asyncio.open_connection(*dstname), timeout=1)
+            else:
+                proxy_reader, proxy_writer = await asyncio.open_connection(*dstname)
         except Exception as e:
-            logging.error(f"Failed to connect {up_flow}: {type(e).__name__} {e}")
             client_writer.transport.abort()
+            logging.error(f"Failed to connect {up_flow}: {type(e).__name__} {e}")
             return
 
         logging.info(f"Established {up_flow}")
@@ -86,9 +95,12 @@ class Server:
 
     async def run(self):
         server = await asyncio.start_server(self._accept, port=PORT)
-        logging.info(f"Listening on port {PORT}")
         async with server:
-            await server.serve_forever()
+            for sock in server.sockets:
+                sock.setsockopt(socket.SOL_TCP, socket.TCP_FASTOPEN, 1)
+                sockname = sock.getsockname()
+                logging.info(f"Listening on [{sockname[0]}]:{sockname[1]}")
+            await asyncio.create_task(server.serve_forever())
 
 
 async def main():
