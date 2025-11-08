@@ -3,14 +3,13 @@ import socket
 import struct
 import logging
 import gc
+from sys import maxsize
 
 import uvloop
 
 LOG_LEVEL = logging.DEBUG
 PORT = 8081
 CONN_LIFE = 86400
-# proxy_buffer_size 16k;
-CHUNK_SIZE = 1 << 14
 
 
 class Server:
@@ -43,10 +42,8 @@ class Server:
             sock: socket.socket = writer.get_extra_info("socket")
             sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
             sock.setsockopt(socket.SOL_TCP, socket.TCP_QUICKACK, 1)
-            mss = sock.getsockopt(socket.SOL_TCP, socket.TCP_MAXSEG)
-            writer.transport.set_write_buffer_limits(mss, mss)
             async with asyncio.timeout(CONN_LIFE):
-                while v := memoryview(await reader.read(CHUNK_SIZE)):
+                while v := memoryview(await reader.read(maxsize)):
                     await writer.drain()
                     writer.write(v)
         except Exception as e:
@@ -104,14 +101,9 @@ class Server:
             await asyncio.create_task(server.serve_forever())
 
 
-async def main():
-    logging.basicConfig(level=LOG_LEVEL)
-    await Server().run()
-    logging.info("Server stopped")
-
-
 if __name__ == "__main__":
+    logging.basicConfig(level=LOG_LEVEL)
     gc.set_threshold(10000)
     gc.collect()
     gc.set_debug(gc.DEBUG_STATS)
-    uvloop.run(main())
+    uvloop.run(Server().run())
