@@ -100,7 +100,6 @@ class Server:
         server = await asyncio.start_server(self._accept, port=PORT, limit=CHUNK_SIZE)
         async with server:
             for sock in server.sockets:
-                sock.setsockopt(socket.SOL_TCP, socket.TCP_FASTOPEN, 1)
                 sockname = sock.getsockname()
                 logging.info(f"Listening on [{sockname[0]}]:{sockname[1]}")
             await asyncio.create_task(server.serve_forever())
