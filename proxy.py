@@ -9,8 +9,7 @@ import uvloop
 LOG_LEVEL = logging.DEBUG
 PORT = 8081
 CONN_LIFE = 86400
-CHUNK_SIZE = 1 << 20
-BUFFER_SIZE = 1 << 27
+CHUNK_SIZE = 64000
 
 
 class Server:
@@ -43,11 +42,9 @@ class Server:
             sock: socket.socket = writer.get_extra_info("socket")
             sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
             sock.setsockopt(socket.SOL_TCP, socket.TCP_QUICKACK, 1)
-            writer.transport.set_write_buffer_limits(BUFFER_SIZE, BUFFER_SIZE)
+            writer.transport.set_write_buffer_limits(CHUNK_SIZE, CHUNK_SIZE)
             async with asyncio.timeout(CONN_LIFE):
                 while v := memoryview(await reader.read(CHUNK_SIZE)):
-                    if (wbuf := writer.transport.get_write_buffer_size()) > BUFFER_SIZE:
-                        logging.warning(f"Writer buffer full {flow} {wbuf}")
                     await writer.drain()
                     writer.write(v)
         except Exception as e:
@@ -77,7 +74,7 @@ class Server:
             return
 
         try:
-            proxy_reader, proxy_writer = await asyncio.open_connection(*dstname, limit=CHUNK_SIZE)
+            proxy_reader, proxy_writer = await asyncio.open_connection(*dstname)
         except Exception as e:
             client_writer.transport.abort()
             logging.error(f"Failed to connect {up_flow}: {type(e).__name__} {e}")
@@ -97,7 +94,7 @@ class Server:
         logging.info(f"Closed {up_flow}")
 
     async def run(self):
-        server = await asyncio.start_server(self._accept, port=PORT, limit=CHUNK_SIZE)
+        server = await asyncio.start_server(self._accept, port=PORT)
         async with server:
             for sock in server.sockets:
                 sockname = sock.getsockname()
