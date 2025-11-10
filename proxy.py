@@ -3,6 +3,7 @@ import socket
 import struct
 import logging
 import gc
+import time
 
 import uvloop
 
@@ -45,8 +46,11 @@ class Server:
             writer.transport.set_write_buffer_limits(CHUNK_SIZE, CHUNK_SIZE)
             async with asyncio.timeout(CONN_LIFE):
                 while v := memoryview(await reader.read(CHUNK_SIZE)):
+                    t = time.perf_counter()
                     await writer.drain()
                     writer.write(v)
+                    if (latency := (time.perf_counter() - t) * 1000) >= 100:
+                        logging.warning(f"High latency {flow}: {latency:.2f}ms")
         except Exception as e:
             logging.error(f"{type(e).__name__} {flow} {e}")
         finally:
