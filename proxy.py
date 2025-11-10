@@ -47,6 +47,11 @@ class Server:
             async with asyncio.timeout(CONN_LIFE):
                 while v := memoryview(await reader.read(CHUNK_SIZE)):
                     t = time.perf_counter()
+                    if self._last_reader is reader:
+                        await asyncio.sleep(0)
+                        if self._last_reader is not reader:
+                            logging.debug(f"Yielded {flow}")
+                    self._last_reader = reader
                     await writer.drain()
                     writer.write(v)
                     if (latency := (time.perf_counter() - t) * 1000) >= 100:
@@ -98,6 +103,7 @@ class Server:
         logging.info(f"Closed {up_flow}")
 
     async def run(self):
+        self._last_reader = None
         server = await asyncio.start_server(self._accept, port=PORT)
         async with server:
             for sock in server.sockets:
