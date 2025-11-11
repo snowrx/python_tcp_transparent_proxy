@@ -11,6 +11,7 @@ LOG_LEVEL = logging.DEBUG
 PORT = 8081
 CONN_LIFE = 86400
 CHUNK_SIZE = 64000
+OPEN_TIMEOUT = 1
 
 
 class Server:
@@ -77,7 +78,7 @@ class Server:
             return
 
         try:
-            proxy_reader, proxy_writer = await asyncio.open_connection(*dstname)
+            proxy_reader, proxy_writer = await asyncio.wait_for(asyncio.open_connection(*dstname), OPEN_TIMEOUT)
         except Exception as e:
             client_writer.transport.abort()
             logging.error(f"Failed to connect {up_flow}: {type(e).__name__} {e}")
