@@ -45,12 +45,11 @@ class Server:
             sock.setsockopt(socket.SOL_TCP, socket.TCP_QUICKACK, 1)
             writer.transport.set_write_buffer_limits(CHUNK_SIZE, CHUNK_SIZE)
             async with asyncio.timeout(CONN_LIFE):
-                while v := memoryview(await reader.read(CHUNK_SIZE)):
-                    self._last_reader = reader
-                    await writer.drain()
-                    if self._last_reader is not reader:
-                        logging.warning(f"Race condition detected on {flow}, it may caused by high load or slow network.")
-                    writer.write(v)
+                while True:
+                    data, _ = await asyncio.gather(reader.read(CHUNK_SIZE), writer.drain())
+                    if not data:
+                        break
+                    writer.write(data)
         except Exception as e:
             logging.error(f"{type(e).__name__} {flow} {e}")
         finally:
