@@ -1,11 +1,9 @@
 import asyncio
-from concurrent.futures import ProcessPoolExecutor
-import os
 import socket
 import struct
 import logging
-import gc
-import time
+import os
+from concurrent.futures import ProcessPoolExecutor
 
 import uvloop
 
@@ -48,16 +46,11 @@ class Server:
             writer.transport.set_write_buffer_limits(CHUNK_SIZE, CHUNK_SIZE)
             async with asyncio.timeout(CONN_LIFE):
                 while v := memoryview(await reader.read(CHUNK_SIZE)):
-                    t = time.perf_counter()
-                    if self._last_reader is reader:
-                        await asyncio.sleep(0)
-                        if self._last_reader is not reader:
-                            logging.debug(f"Yielded {flow}")
                     self._last_reader = reader
                     await writer.drain()
+                    if self._last_reader is not reader:
+                        logging.warning(f"Race condition detected on {flow}, it may caused by high load or slow network.")
                     writer.write(v)
-                    if (latency := (time.perf_counter() - t) * 1000) >= 100:
-                        logging.warning(f"High latency {flow}: {latency:.2f}ms")
         except Exception as e:
             logging.error(f"{type(e).__name__} {flow} {e}")
         finally:
@@ -120,9 +113,6 @@ def main(*_):
 
 if __name__ == "__main__":
     logging.basicConfig(level=LOG_LEVEL)
-    gc.set_threshold(10000)
-    gc.collect()
-    gc.set_debug(gc.DEBUG_STATS)
     cpu_count = os.cpu_count() or 1
     with ProcessPoolExecutor(cpu_count) as executor:
         executor.map(main, range(cpu_count))
