@@ -1,4 +1,6 @@
 import asyncio
+from concurrent.futures import ProcessPoolExecutor
+import os
 import socket
 import struct
 import logging
@@ -104,7 +106,7 @@ class Server:
 
     async def run(self):
         self._last_reader = None
-        server = await asyncio.start_server(self._accept, port=PORT)
+        server = await asyncio.start_server(self._accept, port=PORT, reuse_port=True)
         async with server:
             for sock in server.sockets:
                 sockname = sock.getsockname()
@@ -112,9 +114,15 @@ class Server:
             await asyncio.create_task(server.serve_forever())
 
 
+def main(*_):
+    uvloop.run(Server().run())
+
+
 if __name__ == "__main__":
     logging.basicConfig(level=LOG_LEVEL)
     gc.set_threshold(10000)
     gc.collect()
     gc.set_debug(gc.DEBUG_STATS)
-    uvloop.run(Server().run())
+    cpu_count = os.cpu_count() or 1
+    with ProcessPoolExecutor(cpu_count) as executor:
+        executor.map(main, range(cpu_count))
