@@ -2,14 +2,16 @@ import asyncio
 import socket
 import struct
 import logging
-import gc
+import os
+from concurrent.futures import ProcessPoolExecutor
 
 import uvloop
 
 LOG_LEVEL = logging.DEBUG
 PORT = 8081
 CONN_LIFE = 86400
-CHUNK_SIZE = 1 << 14
+OPEN_TIMEOUT = 1
+CHUNK_SIZE = 1 << 20
 
 
 class Server:
@@ -42,36 +44,43 @@ class Server:
             sock: socket.socket = writer.get_extra_info("socket")
             sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
             sock.setsockopt(socket.SOL_TCP, socket.TCP_QUICKACK, 1)
-            mss = sock.getsockopt(socket.SOL_TCP, socket.TCP_MAXSEG)
-            writer.transport.set_write_buffer_limits(mss, mss)
             async with asyncio.timeout(CONN_LIFE):
-                while v := memoryview(await reader.read(CHUNK_SIZE)):
-                    await writer.drain()
-                    writer.write(v)
+                while True:
+                    data, _ = await asyncio.gather(reader.read(CHUNK_SIZE), writer.drain())
+                    if not data:
+                        break
+                    writer.write(data)
         except Exception as e:
             logging.error(f"{type(e).__name__} {flow} {e}")
         finally:
             if not writer.is_closing():
+                writer.write_eof()
+                await writer.drain()
                 writer.close()
                 await writer.wait_closed()
             logging.debug(f"Closed flow {flow}")
 
     async def _accept(self, client_reader: asyncio.StreamReader, client_writer: asyncio.StreamWriter):
         try:
+            sockname = client_writer.get_extra_info("sockname")
             peername = client_writer.get_extra_info("peername")
             dstname = self._get_original_dst(client_writer)
+            if dstname[0] == sockname[0] and dstname[1] == sockname[1]:
+                client_writer.transport.abort()
+                logging.error(f"[{peername[0]}]:{peername[1]} Attempted to connect directly to the server")
+                return
             up_flow = f"[{peername[0]}]:{peername[1]} -> [{dstname[0]}]:{dstname[1]}"
             down_flow = f"[{peername[0]}]:{peername[1]} <- [{dstname[0]}]:{dstname[1]}"
         except Exception as e:
-            logging.error(f"Failed to get original destination: {type(e).__name__} {e}")
             client_writer.transport.abort()
+            logging.error(f"Failed to get original destination: {type(e).__name__} {e}")
             return
 
         try:
-            proxy_reader, proxy_writer = await asyncio.open_connection(*dstname)
+            proxy_reader, proxy_writer = await asyncio.wait_for(asyncio.open_connection(*dstname, limit=CHUNK_SIZE), OPEN_TIMEOUT)
         except Exception as e:
-            logging.error(f"Failed to connect {up_flow}: {type(e).__name__} {e}")
             client_writer.transport.abort()
+            logging.error(f"Failed to connect {up_flow}: {type(e).__name__} {e}")
             return
 
         logging.info(f"Established {up_flow}")
@@ -79,24 +88,30 @@ class Server:
             async with asyncio.TaskGroup() as tg:
                 tg.create_task(self._stream(up_flow, client_reader, proxy_writer))
                 tg.create_task(self._stream(down_flow, proxy_reader, client_writer))
-        except Exception as e:
-            logging.error(f"{type(e).__name__} {up_flow} {e}")
+        except ExceptionGroup as eg:
+            for e in eg.exceptions:
+                logging.error(f"{type(e).__name__} {up_flow} {e}")
+        finally:
+            proxy_writer.transport.abort()
+            client_writer.transport.abort()
         logging.info(f"Closed {up_flow}")
 
     async def run(self):
-        server = await asyncio.start_server(self._accept, port=PORT)
-        logging.info(f"Listening on port {PORT}")
+        self._last_reader = None
+        server = await asyncio.start_server(self._accept, port=PORT, reuse_port=True, limit=CHUNK_SIZE)
         async with server:
-            await server.serve_forever()
+            for sock in server.sockets:
+                sockname = sock.getsockname()
+                logging.info(f"Listening on [{sockname[0]}]:{sockname[1]}")
+            await asyncio.create_task(server.serve_forever())
 
 
-async def main():
-    logging.basicConfig(level=LOG_LEVEL)
-    await Server().run()
-    logging.info("Server stopped")
+def main(*_):
+    uvloop.run(Server().run())
 
 
 if __name__ == "__main__":
-    gc.set_threshold(3000)
-    gc.set_debug(gc.DEBUG_STATS)
-    uvloop.run(main())
+    logging.basicConfig(level=LOG_LEVEL)
+    cpu_count = os.cpu_count() or 1
+    with ProcessPoolExecutor(cpu_count) as executor:
+        executor.map(main, range(cpu_count))
