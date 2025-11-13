@@ -1,17 +1,16 @@
-import asyncio
-import socket
-import struct
 import logging
-import os
-from concurrent.futures import ProcessPoolExecutor
+import struct
 
-import uvloop
+import gevent
+from gevent import socket
+from gevent.server import StreamServer
+from gevent.socket import wait_read, wait_write
 
 LOG_LEVEL = logging.DEBUG
 PORT = 8081
 CONN_LIFE = 86400
-OPEN_TIMEOUT = 1
-CHUNK_SIZE = 1 << 20
+LIMIT = 1 << 27
+TFO = True
 
 
 class Server:
@@ -22,10 +21,9 @@ class Server:
     _V6_LEN = 28
     _V6_FMT = "!2xH4x16s"
 
-    def _get_original_dst(self, writer: asyncio.StreamWriter):
+    def _get_original_dst(self, sock: socket.socket):
         ip: str = ""
         port: int = 0
-        sock: socket.socket = writer.get_extra_info("socket")
         match sock.family:
             case socket.AF_INET:
                 dst = sock.getsockopt(socket.SOL_IP, self._SO_ORIGINAL_DST, self._V4_LEN)
@@ -39,79 +37,123 @@ class Server:
                 raise Exception(f"Unknown socket family: {sock.family}")
         return ip, port
 
-    async def _stream(self, flow: str, reader: asyncio.StreamReader, writer: asyncio.StreamWriter):
+    def _forward(self, label: str, src_sock: socket.socket, dst_sock: socket.socket):
         try:
-            sock: socket.socket = writer.get_extra_info("socket")
-            sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
-            sock.setsockopt(socket.SOL_TCP, socket.TCP_QUICKACK, 1)
-            async with asyncio.timeout(CONN_LIFE):
-                while True:
-                    data, _ = await asyncio.gather(reader.read(CHUNK_SIZE), writer.drain())
-                    if not data:
-                        break
-                    writer.write(data)
+            dst_sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
+            dst_sock.setsockopt(socket.SOL_TCP, socket.TCP_NODELAY, 1)
+            dst_sock.setsockopt(socket.SOL_TCP, socket.TCP_QUICKACK, 1)
+            wait_read(src_sock.fileno())
+            while data := src_sock.recv(LIMIT):
+                while data:
+                    wait_write(dst_sock.fileno())
+                    sent = dst_sock.send(data)
+                    data = bytes(memoryview(data)[sent:])
+                wait_read(src_sock.fileno())
         except Exception as e:
-            logging.error(f"{type(e).__name__} {flow} {e}")
+            logging.error(f"Failed to forward {label}: {e}")
         finally:
-            if not writer.is_closing():
-                writer.write_eof()
-                await writer.drain()
-                writer.close()
-                await writer.wait_closed()
-            logging.debug(f"Closed flow {flow}")
+            if dst_sock.fileno() != -1:
+                try:
+                    dst_sock.close()
+                except:
+                    pass
 
-    async def _accept(self, client_reader: asyncio.StreamReader, client_writer: asyncio.StreamWriter):
+    def _accept(self, client_sock: socket.socket, client_addr: tuple[str, int]):
+        logging.debug(f"Accepted from [{client_addr[0]}]:{client_addr[1]}")
         try:
-            sockname = client_writer.get_extra_info("sockname")
-            peername = client_writer.get_extra_info("peername")
-            dstname = self._get_original_dst(client_writer)
-            if dstname[0] == sockname[0] and dstname[1] == sockname[1]:
-                client_writer.transport.abort()
-                logging.error(f"[{peername[0]}]:{peername[1]} Attempted to connect directly to the server")
+            srv_addr = client_sock.getsockname()
+            dst_addr = self._get_original_dst(client_sock)
+            if dst_addr[0] == srv_addr[0] and dst_addr[1] == srv_addr[1]:
+                client_sock.shutdown(socket.SHUT_RDWR)
+                client_sock.close()
+                logging.error(f"Blocked direct connection from [{client_addr[0]}]:{client_addr[1]}")
                 return
-            up_flow = f"[{peername[0]}]:{peername[1]} -> [{dstname[0]}]:{dstname[1]}"
-            down_flow = f"[{peername[0]}]:{peername[1]} <- [{dstname[0]}]:{dstname[1]}"
+            up_label = f"[{client_addr[0]}]:{client_addr[1]} -> [{dst_addr[0]}]:{dst_addr[1]}"
+            down_label = f"[{client_addr[0]}]:{client_addr[1]} <- [{dst_addr[0]}]:{dst_addr[1]}"
         except Exception as e:
-            client_writer.transport.abort()
-            logging.error(f"Failed to get original destination: {type(e).__name__} {e}")
+            client_sock.shutdown(socket.SHUT_RDWR)
+            client_sock.close()
+            logging.error(f"Failed to get original destination for [{client_addr[0]}]:{client_addr[1]}: {e}")
             return
 
         try:
-            proxy_reader, proxy_writer = await asyncio.wait_for(asyncio.open_connection(*dstname, limit=CHUNK_SIZE), OPEN_TIMEOUT)
+            proxy_sock = socket.socket(client_sock.family, client_sock.type)
+            proxy_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            proxy_sock.bind(("", client_addr[1]))
+            if TFO:
+                data = bytes()
+                try:
+                    proxy_sock.setsockopt(socket.SOL_TCP, socket.TCP_FASTOPEN_CONNECT, 1)
+                    proxy_sock.setsockopt(socket.SOL_TCP, socket.TCP_FASTOPEN_NO_COOKIE, 1)
+                    wait_write(proxy_sock.fileno())
+                    wait_read(client_sock.fileno(), timeout=0.01)
+                    data = client_sock.recv(LIMIT)
+                    tfo_size = len(data)
+                    while data:
+                        wait_write(proxy_sock.fileno())
+                        sent = proxy_sock.sendto(data, socket.MSG_FASTOPEN, dst_addr)
+                        data = bytes(memoryview(data)[sent:])
+                    logging.debug(f"Sent {tfo_size} bytes with TFO {up_label}")
+                except Exception as e:
+                    logging.debug(f"Failed to send with TFO {up_label}: {e}")
+                finally:
+                    if data:
+                        wait_write(proxy_sock.fileno())
+                        proxy_sock.sendall(data)
+                        logging.debug(f"Retried to send {len(data)} bytes without TFO {up_label}")
+            proxy_sock.connect(dst_addr)
         except Exception as e:
-            client_writer.transport.abort()
-            logging.error(f"Failed to connect {up_flow}: {type(e).__name__} {e}")
+            client_sock.shutdown(socket.SHUT_RDWR)
+            client_sock.close()
+            logging.error(f"Failed to connect {up_label}: {e}")
             return
 
-        logging.info(f"Established {up_flow}")
+        logging.info(f"Connected {up_label}")
         try:
-            async with asyncio.TaskGroup() as tg:
-                tg.create_task(self._stream(up_flow, client_reader, proxy_writer))
-                tg.create_task(self._stream(down_flow, proxy_reader, client_writer))
-        except ExceptionGroup as eg:
-            for e in eg.exceptions:
-                logging.error(f"{type(e).__name__} {up_flow} {e}")
+            j = [
+                gevent.spawn(self._forward, up_label, client_sock, proxy_sock),
+                gevent.spawn(self._forward, down_label, proxy_sock, client_sock),
+            ]
+            gevent.joinall(j, timeout=CONN_LIFE)
+        except Exception as e:
+            logging.error(f"Failed to forward {up_label}: {e}")
         finally:
-            proxy_writer.transport.abort()
-            client_writer.transport.abort()
-        logging.info(f"Closed {up_flow}")
+            if proxy_sock.fileno() != -1:
+                try:
+                    proxy_sock.shutdown(socket.SHUT_RDWR)
+                    proxy_sock.close()
+                except:
+                    pass
+            if client_sock.fileno() != -1:
+                try:
+                    client_sock.shutdown(socket.SHUT_RDWR)
+                    client_sock.close()
+                except:
+                    pass
+        logging.info(f"Disconnected {up_label}")
 
-    async def run(self):
-        self._last_reader = None
-        server = await asyncio.start_server(self._accept, port=PORT, reuse_port=True, limit=CHUNK_SIZE)
-        async with server:
-            for sock in server.sockets:
-                sockname = sock.getsockname()
-                logging.info(f"Listening on [{sockname[0]}]:{sockname[1]}")
-            await asyncio.create_task(server.serve_forever())
-
-
-def main(*_):
-    uvloop.run(Server().run())
+    def run(self):
+        try:
+            srv_socks = [
+                socket.socket(socket.AF_INET, socket.SOCK_STREAM),
+                socket.socket(socket.AF_INET6, socket.SOCK_STREAM),
+            ]
+            for sock in srv_socks:
+                sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
+                sock.setsockopt(socket.SOL_TCP, socket.TCP_FASTOPEN, socket.SOMAXCONN)
+                sock.bind(("", PORT))
+                sock.listen(socket.SOMAXCONN)
+                addr = sock.getsockname()
+                logging.info(f"Listening on [{addr[0]}]:{addr[1]}")
+            j = [gevent.spawn(StreamServer(sock, self._accept).serve_forever) for sock in srv_socks]
+            gevent.joinall(j)
+        except Exception as e:
+            logging.critical(f"Failed to start proxy: {e}")
 
 
 if __name__ == "__main__":
     logging.basicConfig(level=LOG_LEVEL)
-    cpu_count = os.cpu_count() or 1
-    with ProcessPoolExecutor(cpu_count) as executor:
-        executor.map(main, range(cpu_count))
+    try:
+        Server().run()
+    except KeyboardInterrupt:
+        pass
