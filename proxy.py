@@ -13,6 +13,7 @@ PORT = 8081
 CONN_LIFE = 86400
 LIMIT = 1 << 24
 POOL_SIZE = 4
+TFO_MSS = 1200
 
 
 class Server:
@@ -54,32 +55,37 @@ class Server:
                     data = bytes(memoryview(data)[sent:])
                 wait_read(src_sock.fileno(), timeout=CONN_LIFE)
         except Exception as e:
-            logging.error(f"Failed to forward {label}: [{type(e).__name__}] {e}")
+            logging.debug(f"Failed to forward {label}: {type(e).__name__}")
+            logging.debug(e)
 
-        if dst_sock.fileno() != -1:
-            try:
-                dst_sock.close()
-            except:
-                pass
         del data
+        try:
+            dst_sock.close()
+        except:
+            pass
 
     def _accept(self, client_sock: socket.socket, client_addr: tuple[str, int]):
         try:
             srv_addr = client_sock.getsockname()
             dst_addr = self._get_original_dst(client_sock)
             if dst_addr[0] == srv_addr[0] and dst_addr[1] == srv_addr[1]:
-                client_sock.shutdown(socket.SHUT_RDWR)
-                client_sock.close()
+                try:
+                    client_sock.shutdown(socket.SHUT_RDWR)
+                    client_sock.close()
+                except:
+                    pass
                 logging.error(f"Blocked direct connection from [{client_addr[0]}]:{client_addr[1]}")
                 return
             up_label = f"[{client_addr[0]}]:{client_addr[1]} -> [{dst_addr[0]}]:{dst_addr[1]}"
             down_label = f"[{client_addr[0]}]:{client_addr[1]} <- [{dst_addr[0]}]:{dst_addr[1]}"
         except Exception as e:
-            client_sock.shutdown(socket.SHUT_RDWR)
-            client_sock.close()
-            logging.error(
-                f"Failed to get original dst for [{client_addr[0]}]:{client_addr[1]}: [{type(e).__name__}] {e}"
-            )
+            try:
+                client_sock.shutdown(socket.SHUT_RDWR)
+                client_sock.close()
+            except:
+                pass
+            logging.error(f"Failed to get original dst for [{client_addr[0]}]:{client_addr[1]}: {type(e).__name__}")
+            logging.debug(e)
             return
 
         try:
@@ -90,18 +96,19 @@ class Server:
             data = bytes()
             try:
                 proxy_sock.setsockopt(socket.SOL_TCP, socket.TCP_FASTOPEN_CONNECT, 1)
-                wait_write(proxy_sock.fileno())
+                wait_write(proxy_sock.fileno(), timeout=1e-3)
                 wait_read(client_sock.fileno(), timeout=1e-3)
-                data = client_sock.recv(LIMIT)
-                tfo_size = len(data)
-                while data:
-                    wait_write(proxy_sock.fileno())
-                    sent = proxy_sock.sendto(data, socket.MSG_FASTOPEN, dst_addr)
-                    data = bytes(memoryview(data)[sent:])
-                connected = True
-                logging.info(f"Connected with TFO {tfo_size} bytes {up_label}")
+                if data := client_sock.recv(TFO_MSS):
+                    tfo_size = len(data)
+                    while data:
+                        wait_write(proxy_sock.fileno())
+                        sent = proxy_sock.sendto(data, socket.MSG_FASTOPEN, dst_addr)
+                        data = bytes(memoryview(data)[sent:])
+                    connected = True
+                    logging.info(f"Connected {up_label} with TFO {tfo_size} bytes")
             except (BlockingIOError, TimeoutError) as e:
-                logging.debug(f"TFO failed {up_label}: [{type(e).__name__}] {e}")
+                logging.debug(f"TFO failed {up_label}: {type(e).__name__}")
+                logging.debug(e)
             if not connected:
                 proxy_sock.connect(dst_addr)
                 connected = True
@@ -111,9 +118,13 @@ class Server:
                     logging.debug(f"Recovered {len(data)} bytes {up_label}")
             del data
         except Exception as e:
-            client_sock.shutdown(socket.SHUT_RDWR)
-            client_sock.close()
-            logging.error(f"Failed to connect {up_label}: [{type(e).__name__}] {e}")
+            try:
+                client_sock.shutdown(socket.SHUT_RDWR)
+                client_sock.close()
+            except:
+                pass
+            logging.error(f"Failed to connect {up_label}: {type(e).__name__}")
+            logging.debug(e)
             return
 
         try:
@@ -123,20 +134,20 @@ class Server:
             ]
             gevent.joinall(j)
         except Exception as e:
-            logging.error(f"Failed to proxy {up_label}: [{type(e).__name__}] {e}")
+            logging.error(f"Failed to proxy {up_label}: {type(e).__name__}")
+            logging.debug(e)
         finally:
-            if proxy_sock.fileno() != -1:
-                try:
-                    proxy_sock.shutdown(socket.SHUT_RDWR)
-                    proxy_sock.close()
-                except:
-                    pass
-            if client_sock.fileno() != -1:
-                try:
-                    client_sock.shutdown(socket.SHUT_RDWR)
-                    client_sock.close()
-                except:
-                    pass
+            try:
+                proxy_sock.shutdown(socket.SHUT_RDWR)
+                proxy_sock.close()
+            except:
+                pass
+            try:
+                client_sock.shutdown(socket.SHUT_RDWR)
+                client_sock.close()
+            except:
+                pass
+
         logging.info(f"Disconnected {up_label}")
 
     def run(self, *_):
@@ -155,7 +166,8 @@ class Server:
             j = [gevent.spawn(StreamServer(sock, self._accept).serve_forever) for sock in srv_socks]
             gevent.joinall(j)
         except Exception as e:
-            logging.critical(f"Failed to start proxy: [{type(e).__name__}] {e}")
+            logging.critical(f"Failed to start proxy: {type(e).__name__}")
+            logging.debug(e)
 
 
 if __name__ == "__main__":
