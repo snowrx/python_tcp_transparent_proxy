@@ -13,7 +13,7 @@ PORT = 8081
 CONN_LIFE = 86400
 LIMIT = 1 << 24
 POOL_SIZE = 4
-TFO_MSS = 1200
+TFO_MSS = 1300
 
 
 class Server:
