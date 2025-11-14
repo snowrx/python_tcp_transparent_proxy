@@ -13,7 +13,7 @@ PORT = 8081
 POOL_SIZE = 4
 BUFFER_SIZE = 1 << 20
 IDLE_TIMEOUT = 3600 * 6
-TFO_TIMEOUT = 0.01
+FAST_TIMEOUT = 1e-3
 # - config
 
 # + constant
@@ -51,12 +51,24 @@ def transfer(label: str, src_sock: socket.socket, dst_sock: socket.socket):
         dst_sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
         dst_sock.setsockopt(socket.SOL_TCP, socket.TCP_NODELAY, 1)
         dst_sock.setsockopt(socket.SOL_TCP, socket.TCP_QUICKACK, 1)
+        eof = False
+        buffer = bytearray()
         wait_read(src_sock.fileno(), IDLE_TIMEOUT)
         while data := src_sock.recv(BUFFER_SIZE):
-            while data:
+            buffer.extend(data)
+            while buffer:
                 wait_write(dst_sock.fileno())
-                sent = dst_sock.send(data)
-                data = bytes(memoryview(data)[sent:])
+                sent = dst_sock.send(buffer)
+                del buffer[:sent]
+                if not eof and len(buffer) < BUFFER_SIZE:
+                    try:
+                        wait_read(src_sock.fileno(), FAST_TIMEOUT)
+                        if data := src_sock.recv(BUFFER_SIZE - len(buffer)):
+                            buffer.extend(data)
+                        else:
+                            eof = True
+                    except (BlockingIOError, TimeoutError):
+                        pass
             wait_read(src_sock.fileno(), IDLE_TIMEOUT)
     except Exception as e:
         logging.error(f"Failed to transfer {label}: {type(e).__name__}")
@@ -100,8 +112,8 @@ def accept(client_sock: socket.socket, client_addr: tuple[str, int]):
         data = bytes()
         try:
             proxy_sock.setsockopt(socket.SOL_TCP, socket.TCP_FASTOPEN_CONNECT, 1)
-            wait_write(proxy_sock.fileno(), TFO_TIMEOUT)
-            wait_read(client_sock.fileno(), TFO_TIMEOUT)
+            wait_write(proxy_sock.fileno(), FAST_TIMEOUT)
+            wait_read(client_sock.fileno(), FAST_TIMEOUT)
             if data := client_sock.recv(BUFFER_SIZE):
                 size = len(data)
                 while data:
