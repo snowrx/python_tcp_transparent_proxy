@@ -69,6 +69,8 @@ def transfer(label: str, src_sock: socket.socket, dst_sock: socket.socket):
                             eof = True
                     except (BlockingIOError, TimeoutError):
                         pass
+            if eof:
+                break
             wait_read(src_sock.fileno(), IDLE_TIMEOUT)
     except Exception as e:
         logging.error(f"Failed to transfer {label}: {type(e).__name__}")
