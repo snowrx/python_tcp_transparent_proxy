@@ -191,5 +191,6 @@ if __name__ == "__main__":
     try:
         pool = ThreadPool(POOL_SIZE)
         pool.map(run, range(POOL_SIZE))
+        pool.join()
     except KeyboardInterrupt:
         pass
