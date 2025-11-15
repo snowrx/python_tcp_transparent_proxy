@@ -1,6 +1,6 @@
 import logging
 import struct
-import sys
+import os
 
 import gevent
 from gevent import socket
@@ -14,6 +14,7 @@ POOL_SIZE = 4
 BUFFER_SIZE = 1 << 20
 IDLE_TIMEOUT = 43200
 FAST_TIMEOUT = 1e-3
+CLOSE_WAIT = 1
 
 SO_ORIGINAL_DST = 80
 SOL_IPV6 = 41
@@ -64,9 +65,14 @@ def transfer(label: str, src_sock: socket.socket, dst_sock: socket.socket):
 
     try:
         eof = False
-        wait_read(src_sock.fileno(), IDLE_TIMEOUT)
+        buffer = bytearray()
 
-        while buffer := bytearray(src_sock.recv(BUFFER_SIZE)):
+        while True:
+            wait_read(src_sock.fileno(), IDLE_TIMEOUT)
+            buffer.extend(src_sock.recv(BUFFER_SIZE))
+            if not buffer:
+                eof = True
+                break
             while buffer:
                 wait_write(dst_sock.fileno())
                 sent = dst_sock.send(buffer)
@@ -74,24 +80,30 @@ def transfer(label: str, src_sock: socket.socket, dst_sock: socket.socket):
                 if not eof and len(buffer) < BUFFER_SIZE:
                     try:
                         wait_read(src_sock.fileno(), FAST_TIMEOUT)
-                        if data := src_sock.recv(BUFFER_SIZE - len(buffer)):
-                            buffer.extend(data)
-                        else:
+                        s = len(buffer)
+                        buffer.extend(src_sock.recv(BUFFER_SIZE - s))
+                        filled = len(buffer) - s
+                        if not filled:
                             eof = True
                     except (BlockingIOError, TimeoutError):
                         pass
+                    except (ConnectionResetError, OSError):
+                        eof = True
             if eof:
+                logging.info(f"EOF {label}")
                 break
 
-            wait_read(src_sock.fileno(), IDLE_TIMEOUT)
-        eof = True
+    except (ConnectionResetError, OSError) as e:
+        logging.debug(f"Failed to transfer {label}: {e}")
 
     except Exception as e:
-        logging.debug(f"Failed to transfer {label}: {e}")
+        logging.error(f"Failed to transfer {label}: {e}")
 
     finally:
         try:
-            dst_sock.shutdown(socket.SHUT_RDWR)
+            dst_sock.shutdown(socket.SHUT_WR)
+            gevent.sleep(CLOSE_WAIT)
+            dst_sock.close()
         except:
             pass
 
@@ -139,12 +151,15 @@ def accept(client_sock: socket.socket, client_addr: tuple[str, int]):
         buffer = bytearray()
         try:
             wait_read(client_sock.fileno(), FAST_TIMEOUT)
-            if buffer := bytearray(client_sock.recv(BUFFER_SIZE)):
+            buffer.extend(client_sock.recv(BUFFER_SIZE))
+            if buffer:
                 wait_write(proxy_sock.fileno())
                 sent = proxy_sock.sendto(buffer, socket.MSG_FASTOPEN, dst_addr)
                 del buffer[:sent]
                 connected = True
-                logging.info(f"Connected {up_label} with TFO, sent {sent} bytes")
+                logging.info(f"Connected {up_label} with TFO {sent} bytes")
+            else:
+                raise EOFError("Client closed before sending data")
         except (BlockingIOError, TimeoutError, OSError) as e:
             logging.debug(f"Failed to TFO {up_label}: {e}")
 
@@ -212,10 +227,8 @@ def run(*_):
 
 
 if __name__ == "__main__":
-    for arg in sys.argv:
-        match arg:
-            case "-v":
-                LOG_LEVEL = logging.DEBUG
+    if os.getenv("DEBUG"):
+        LOG_LEVEL = logging.DEBUG
 
     logging.basicConfig(level=LOG_LEVEL)
 
