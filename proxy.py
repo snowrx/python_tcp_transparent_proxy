@@ -1,5 +1,6 @@
 import logging
 import struct
+import sys
 
 import gevent
 from gevent import socket
@@ -8,7 +9,7 @@ from gevent.server import StreamServer
 from gevent.threadpool import ThreadPool
 
 # + config
-LOG_LEVEL = logging.INFO
+LOG_LEVEL = logging.DEBUG
 PORT = 8081
 POOL_SIZE = 4
 BUFFER_SIZE = 1 << 20
@@ -52,10 +53,8 @@ def transfer(label: str, src_sock: socket.socket, dst_sock: socket.socket):
         dst_sock.setsockopt(socket.SOL_TCP, socket.TCP_NODELAY, 1)
         dst_sock.setsockopt(socket.SOL_TCP, socket.TCP_QUICKACK, 1)
         eof = False
-        buffer = bytearray()
         wait_read(src_sock.fileno(), IDLE_TIMEOUT)
-        while data := src_sock.recv(BUFFER_SIZE):
-            buffer.extend(data)
+        while buffer := bytearray(src_sock.recv(BUFFER_SIZE)):
             while buffer:
                 wait_write(dst_sock.fileno())
                 sent = dst_sock.send(buffer)
@@ -72,15 +71,16 @@ def transfer(label: str, src_sock: socket.socket, dst_sock: socket.socket):
             if eof:
                 break
             wait_read(src_sock.fileno(), IDLE_TIMEOUT)
+        eof = True
     except Exception as e:
-        logging.error(f"Failed to transfer {label}: {type(e).__name__}")
-        logging.debug(e)
+        logging.debug(f"Failed to transfer {label}: {e}")
     finally:
         try:
             dst_sock.shutdown(socket.SHUT_RDWR)
-            dst_sock.close()
         except:
             pass
+
+    logging.debug(f"End transfer {label}")
 
 
 def accept(client_sock: socket.socket, client_addr: tuple[str, int]):
@@ -100,45 +100,43 @@ def accept(client_sock: socket.socket, client_addr: tuple[str, int]):
     except Exception as e:
         client_sock.shutdown(socket.SHUT_RDWR)
         client_sock.close()
-        logging.error(f"Failed to get original destination for [{client_addr[0]}]:{client_addr[1]}: {type(e).__name__}")
-        logging.debug(e)
+        logging.error(f"Failed to prepare connection [{client_addr[0]}]:{client_addr[1]}: {e}")
         return
     # - prepare
 
     # + open
     try:
-        connected = False
         proxy_sock = socket.socket(client_sock.family, client_sock.type)
-        proxy_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        proxy_sock.bind(("", client_addr[1]))
+        try:
+            proxy_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
+            proxy_sock.bind(("", client_addr[1]))
+        except:
+            logging.warning(f"Failed to bind source port {client_addr[1]}")
+        connected = False
         data = bytes()
         try:
             proxy_sock.setsockopt(socket.SOL_TCP, socket.TCP_FASTOPEN_CONNECT, 1)
-            wait_write(proxy_sock.fileno(), FAST_TIMEOUT)
             wait_read(client_sock.fileno(), FAST_TIMEOUT)
             if data := client_sock.recv(BUFFER_SIZE):
-                size = len(data)
-                while data:
-                    wait_write(proxy_sock.fileno())
-                    sent = proxy_sock.sendto(data, socket.MSG_FASTOPEN, dst_addr)
-                    data = bytes(memoryview(data)[sent:])
+                wait_write(proxy_sock.fileno())
+                sent = proxy_sock.sendto(data, socket.MSG_FASTOPEN, dst_addr)
+                data = bytes(memoryview(data)[sent:])
                 connected = True
-                logging.info(f"Connected {up_label} with TFO {size} bytes")
-        except (BlockingIOError, TimeoutError) as e:
-            logging.debug(f"Failed to send TFO {up_label}: {type(e).__name__}")
+                logging.info(f"Connected {up_label} with TFO, sent {sent} bytes")
+        except (BlockingIOError, TimeoutError, OSError) as e:
+            logging.debug(f"Failed to TFO {up_label}: {e}")
         if not connected:
             proxy_sock.connect(dst_addr)
             connected = True
             logging.info(f"Connected {up_label}")
-            if data:
-                wait_write(proxy_sock.fileno())
-                proxy_sock.sendall(data)
-                logging.debug(f"Unsent {len(data)} bytes was sent to {up_label}")
+        if data:
+            wait_write(proxy_sock.fileno())
+            proxy_sock.sendall(data)
+            logging.debug(f"Unsent {len(data)} bytes was sent to {up_label}")
     except Exception as e:
         client_sock.shutdown(socket.SHUT_RDWR)
         client_sock.close()
-        logging.error(f"Failed to connect {up_label}: {type(e).__name__}")
-        logging.debug(e)
+        logging.error(f"Failed to connect {up_label}: {e}")
         return
     # - open
 
@@ -146,13 +144,12 @@ def accept(client_sock: socket.socket, client_addr: tuple[str, int]):
     try:
         gevent.joinall(
             [
-                gevent.spawn(transfer, up_label, client_sock, proxy_sock),
                 gevent.spawn(transfer, down_label, proxy_sock, client_sock),
+                gevent.spawn(transfer, up_label, client_sock, proxy_sock),
             ]
         )
     except Exception as e:
-        logging.error(f"Failed to proxy {up_label}: {type(e).__name__}")
-        logging.debug(e)
+        logging.error(f"Failed to proxy {up_label}: {e}")
     # - proxy
 
     # + close
@@ -182,11 +179,14 @@ def run(*_):
             logging.info(f"Listening on [{addr[0]}]:{addr[1]}")
         gevent.joinall([gevent.spawn(StreamServer(sock, accept).serve_forever) for sock in socks])
     except Exception as e:
-        logging.critical(f"Failed to start server: {type(e).__name__}")
-        logging.debug(e)
+        logging.critical(f"Server error: {e}")
 
 
 if __name__ == "__main__":
+    for arg in sys.argv:
+        match arg:
+            case "-v":
+                LOG_LEVEL = logging.DEBUG
     logging.basicConfig(level=LOG_LEVEL)
     try:
         pool = ThreadPool(POOL_SIZE)
