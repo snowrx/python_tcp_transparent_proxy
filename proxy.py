@@ -9,7 +9,7 @@ from gevent.server import StreamServer
 from gevent.threadpool import ThreadPool
 
 # + config
-LOG_LEVEL = logging.DEBUG
+LOG_LEVEL = logging.INFO
 PORT = 8081
 POOL_SIZE = 4
 BUFFER_SIZE = 1 << 20
