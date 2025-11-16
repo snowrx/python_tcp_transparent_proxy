@@ -75,7 +75,6 @@ def transfer(label: str, src_sock: socket.socket, dst_sock: socket.socket):
                     except (ConnectionResetError, OSError):
                         eof = True
             if eof:
-                logging.info(f"EOF {label}")
                 break
             wait_read(src_sock.fileno(), IDLE_TIMEOUT)
 
