@@ -11,8 +11,8 @@ from gevent.threadpool import ThreadPool
 
 LOG_LEVEL = logging.INFO
 PORT = 8081
-POOL_SIZE = 4
-BUFFER_SIZE = 1 << 18
+BUFFER_SIZE = 1 << 16
+BUFFER_SCALE = 2
 IDLE_TIMEOUT = 43200
 FAST_TIMEOUT = 1e-3
 
@@ -48,10 +48,12 @@ def transfer(label: str, src_sock: socket.socket, dst_sock: socket.socket):
     logging.debug(f"Start transfer {label}")
     eof = False
     buffer = bytearray()
+    buffer_size = BUFFER_SIZE
+    max_sent = 0
 
     try:
         wait_read(src_sock.fileno(), IDLE_TIMEOUT)
-        while recv := src_sock.recv(BUFFER_SIZE):
+        while recv := src_sock.recv(buffer_size):
             buffer.extend(recv)
 
             while buffer:
@@ -59,10 +61,16 @@ def transfer(label: str, src_sock: socket.socket, dst_sock: socket.socket):
                 sent = dst_sock.send(buffer)
                 del buffer[:sent]
 
-                if not eof and len(buffer) < BUFFER_SIZE:
+                if sent > max_sent:
+                    max_sent = sent
+                    if (s := max_sent * BUFFER_SCALE) > buffer_size:
+                        buffer_size = s
+                        logging.debug(f"{buffer_size=} {label}")
+
+                if not eof and len(buffer) < buffer_size:
                     try:
                         wait_read(src_sock.fileno(), FAST_TIMEOUT)
-                        if recv := src_sock.recv(BUFFER_SIZE - len(buffer)):
+                        if recv := src_sock.recv(buffer_size - len(buffer)):
                             buffer.extend(recv)
                         else:
                             eof = True
@@ -198,8 +206,9 @@ if __name__ == "__main__":
     gc.set_debug(gc.DEBUG_STATS)
 
     try:
-        pool = ThreadPool(POOL_SIZE)
-        pool.map(run, range(POOL_SIZE))
+        pool_size = os.cpu_count() or 1
+        pool = ThreadPool(pool_size)
+        pool.map(run, range(pool_size))
         pool.join()
     except KeyboardInterrupt:
         pass
