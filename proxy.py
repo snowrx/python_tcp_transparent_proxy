@@ -1,13 +1,10 @@
 import logging
 import struct
-import os
-import gc
 
 import gevent
 from gevent import socket
 from gevent.socket import wait_read, wait_write
 from gevent.server import StreamServer
-from gevent.threadpool import ThreadPool
 
 LOG_LEVEL = logging.INFO
 PORT = 8081
@@ -199,16 +196,9 @@ def run(*_):
 
 
 if __name__ == "__main__":
-    if os.getenv("DEBUG"):
-        LOG_LEVEL = logging.DEBUG
     logging.basicConfig(level=LOG_LEVEL)
-    gc.collect()
-    gc.set_debug(gc.DEBUG_STATS)
 
     try:
-        pool_size = os.cpu_count() or 1
-        pool = ThreadPool(pool_size)
-        pool.map(run, range(pool_size))
-        pool.join()
+        run()
     except KeyboardInterrupt:
         pass
