@@ -1,3 +1,4 @@
+from cProfile import label
 import logging
 import struct
 import gc
@@ -120,7 +121,10 @@ def accept(client_sock: socket.socket, client_addr: tuple[str, int]):
         proxy_sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
         proxy_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         proxy_sock.setsockopt(socket.SOL_TCP, socket.TCP_FASTOPEN_CONNECT, 1)
-        proxy_sock.bind(("", client_addr[1]))
+        try:
+            proxy_sock.bind(("", client_addr[1]))
+        except OSError:
+            logging.info(f"Failed to bind same port on {label}")
         connected = False
         buffer = bytearray()
 
