@@ -1,5 +1,6 @@
 import logging
 import struct
+import gc
 
 import gevent
 from gevent import socket
@@ -90,7 +91,6 @@ def transfer(label: str, src_sock: socket.socket, dst_sock: socket.socket):
             pass
 
     logging.debug(f"End transfer {label}")
-    del buffer
 
 
 def accept(client_sock: socket.socket, client_addr: tuple[str, int]):
@@ -147,8 +147,6 @@ def accept(client_sock: socket.socket, client_addr: tuple[str, int]):
             wait_write(proxy_sock.fileno())
             proxy_sock.sendall(buffer)
             logging.debug(f"Unsent {len(buffer)} bytes was sent to {up_label}")
-
-        del buffer
     except Exception as e:
         client_sock.shutdown(socket.SHUT_RDWR)
         client_sock.close()
@@ -196,6 +194,9 @@ def run(*_):
 
 
 if __name__ == "__main__":
+    gc.collect()
+    gc.set_threshold(3000)
+    gc.set_debug(gc.DEBUG_STATS)
     logging.basicConfig(level=LOG_LEVEL)
 
     try:
