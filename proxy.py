@@ -1,4 +1,3 @@
-from cProfile import label
 import logging
 import struct
 import gc
@@ -10,8 +9,7 @@ from gevent.server import StreamServer
 
 LOG_LEVEL = logging.INFO
 PORT = 8081
-BUFFER_SIZE = 1 << 16
-BUFFER_SCALE = 2
+BUFFER_SIZE = 1 << 20
 IDLE_TIMEOUT = 43200
 FAST_TIMEOUT = 1e-3
 
@@ -47,12 +45,10 @@ def transfer(label: str, src_sock: socket.socket, dst_sock: socket.socket):
     logging.debug(f"Start transfer {label}")
     eof = False
     buffer = bytearray()
-    buffer_size = BUFFER_SIZE
-    max_sent = 0
 
     try:
         wait_read(src_sock.fileno(), IDLE_TIMEOUT)
-        while recv := src_sock.recv(buffer_size):
+        while recv := src_sock.recv(BUFFER_SIZE):
             buffer.extend(recv)
 
             while buffer:
@@ -60,16 +56,10 @@ def transfer(label: str, src_sock: socket.socket, dst_sock: socket.socket):
                 sent = dst_sock.send(buffer)
                 del buffer[:sent]
 
-                if sent > max_sent:
-                    max_sent = sent
-                    if (s := max_sent * BUFFER_SCALE) > buffer_size:
-                        buffer_size = s
-                        logging.debug(f"{buffer_size=} {label}")
-
-                if not eof and len(buffer) < buffer_size:
+                if not eof and len(buffer) < BUFFER_SIZE:
                     try:
                         wait_read(src_sock.fileno(), FAST_TIMEOUT)
-                        if recv := src_sock.recv(buffer_size - len(buffer)):
+                        if recv := src_sock.recv(BUFFER_SIZE - len(buffer)):
                             buffer.extend(recv)
                         else:
                             eof = True
@@ -124,13 +114,13 @@ def accept(client_sock: socket.socket, client_addr: tuple[str, int]):
         try:
             proxy_sock.bind(("", client_addr[1]))
         except OSError:
-            logging.info(f"Failed to bind same port on {label}")
+            logging.debug(f"Failed to bind same port on {up_label}")
         connected = False
         buffer = bytearray()
 
         try:
             wait_read(client_sock.fileno(), FAST_TIMEOUT)
-            if recv := client_sock.recv(client_sock.getsockopt(socket.SOL_TCP, socket.TCP_MAXSEG)):
+            if recv := client_sock.recv(BUFFER_SIZE):
                 buffer.extend(recv)
                 wait_write(proxy_sock.fileno())
                 sent = proxy_sock.sendto(buffer, socket.MSG_FASTOPEN, dst_addr)
