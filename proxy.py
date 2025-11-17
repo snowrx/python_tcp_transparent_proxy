@@ -1,6 +1,5 @@
 import logging
 import struct
-import gc
 
 import gevent
 from gevent import socket
@@ -44,30 +43,26 @@ def get_original_dst(sock: socket.socket):
 def transfer(label: str, src_sock: socket.socket, dst_sock: socket.socket):
     logging.debug(f"Start transfer {label}")
     eof = False
-    buffer = bytearray()
 
     try:
         wait_read(src_sock.fileno(), IDLE_TIMEOUT)
-        while recv := src_sock.recv(BUFFER_SIZE):
-            buffer.extend(recv)
-
+        while buffer := src_sock.recv(BUFFER_SIZE):
             while buffer:
                 wait_write(dst_sock.fileno())
                 sent = dst_sock.send(buffer)
-                del buffer[:sent]
+                buffer = bytes(memoryview(buffer)[sent:])
 
                 if not eof and len(buffer) < BUFFER_SIZE:
                     try:
                         wait_read(src_sock.fileno(), FAST_TIMEOUT)
-                        if recv := src_sock.recv(BUFFER_SIZE - len(buffer)):
-                            buffer.extend(recv)
+                        if deficit := src_sock.recv(BUFFER_SIZE - len(buffer)):
+                            buffer += deficit
                         else:
                             eof = True
                     except (BlockingIOError, TimeoutError):
                         pass
                     except (ConnectionResetError, OSError):
                         eof = True
-
             if eof:
                 break
             wait_read(src_sock.fileno(), IDLE_TIMEOUT)
@@ -109,28 +104,21 @@ def accept(client_sock: socket.socket, client_addr: tuple[str, int]):
     try:
         proxy_sock = socket.socket(client_sock.family, client_sock.type)
         proxy_sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
-        proxy_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         proxy_sock.setsockopt(socket.SOL_TCP, socket.TCP_FASTOPEN_CONNECT, 1)
-        try:
-            proxy_sock.bind(("", client_addr[1]))
-        except OSError:
-            logging.debug(f"Failed to bind same port on {up_label}")
-        connected = False
-        buffer = bytearray()
 
+        connected = False
+        buffer = bytes()
         try:
             wait_read(client_sock.fileno(), FAST_TIMEOUT)
-            if recv := client_sock.recv(BUFFER_SIZE):
-                buffer.extend(recv)
-                wait_write(proxy_sock.fileno())
+            if buffer := client_sock.recv(BUFFER_SIZE):
                 sent = proxy_sock.sendto(buffer, socket.MSG_FASTOPEN, dst_addr)
-                del buffer[:sent]
+                buffer = bytes(memoryview(buffer)[sent:])
                 connected = True
-                logging.info(f"Connected {up_label} with TFO {sent} bytes")
+                logging.info(f"Connected {up_label} with TCP Fast Open (sent {sent} bytes)")
             else:
-                raise EOFError("Client closed before sending data")
-        except (BlockingIOError, TimeoutError, OSError) as e:
-            logging.debug(f"Failed to TFO {up_label}: {e}")
+                raise Exception("Client closed connection before sending any data")
+        except (BlockingIOError, TimeoutError):
+            pass
 
         if not connected:
             proxy_sock.connect(dst_addr)
@@ -140,7 +128,6 @@ def accept(client_sock: socket.socket, client_addr: tuple[str, int]):
         if buffer:
             wait_write(proxy_sock.fileno())
             proxy_sock.sendall(buffer)
-            logging.debug(f"Unsent {len(buffer)} bytes was sent to {up_label}")
     except Exception as e:
         client_sock.shutdown(socket.SHUT_RDWR)
         client_sock.close()
@@ -188,11 +175,7 @@ def run(*_):
 
 
 if __name__ == "__main__":
-    gc.collect()
-    gc.set_threshold(3000)
-    gc.set_debug(gc.DEBUG_STATS)
     logging.basicConfig(level=LOG_LEVEL)
-
     try:
         run()
     except KeyboardInterrupt:
