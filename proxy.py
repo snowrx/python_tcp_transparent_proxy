@@ -13,7 +13,8 @@ import struct
 
 LOG_LEVEL = logging.INFO
 PORT = 8081
-BUFFER_SIZE = 1 << 20
+BUFFER_SIZE = 1 << 16
+BUFFER_SCALE = 4
 IDLE_TIMEOUT = 43200
 FAST_TIMEOUT = 1e-3
 
@@ -50,19 +51,24 @@ def get_original_dst(sock: socket.socket):
 def transfer(label: str, src_sock: socket.socket, dst_sock: socket.socket):
     global_group.spawn(logging.debug, f"Start transfer {label}")
     eof = False
+    buffer_size = BUFFER_SIZE
 
     try:
         wait_read(src_sock.fileno(), IDLE_TIMEOUT)
-        while buffer := src_sock.recv(BUFFER_SIZE):
+        while buffer := src_sock.recv(buffer_size):
             while buffer:
                 wait_write(dst_sock.fileno())
                 sent = dst_sock.send(buffer)
                 buffer = bytes(memoryview(buffer)[sent:])
 
-                if not eof and len(buffer) < BUFFER_SIZE:
+                if (s := sent * BUFFER_SCALE) > buffer_size:
+                    buffer_size = s
+                    global_group.spawn(logging.debug, f"Buffer size increased to {buffer_size} for {label}")
+
+                if not eof and len(buffer) < buffer_size:
                     try:
                         wait_read(src_sock.fileno(), FAST_TIMEOUT)
-                        if deficit := src_sock.recv(BUFFER_SIZE - len(buffer)):
+                        if deficit := src_sock.recv(buffer_size - len(buffer)):
                             buffer += deficit
                         else:
                             eof = True
