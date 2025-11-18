@@ -48,7 +48,7 @@ def get_original_dst(sock: socket.socket):
 
 
 def transfer(label: str, src_sock: socket.socket, dst_sock: socket.socket):
-    logging.debug(f"Start transfer {label}")
+    global_group.spawn(logging.debug, f"Start transfer {label}")
     eof = False
 
     try:
@@ -58,6 +58,7 @@ def transfer(label: str, src_sock: socket.socket, dst_sock: socket.socket):
                 wait_write(dst_sock.fileno())
                 sent = dst_sock.send(buffer)
                 buffer = bytes(memoryview(buffer)[sent:])
+                global_group.spawn(logging.debug, f"Sent {sent:6d}, remaining {len(buffer):6d} for {label}")
 
                 if not eof and len(buffer) < BUFFER_SIZE:
                     try:
@@ -74,20 +75,20 @@ def transfer(label: str, src_sock: socket.socket, dst_sock: socket.socket):
                 break
             wait_read(src_sock.fileno(), IDLE_TIMEOUT)
     except (ConnectionResetError, OSError) as e:
-        logging.debug(f"Failed to transfer {label}: {e}")
+        global_group.spawn(logging.debug, f"Failed to transfer {label}: {e}")
     except Exception as e:
-        logging.error(f"Failed to transfer {label}: {e}")
+        global_group.spawn(logging.error, f"Failed to transfer {label}: {e}")
     finally:
         try:
             dst_sock.shutdown(socket.SHUT_WR)
         except:
             pass
 
-    logging.debug(f"End transfer {label}")
+    global_group.spawn(logging.debug, f"End transfer {label}")
 
 
 def accept(client_sock: socket.socket, client_addr: tuple[str, int]):
-    logging.debug(f"New connection from [{client_addr[0]}]:{client_addr[1]}")
+    global_group.spawn(logging.debug, f"New connection from [{client_addr[0]}]:{client_addr[1]}")
 
     try:
         client_sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
@@ -97,7 +98,7 @@ def accept(client_sock: socket.socket, client_addr: tuple[str, int]):
         if dst_addr[0] == srv_addr[0] and dst_addr[1] == srv_addr[1]:
             client_sock.shutdown(socket.SHUT_RDWR)
             client_sock.close()
-            logging.error(f"Blocked direct connection from [{client_addr[0]}]:{client_addr[1]}")
+            global_group.spawn(logging.error, f"Blocked direct connection from [{client_addr[0]}]:{client_addr[1]}")
             return
 
         up_label = f"[{client_addr[0]}]:{client_addr[1]} -> [{dst_addr[0]}]:{dst_addr[1]}"
@@ -105,7 +106,7 @@ def accept(client_sock: socket.socket, client_addr: tuple[str, int]):
     except Exception as e:
         client_sock.shutdown(socket.SHUT_RDWR)
         client_sock.close()
-        logging.error(f"Failed to prepare connection [{client_addr[0]}]:{client_addr[1]}: {e}")
+        global_group.spawn(logging.error, f"Failed to prepare connection for [{client_addr[0]}]:{client_addr[1]}: {e}")
         return
 
     try:
@@ -121,7 +122,7 @@ def accept(client_sock: socket.socket, client_addr: tuple[str, int]):
                 sent = proxy_sock.sendto(buffer, socket.MSG_FASTOPEN, dst_addr)
                 buffer = bytes(memoryview(buffer)[sent:])
                 connected = True
-                logging.info(f"Connected {up_label} with TCP Fast Open (sent {sent} bytes)")
+                global_group.spawn(logging.info, f"Connected {up_label} with TCP Fast Open (sent {sent} bytes)")
             else:
                 raise Exception("Client closed connection before sending any data")
         except (BlockingIOError, TimeoutError):
@@ -130,7 +131,7 @@ def accept(client_sock: socket.socket, client_addr: tuple[str, int]):
         if not connected:
             proxy_sock.connect(dst_addr)
             connected = True
-            logging.info(f"Connected {up_label}")
+            global_group.spawn(logging.info, f"Connected {up_label}")
 
         if buffer:
             wait_write(proxy_sock.fileno())
@@ -138,7 +139,7 @@ def accept(client_sock: socket.socket, client_addr: tuple[str, int]):
     except Exception as e:
         client_sock.shutdown(socket.SHUT_RDWR)
         client_sock.close()
-        logging.error(f"Failed to connect {up_label}: {e}")
+        global_group.spawn(logging.error, f"Failed to connect {up_label}: {e}")
         return
 
     try:
@@ -148,7 +149,7 @@ def accept(client_sock: socket.socket, client_addr: tuple[str, int]):
         ]
         gevent.joinall(t)
     except Exception as e:
-        logging.error(f"Failed to proxy {up_label}: {e}")
+        global_group.spawn(logging.error, f"Failed to proxy {up_label}: {e}")
 
     try:
         proxy_sock.shutdown(socket.SHUT_RDWR)
@@ -162,7 +163,7 @@ def accept(client_sock: socket.socket, client_addr: tuple[str, int]):
     except:
         pass
 
-    logging.info(f"Closed {up_label}")
+    global_group.spawn(logging.info, f"Closed {up_label}")
 
 
 def run(family: socket.AddressFamily = socket.AF_INET):
@@ -172,12 +173,12 @@ def run(family: socket.AddressFamily = socket.AF_INET):
         sock.bind(("", PORT))
         sock.listen(socket.SOMAXCONN)
         addr = sock.getsockname()
-        logging.info(f"Listening on [{addr[0]}]:{addr[1]}")
+        global_group.spawn(logging.info, f"Listening on [{addr[0]}]:{addr[1]}")
 
         server = StreamServer(sock, accept)
         global_group.spawn(server.serve_forever).join()
     except Exception as e:
-        logging.critical(f"Server error: {e}")
+        global_group.spawn(logging.critical, f"Server error: {e}")
 
 
 if __name__ == "__main__":
