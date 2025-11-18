@@ -58,7 +58,6 @@ def transfer(label: str, src_sock: socket.socket, dst_sock: socket.socket):
                 wait_write(dst_sock.fileno())
                 sent = dst_sock.send(buffer)
                 buffer = bytes(memoryview(buffer)[sent:])
-                global_group.spawn(logging.debug, f"Sent {sent:6d}, remaining {len(buffer):6d} for {label}")
 
                 if not eof and len(buffer) < BUFFER_SIZE:
                     try:
