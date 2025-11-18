@@ -1,10 +1,15 @@
-import logging
-import struct
-
+import os
 import gevent
 from gevent import socket
 from gevent.socket import wait_read, wait_write
 from gevent.server import StreamServer
+from gevent.pool import Group
+from gevent import monkey
+
+monkey.patch_all()
+
+import logging
+import struct
 
 LOG_LEVEL = logging.INFO
 PORT = 8081
@@ -19,6 +24,8 @@ V4_FMT = "!2xH4s"
 V6_LEN = 28
 V6_FMT = "!2xH4x16s"
 FAMILY = [socket.AF_INET, socket.AF_INET6]
+
+global_group = Group()
 
 
 def get_original_dst(sock: socket.socket):
@@ -135,12 +142,11 @@ def accept(client_sock: socket.socket, client_addr: tuple[str, int]):
         return
 
     try:
-        gevent.joinall(
-            [
-                gevent.spawn(transfer, down_label, proxy_sock, client_sock),
-                gevent.spawn(transfer, up_label, client_sock, proxy_sock),
-            ]
-        )
+        t = [
+            global_group.spawn(transfer, down_label, proxy_sock, client_sock),
+            global_group.spawn(transfer, up_label, client_sock, proxy_sock),
+        ]
+        gevent.joinall(t)
     except Exception as e:
         logging.error(f"Failed to proxy {up_label}: {e}")
 
@@ -159,24 +165,27 @@ def accept(client_sock: socket.socket, client_addr: tuple[str, int]):
     logging.info(f"Closed {up_label}")
 
 
-def run(*_):
+def run(family: socket.AddressFamily = socket.AF_INET):
     try:
-        socks = [socket.socket(family, socket.SOCK_STREAM) for family in FAMILY]
-        for sock in socks:
-            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
-            sock.bind(("", PORT))
-            sock.listen(socket.SOMAXCONN)
-            addr = sock.getsockname()
-            logging.info(f"Listening on [{addr[0]}]:{addr[1]}")
+        sock = socket.socket(family, socket.SOCK_STREAM)
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
+        sock.bind(("", PORT))
+        sock.listen(socket.SOMAXCONN)
+        addr = sock.getsockname()
+        logging.info(f"Listening on [{addr[0]}]:{addr[1]}")
 
-        gevent.joinall([gevent.spawn(StreamServer(sock, accept).serve_forever) for sock in socks])
+        server = StreamServer(sock, accept)
+        global_group.spawn(server.serve_forever).join()
     except Exception as e:
         logging.critical(f"Server error: {e}")
 
 
 if __name__ == "__main__":
+    if os.getenv("DEBUG"):
+        LOG_LEVEL = logging.DEBUG
     logging.basicConfig(level=LOG_LEVEL)
     try:
-        run()
+        global_group.map(run, FAMILY)
+        global_group.join()
     except KeyboardInterrupt:
         pass
