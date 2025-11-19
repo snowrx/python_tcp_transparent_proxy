@@ -4,20 +4,18 @@ from gevent.socket import wait_read, wait_write
 from gevent.server import StreamServer
 from gevent.pool import Group
 from gevent.threadpool import ThreadPool
-from gevent import monkey
-
-monkey.patch_all()
 
 import os
 import logging
 import struct
+import time
 
 LOG_LEVEL = logging.INFO
 PORT = 8081
 BUFFER_SIZE = 1 << 16
-BUFFER_SCALE = 4
+BUFFER_SCALE = 2
 IDLE_TIMEOUT = 43200
-FAST_TIMEOUT = 0.01
+FAST_TIMEOUT = 1 / 1000
 
 
 class ProxyServer:
@@ -59,6 +57,7 @@ class ProxyServer:
             wait_read(src_sock.fileno(), IDLE_TIMEOUT)
             while buffer := src_sock.recv(buffer_size):
                 while buffer:
+                    write_start = time.perf_counter()
                     wait_write(dst_sock.fileno())
                     sent = dst_sock.send(buffer)
                     buffer = bytes(memoryview(buffer)[sent:])
@@ -78,6 +77,8 @@ class ProxyServer:
                             pass
                         except (ConnectionResetError, OSError):
                             eof = True
+                    if (write_time := time.perf_counter() - write_start) >= 0.1:
+                        logging.warning(f"Writing to {label} took {write_time * 1000:.2f} ms")
                 if eof:
                     break
                 wait_read(src_sock.fileno(), IDLE_TIMEOUT)
@@ -95,9 +96,12 @@ class ProxyServer:
 
     def _accept(self, client_sock: socket.socket, client_addr: tuple[str, int]):
         logging.debug(f"New connection from [{client_addr[0]}]:{client_addr[1]}")
+        prepare_start = time.perf_counter()
 
         try:
             client_sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
+            client_sock.setsockopt(socket.SOL_TCP, socket.TCP_NODELAY, 1)
+            client_sock.setsockopt(socket.SOL_TCP, socket.TCP_QUICKACK, 1)
             srv_addr = client_sock.getsockname()
             dst_addr = self.get_original_dst(client_sock)
 
@@ -119,6 +123,8 @@ class ProxyServer:
             proxy_sock = socket.socket(client_sock.family, client_sock.type)
             proxy_sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
             proxy_sock.setsockopt(socket.SOL_TCP, socket.TCP_FASTOPEN_CONNECT, 1)
+            proxy_sock.setsockopt(socket.SOL_TCP, socket.TCP_NODELAY, 1)
+            proxy_sock.setsockopt(socket.SOL_TCP, socket.TCP_QUICKACK, 1)
 
             connected = False
             buffer = bytes()
@@ -142,11 +148,15 @@ class ProxyServer:
             if buffer:
                 wait_write(proxy_sock.fileno())
                 proxy_sock.sendall(buffer)
+                logging.debug(f"Sent remaining {len(buffer)} bytes for {up_label}")
         except Exception as e:
             client_sock.shutdown(socket.SHUT_RDWR)
             client_sock.close()
             logging.error(f"Failed to connect {up_label}: {e}")
             return
+
+        prepare_time = time.perf_counter() - prepare_start
+        logging.debug(f"Prepared {up_label} in {prepare_time * 1000:.2f} ms")
 
         try:
             t = [
@@ -185,9 +195,13 @@ class ProxyServer:
         except Exception as e:
             logging.critical(f"Server error: {e}")
 
-    def run(self, *_):
+    def run(self):
         self._group.map(self._listen, self._FAMILY)
         self._group.join()
+
+
+def run(*_):
+    ProxyServer().run()
 
 
 if __name__ == "__main__":
@@ -197,7 +211,7 @@ if __name__ == "__main__":
     try:
         cpu_count = os.cpu_count() or 1
         thread_pool = ThreadPool(cpu_count)
-        thread_pool.map(ProxyServer().run, range(cpu_count))
+        thread_pool.map(run, range(cpu_count))
         thread_pool.join()
     except KeyboardInterrupt:
         pass
