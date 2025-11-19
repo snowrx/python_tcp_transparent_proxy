@@ -12,8 +12,7 @@ import time
 
 LOG_LEVEL = logging.INFO
 PORT = 8081
-BUFFER_SIZE = 1 << 16
-BUFFER_SCALE = 2
+BUFFER_SIZE = 1 << 20
 IDLE_TIMEOUT = 43200
 FAST_TIMEOUT = 1 / 1000
 
@@ -51,25 +50,23 @@ class ProxyServer:
     def _transfer(self, label: str, src_sock: socket.socket, dst_sock: socket.socket):
         logging.debug(f"Start transfer {label}")
         eof = False
-        buffer_size = BUFFER_SIZE
 
         try:
             wait_read(src_sock.fileno(), IDLE_TIMEOUT)
-            while buffer := src_sock.recv(buffer_size):
+            while buffer := src_sock.recv(BUFFER_SIZE):
                 while buffer:
                     write_start = time.perf_counter()
                     wait_write(dst_sock.fileno())
                     sent = dst_sock.send(buffer)
                     buffer = bytes(memoryview(buffer)[sent:])
 
-                    if (s := sent * BUFFER_SCALE) > buffer_size:
-                        buffer_size = s
-                        logging.debug(f"Buffer size increased to {buffer_size} for {label}")
+                    if buffer:
+                        logging.debug(f"Sent {sent}, remaining {len(buffer)} bytes for {label}")
 
-                    if not eof and len(buffer) < buffer_size:
+                    if not eof and len(buffer) < BUFFER_SIZE:
                         try:
                             wait_read(src_sock.fileno(), FAST_TIMEOUT)
-                            if deficit := src_sock.recv(buffer_size - len(buffer)):
+                            if deficit := src_sock.recv(BUFFER_SIZE - len(buffer)):
                                 buffer += deficit
                             else:
                                 eof = True
