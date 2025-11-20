@@ -15,6 +15,8 @@ IDLE_TIMEOUT = 43200
 FAST_TIMEOUT = 1 / 1000
 BUFFER_SIZE = 1 << 20
 TFO_MSS = 1220
+ANTI_LAG = True
+CORK = True
 
 
 class ProxyServer:
@@ -54,6 +56,9 @@ class ProxyServer:
             eof = False
             wait_read(src_sock.fileno(), IDLE_TIMEOUT)
             while buffer := src_sock.recv(BUFFER_SIZE):
+                if CORK:
+                    dst_sock.setsockopt(socket.SOL_TCP, socket.TCP_CORK, 1)
+
                 while buffer:
                     wait_write(dst_sock.fileno())
                     sent = dst_sock.send(buffer)
@@ -70,6 +75,10 @@ class ProxyServer:
                             pass
                         except (ConnectionResetError, OSError):
                             eof = True
+
+                if CORK:
+                    dst_sock.setsockopt(socket.SOL_TCP, socket.TCP_CORK, 0)
+
                 if eof:
                     break
                 wait_read(src_sock.fileno(), IDLE_TIMEOUT)
@@ -79,6 +88,8 @@ class ProxyServer:
             logging.error(f"Failed to transfer {label}: {e}")
         finally:
             try:
+                if CORK:
+                    dst_sock.setsockopt(socket.SOL_TCP, socket.TCP_CORK, 0)
                 dst_sock.shutdown(socket.SHUT_WR)
             except:
                 pass
@@ -90,6 +101,10 @@ class ProxyServer:
 
         try:
             client_sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
+            if ANTI_LAG:
+                client_sock.setsockopt(socket.SOL_TCP, socket.TCP_NODELAY, 1)
+                client_sock.setsockopt(socket.SOL_TCP, socket.TCP_QUICKACK, 1)
+
             srv_addr = client_sock.getsockname()
             dst_addr = self.get_original_dst(client_sock)
 
@@ -111,6 +126,9 @@ class ProxyServer:
             proxy_sock = socket.socket(client_sock.family, client_sock.type)
             proxy_sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
             proxy_sock.setsockopt(socket.SOL_TCP, socket.TCP_FASTOPEN_CONNECT, 1)
+            if ANTI_LAG:
+                proxy_sock.setsockopt(socket.SOL_TCP, socket.TCP_NODELAY, 1)
+                proxy_sock.setsockopt(socket.SOL_TCP, socket.TCP_QUICKACK, 1)
 
             connected = False
             buffer = bytes()
