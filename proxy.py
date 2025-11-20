@@ -97,8 +97,6 @@ class ProxyServer:
 
         try:
             client_sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
-            client_sock.setsockopt(socket.SOL_TCP, socket.TCP_NODELAY, 1)
-            client_sock.setsockopt(socket.SOL_TCP, socket.TCP_QUICKACK, 1)
             srv_addr = client_sock.getsockname()
             dst_addr = self.get_original_dst(client_sock)
 
@@ -120,8 +118,7 @@ class ProxyServer:
             proxy_sock = socket.socket(client_sock.family, client_sock.type)
             proxy_sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
             proxy_sock.setsockopt(socket.SOL_TCP, socket.TCP_FASTOPEN_CONNECT, 1)
-            proxy_sock.setsockopt(socket.SOL_TCP, socket.TCP_NODELAY, 1)
-            proxy_sock.setsockopt(socket.SOL_TCP, socket.TCP_QUICKACK, 1)
+            proxy_sock.setsockopt(socket.SOL_TCP, socket.TCP_DEFER_ACCEPT, 1)
 
             connected = False
             buffer = bytes()
