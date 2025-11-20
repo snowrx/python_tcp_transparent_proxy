@@ -12,9 +12,10 @@ import time
 
 LOG_LEVEL = logging.INFO
 PORT = 8081
-BUFFER_SIZE = 1 << 20
 IDLE_TIMEOUT = 43200
 FAST_TIMEOUT = 1 / 1000
+BUFFER_SIZE = 1 << 24
+TFO_MSS = 1220
 
 
 class ProxyServer:
@@ -54,14 +55,15 @@ class ProxyServer:
         try:
             wait_read(src_sock.fileno(), IDLE_TIMEOUT)
             while buffer := src_sock.recv(BUFFER_SIZE):
-                dst_sock.setsockopt(socket.SOL_TCP, socket.TCP_CORK, 1)
+                corking = False
                 corked = 0
 
                 while buffer:
                     wait_write(dst_sock.fileno())
                     sent = dst_sock.send(buffer)
                     buffer = bytes(memoryview(buffer)[sent:])
-                    corked += sent
+                    if corking:
+                        corked += sent
 
                     if not eof and len(buffer) < BUFFER_SIZE:
                         try:
@@ -75,9 +77,13 @@ class ProxyServer:
                         except (ConnectionResetError, OSError):
                             eof = True
 
-                dst_sock.setsockopt(socket.SOL_TCP, socket.TCP_CORK, 0)
-                logging.debug(f"Corked {corked} bytes for {label}")
+                    if not corking and buffer:
+                        corking = True
+                        dst_sock.setsockopt(socket.SOL_TCP, socket.TCP_CORK, 1)
 
+                if corking:
+                    dst_sock.setsockopt(socket.SOL_TCP, socket.TCP_CORK, 0)
+                    logging.debug(f"Corked {corked} bytes for {label}")
                 if eof:
                     break
                 wait_read(src_sock.fileno(), IDLE_TIMEOUT)
@@ -130,7 +136,7 @@ class ProxyServer:
             buffer = bytes()
             try:
                 wait_read(client_sock.fileno(), FAST_TIMEOUT)
-                if buffer := client_sock.recv(BUFFER_SIZE):
+                if buffer := client_sock.recv(TFO_MSS):
                     sent = proxy_sock.sendto(buffer, socket.MSG_FASTOPEN, dst_addr)
                     buffer = bytes(memoryview(buffer)[sent:])
                     connected = True
