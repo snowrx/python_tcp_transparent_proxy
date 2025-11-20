@@ -15,6 +15,7 @@ PORT = 8081
 BUFFER_SIZE = 1 << 20
 IDLE_TIMEOUT = 43200
 FAST_TIMEOUT = 1 / 1000
+ENABLE_EXPERIMENTAL = False
 
 
 class ProxyServer:
@@ -54,14 +55,16 @@ class ProxyServer:
         try:
             wait_read(src_sock.fileno(), IDLE_TIMEOUT)
             while buffer := src_sock.recv(BUFFER_SIZE):
+                if ENABLE_EXPERIMENTAL:
+                    dst_sock.setsockopt(socket.SOL_TCP, socket.TCP_CORK, 1)
+                    logging.debug(f"{label:100s} Set cork")
+
                 while buffer:
                     write_start = time.perf_counter()
                     wait_write(dst_sock.fileno())
                     sent = dst_sock.send(buffer)
                     buffer = bytes(memoryview(buffer)[sent:])
-
-                    if buffer:
-                        logging.debug(f"Sent {sent}, remaining {len(buffer)} bytes for {label}")
+                    logging.debug(f"{label:100s} Sent {sent:7d}, remaining {len(buffer):7d}")
 
                     if not eof and len(buffer) < BUFFER_SIZE:
                         try:
@@ -76,6 +79,11 @@ class ProxyServer:
                             eof = True
                     if (write_time := time.perf_counter() - write_start) >= 0.1:
                         logging.warning(f"Writing to {label} took {write_time * 1000:.2f} ms")
+
+                if ENABLE_EXPERIMENTAL:
+                    dst_sock.setsockopt(socket.SOL_TCP, socket.TCP_CORK, 0)
+                    logging.debug(f"{label:100s} Unset cork")
+
                 if eof:
                     break
                 wait_read(src_sock.fileno(), IDLE_TIMEOUT)
@@ -97,6 +105,9 @@ class ProxyServer:
 
         try:
             client_sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
+            if ENABLE_EXPERIMENTAL:
+                client_sock.setsockopt(socket.SOL_TCP, socket.TCP_NODELAY, 1)
+                client_sock.setsockopt(socket.SOL_TCP, socket.TCP_QUICKACK, 1)
             srv_addr = client_sock.getsockname()
             dst_addr = self.get_original_dst(client_sock)
 
@@ -118,7 +129,10 @@ class ProxyServer:
             proxy_sock = socket.socket(client_sock.family, client_sock.type)
             proxy_sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
             proxy_sock.setsockopt(socket.SOL_TCP, socket.TCP_FASTOPEN_CONNECT, 1)
-            proxy_sock.setsockopt(socket.SOL_TCP, socket.TCP_DEFER_ACCEPT, 1)
+            if ENABLE_EXPERIMENTAL:
+                proxy_sock.setsockopt(socket.SOL_TCP, socket.TCP_NODELAY, 1)
+                proxy_sock.setsockopt(socket.SOL_TCP, socket.TCP_QUICKACK, 1)
+                proxy_sock.setsockopt(socket.SOL_TCP, socket.TCP_DEFER_ACCEPT, 1)
 
             connected = False
             buffer = bytes()
@@ -202,6 +216,12 @@ if __name__ == "__main__":
     if os.getenv("DEBUG"):
         LOG_LEVEL = logging.DEBUG
     logging.basicConfig(level=LOG_LEVEL)
+    logging.critical(f"Log level: {logging._levelToName[LOG_LEVEL]}")
+
+    if os.getenv("EXPERIMENTAL"):
+        ENABLE_EXPERIMENTAL = True
+        logging.info("Experimental features are enabled")
+
     try:
         cpu_count = os.cpu_count() or 1
         thread_pool = ThreadPool(cpu_count)
