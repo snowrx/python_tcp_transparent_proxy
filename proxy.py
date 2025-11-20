@@ -8,13 +8,12 @@ from gevent.threadpool import ThreadPool
 import os
 import logging
 import struct
-import time
 
 LOG_LEVEL = logging.INFO
 PORT = 8081
 IDLE_TIMEOUT = 43200
 FAST_TIMEOUT = 1 / 1000
-BUFFER_SIZE = 1 << 24
+BUFFER_SIZE = 1 << 20
 TFO_MSS = 1220
 
 
@@ -50,20 +49,15 @@ class ProxyServer:
 
     def _transfer(self, label: str, src_sock: socket.socket, dst_sock: socket.socket):
         logging.debug(f"Start transfer {label}")
-        eof = False
 
         try:
+            eof = False
             wait_read(src_sock.fileno(), IDLE_TIMEOUT)
             while buffer := src_sock.recv(BUFFER_SIZE):
-                corking = False
-                corked = 0
-
                 while buffer:
                     wait_write(dst_sock.fileno())
                     sent = dst_sock.send(buffer)
                     buffer = bytes(memoryview(buffer)[sent:])
-                    if corking:
-                        corked += sent
 
                     if not eof and len(buffer) < BUFFER_SIZE:
                         try:
@@ -76,14 +70,6 @@ class ProxyServer:
                             pass
                         except (ConnectionResetError, OSError):
                             eof = True
-
-                    if not corking and buffer:
-                        corking = True
-                        dst_sock.setsockopt(socket.SOL_TCP, socket.TCP_CORK, 1)
-
-                if corking:
-                    dst_sock.setsockopt(socket.SOL_TCP, socket.TCP_CORK, 0)
-                    logging.debug(f"Corked {corked} bytes for {label}")
                 if eof:
                     break
                 wait_read(src_sock.fileno(), IDLE_TIMEOUT)
@@ -101,12 +87,9 @@ class ProxyServer:
 
     def _accept(self, client_sock: socket.socket, client_addr: tuple[str, int]):
         logging.debug(f"New connection from [{client_addr[0]}]:{client_addr[1]}")
-        prepare_start = time.perf_counter()
 
         try:
             client_sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
-            client_sock.setsockopt(socket.SOL_TCP, socket.TCP_NODELAY, 1)
-            client_sock.setsockopt(socket.SOL_TCP, socket.TCP_QUICKACK, 1)
             srv_addr = client_sock.getsockname()
             dst_addr = self.get_original_dst(client_sock)
 
@@ -128,9 +111,6 @@ class ProxyServer:
             proxy_sock = socket.socket(client_sock.family, client_sock.type)
             proxy_sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
             proxy_sock.setsockopt(socket.SOL_TCP, socket.TCP_FASTOPEN_CONNECT, 1)
-            proxy_sock.setsockopt(socket.SOL_TCP, socket.TCP_NODELAY, 1)
-            proxy_sock.setsockopt(socket.SOL_TCP, socket.TCP_QUICKACK, 1)
-            proxy_sock.setsockopt(socket.SOL_TCP, socket.TCP_DEFER_ACCEPT, 1)
 
             connected = False
             buffer = bytes()
@@ -160,9 +140,6 @@ class ProxyServer:
             client_sock.close()
             logging.error(f"Failed to connect {up_label}: {e}")
             return
-
-        prepare_time = time.perf_counter() - prepare_start
-        logging.debug(f"Prepared {up_label} in {prepare_time * 1000:.2f} ms")
 
         try:
             t = [
@@ -214,7 +191,6 @@ if __name__ == "__main__":
     if os.getenv("DEBUG"):
         LOG_LEVEL = logging.DEBUG
     logging.basicConfig(level=LOG_LEVEL)
-    logging.critical(f"Log level: {logging._levelToName[LOG_LEVEL]}")
 
     try:
         cpu_count = os.cpu_count() or 1
