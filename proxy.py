@@ -14,7 +14,7 @@ IDLE_TIMEOUT = 43200
 FAST_TIMEOUT = 1 / 1000
 BUFFER_SIZE = 1 << 20
 TFO_MSS = 1220
-CORK = True
+CORK = False
 
 
 class ProxyServer:
@@ -179,6 +179,8 @@ if __name__ == "__main__":
     if os.getenv("DEBUG"):
         LOG_LEVEL = logging.DEBUG
     logging.basicConfig(level=LOG_LEVEL)
+    if os.getenv("CORK"):
+        CORK = True
     c = os.cpu_count() or 1
     thread_pool = ThreadPool(c)
     try:
