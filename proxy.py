@@ -1,3 +1,6 @@
+import logging
+import struct
+import os
 import gevent
 from gevent import socket
 from gevent.socket import wait_read, wait_write
@@ -5,16 +8,13 @@ from gevent.server import StreamServer
 from gevent.pool import Group
 from gevent.threadpool import ThreadPool
 
-import os
-import logging
-import struct
-
 LOG_LEVEL = logging.INFO
 PORT = 8081
 IDLE_TIMEOUT = 43200
 FAST_TIMEOUT = 1 / 1000
 BUFFER_SIZE = 1 << 20
 TFO_MSS = 1220
+CORK = True
 
 
 class ProxyServer:
@@ -32,7 +32,6 @@ class ProxyServer:
     def _get_orig_dst(self, sock: socket.socket):
         ip: str = ""
         port: int = 0
-
         match sock.family:
             case socket.AF_INET:
                 dst = sock.getsockopt(socket.SOL_IP, self._SO_ORIGINAL_DST, self._V4_LEN)
@@ -44,7 +43,6 @@ class ProxyServer:
                 ip = socket.inet_ntop(socket.AF_INET6, raw_ip)
             case _:
                 raise Exception(f"Unknown socket family: {sock.family}")
-
         return ip, port
 
     def _relay(self, label: str, src: socket.socket, dst: socket.socket):
@@ -54,12 +52,13 @@ class ProxyServer:
             eof = False
             wait_read(src.fileno(), IDLE_TIMEOUT)
             while buffer := src.recv(BUFFER_SIZE):
+                if CORK:
+                    dst.setsockopt(socket.SOL_TCP, socket.TCP_CORK, 1)
                 while buffer:
                     wait_write(dst.fileno())
                     sent = dst.send(buffer)
                     buffer = bytes(memoryview(buffer)[sent:])
                     total_bytes += sent
-
                     if not eof and len(buffer) < BUFFER_SIZE:
                         try:
                             wait_read(src.fileno(), FAST_TIMEOUT)
@@ -69,6 +68,8 @@ class ProxyServer:
                                 eof = True
                         except (BlockingIOError, TimeoutError):
                             pass
+                if CORK:
+                    dst.setsockopt(socket.SOL_TCP, socket.TCP_CORK, 0)
                 if eof:
                     break
                 wait_read(src.fileno(), IDLE_TIMEOUT)
@@ -88,7 +89,6 @@ class ProxyServer:
             client_sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
             client_sock.setsockopt(socket.SOL_TCP, socket.TCP_NODELAY, 1)
             client_sock.setsockopt(socket.SOL_TCP, socket.TCP_QUICKACK, 1)
-
             srv_addr = client_sock.getsockname()
             dst_addr = self._get_orig_dst(client_sock)
             if dst_addr[0] == srv_addr[0] and dst_addr[1] == srv_addr[1]:
@@ -96,7 +96,6 @@ class ProxyServer:
                 client_sock.close()
                 logging.error(f"Attempt to connect to the proxy server itself from [{client_addr[0]}]:{client_addr[1]}")
                 return
-
             up_label = f"[{client_addr[0]}]:{client_addr[1]} -> [{dst_addr[0]}]:{dst_addr[1]}"
             down_label = f"[{client_addr[0]}]:{client_addr[1]} <- [{dst_addr[0]}]:{dst_addr[1]}"
         except Exception as e:
@@ -104,7 +103,6 @@ class ProxyServer:
             client_sock.close()
             logging.error(f"Failed to get original destination for client [{client_addr[0]}]:{client_addr[1]}: {e}")
             return
-
         try:
             proxy_sock = socket.socket(client_sock.family, client_sock.type)
             proxy_sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
@@ -114,7 +112,6 @@ class ProxyServer:
             proxy_sock.connect(dst_addr)
             buffer = bytes()
             sent = 0
-
             try:
                 wait_read(client_sock.fileno(), FAST_TIMEOUT)
                 if buffer := client_sock.recv(TFO_MSS):
@@ -125,12 +122,10 @@ class ProxyServer:
                     raise Exception("Client disconnected before sending any data")
             except (BlockingIOError, TimeoutError) as e:
                 logging.debug(f"Failed to TFO {up_label}: {e}")
-
             if buffer:
                 wait_write(proxy_sock.fileno())
                 proxy_sock.sendall(buffer)
                 logging.debug(f"Sent remaining {len(buffer)} bytes to {up_label}")
-
             if sent:
                 logging.info(f"Connected {up_label} with TFO {sent} bytes")
             else:
@@ -140,7 +135,6 @@ class ProxyServer:
             client_sock.close()
             logging.error(f"Failed to connect {up_label}: {e}")
             return
-
         try:
             j = [
                 self._group.spawn(self._relay, up_label, client_sock, proxy_sock),
@@ -185,7 +179,6 @@ if __name__ == "__main__":
     if os.getenv("DEBUG"):
         LOG_LEVEL = logging.DEBUG
     logging.basicConfig(level=LOG_LEVEL)
-
     c = os.cpu_count() or 1
     thread_pool = ThreadPool(c)
     try:
