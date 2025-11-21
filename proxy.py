@@ -13,9 +13,7 @@ LOG_LEVEL = logging.INFO
 PORT = 8081
 IDLE_TIMEOUT = 43200
 FAST_TIMEOUT = 1 / 1000
-BUFFER_SIZE = 1 << 16
-BUFFER_SCALE = 2
-TFO_MSS = 1220
+BUFFER_SIZE = 1 << 20
 
 
 class ProxyServer:
@@ -49,24 +47,20 @@ class ProxyServer:
     def _relay(self, label: str, src: socket.socket, dst: socket.socket):
         logging.debug(f"Starting relay {label}")
         total_bytes = 0
-        buffer_size = BUFFER_SIZE
         try:
             eof = False
             wait_read(src.fileno(), IDLE_TIMEOUT)
-            while buffer := src.recv(buffer_size):
+            while buffer := src.recv(BUFFER_SIZE):
                 dst.setsockopt(socket.SOL_TCP, socket.TCP_CORK, 1)
                 while buffer:
                     wait_write(dst.fileno())
                     sent = dst.send(buffer)
                     buffer = bytes(memoryview(buffer)[sent:])
                     total_bytes += sent
-                    if (s := sent * BUFFER_SCALE) > buffer_size:
-                        buffer_size = s
-                        logging.debug(f"Buffer extended to {buffer_size} bytes for {label}")
-                    if not eof and len(buffer) < buffer_size:
+                    if not eof and len(buffer) < BUFFER_SIZE:
                         try:
                             wait_read(src.fileno(), FAST_TIMEOUT)
-                            if next_buffer := src.recv(buffer_size - len(buffer)):
+                            if next_buffer := src.recv(BUFFER_SIZE - len(buffer)):
                                 buffer += next_buffer
                             else:
                                 eof = True
@@ -113,13 +107,14 @@ class ProxyServer:
             proxy_sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
             proxy_sock.setsockopt(socket.SOL_TCP, socket.TCP_NODELAY, 1)
             proxy_sock.setsockopt(socket.SOL_TCP, socket.TCP_QUICKACK, 1)
+            proxy_sock.setsockopt(socket.SOL_TCP, socket.TCP_DEFER_ACCEPT, 1)
             proxy_sock.setsockopt(socket.SOL_TCP, socket.TCP_FASTOPEN_CONNECT, 1)
             proxy_sock.connect(dst_addr)
             buffer = bytes()
             sent = 0
             try:
                 wait_read(client_sock.fileno(), FAST_TIMEOUT)
-                if buffer := client_sock.recv(TFO_MSS):
+                if buffer := client_sock.recv(BUFFER_SIZE):
                     wait_write(proxy_sock.fileno())
                     sent = proxy_sock.sendto(buffer, socket.MSG_FASTOPEN, dst_addr)
                     buffer = bytes(memoryview(buffer)[sent:])
