@@ -14,6 +14,7 @@ PORT = 8081
 IDLE_TIMEOUT = 43200
 FAST_TIMEOUT = 1 / 1000
 BUFFER_SIZE = 1 << 20
+THREAD_POOL_SIZE = 2
 
 
 class ProxyServer:
@@ -181,10 +182,9 @@ if __name__ == "__main__":
     if os.getenv("DEBUG"):
         LOG_LEVEL = logging.DEBUG
     logging.basicConfig(level=LOG_LEVEL)
-    c = os.cpu_count() or 1
-    thread_pool = ThreadPool(c)
+    thread_pool = ThreadPool(THREAD_POOL_SIZE)
     try:
-        thread_pool.map(ProxyServer().run, range(c))
+        thread_pool.map(ProxyServer().run, range(THREAD_POOL_SIZE))
         thread_pool.join()
     except KeyboardInterrupt:
         thread_pool.kill()
