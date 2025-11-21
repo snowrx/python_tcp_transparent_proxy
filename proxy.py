@@ -12,7 +12,8 @@ LOG_LEVEL = logging.INFO
 PORT = 8081
 IDLE_TIMEOUT = 43200
 FAST_TIMEOUT = 1 / 1000
-BUFFER_SIZE = 1 << 20
+BUFFER_SIZE = 1 << 16
+BUFFER_SCALE = 2
 TFO_MSS = 1220
 CORK = False
 
@@ -48,10 +49,11 @@ class ProxyServer:
     def _relay(self, label: str, src: socket.socket, dst: socket.socket):
         logging.debug(f"Starting relay {label}")
         total_bytes = 0
+        buffer_size = BUFFER_SIZE
         try:
             eof = False
             wait_read(src.fileno(), IDLE_TIMEOUT)
-            while buffer := src.recv(BUFFER_SIZE):
+            while buffer := src.recv(buffer_size):
                 if CORK:
                     dst.setsockopt(socket.SOL_TCP, socket.TCP_CORK, 1)
                 while buffer:
@@ -59,10 +61,13 @@ class ProxyServer:
                     sent = dst.send(buffer)
                     buffer = bytes(memoryview(buffer)[sent:])
                     total_bytes += sent
-                    if not eof and len(buffer) < BUFFER_SIZE:
+                    if (s := sent * BUFFER_SCALE) > buffer_size:
+                        buffer_size = s
+                        logging.debug(f"Buffer extended to {buffer_size} bytes for {label}")
+                    if not eof and len(buffer) < buffer_size:
                         try:
                             wait_read(src.fileno(), FAST_TIMEOUT)
-                            if next_buffer := src.recv(BUFFER_SIZE - len(buffer)):
+                            if next_buffer := src.recv(buffer_size - len(buffer)):
                                 buffer += next_buffer
                             else:
                                 eof = True
@@ -103,6 +108,7 @@ class ProxyServer:
             client_sock.close()
             logging.error(f"Failed to get original destination for client [{client_addr[0]}]:{client_addr[1]}: {e}")
             return
+
         try:
             proxy_sock = socket.socket(client_sock.family, client_sock.type)
             proxy_sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
@@ -135,6 +141,7 @@ class ProxyServer:
             client_sock.close()
             logging.error(f"Failed to connect {up_label}: {e}")
             return
+
         try:
             j = [
                 self._group.spawn(self._relay, up_label, client_sock, proxy_sock),
@@ -181,6 +188,7 @@ if __name__ == "__main__":
     logging.basicConfig(level=LOG_LEVEL)
     if os.getenv("CORK"):
         CORK = True
+        logging.info("CORK enabled")
     c = os.cpu_count() or 1
     thread_pool = ThreadPool(c)
     try:
