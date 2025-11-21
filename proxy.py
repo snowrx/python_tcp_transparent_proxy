@@ -1,6 +1,7 @@
 import logging
 import struct
 import os
+import time
 import gevent
 from gevent import socket
 from gevent.socket import wait_read, wait_write
@@ -15,7 +16,6 @@ FAST_TIMEOUT = 1 / 1000
 BUFFER_SIZE = 1 << 16
 BUFFER_SCALE = 2
 TFO_MSS = 1220
-CORK = False
 
 
 class ProxyServer:
@@ -54,8 +54,7 @@ class ProxyServer:
             eof = False
             wait_read(src.fileno(), IDLE_TIMEOUT)
             while buffer := src.recv(buffer_size):
-                if CORK:
-                    dst.setsockopt(socket.SOL_TCP, socket.TCP_CORK, 1)
+                dst.setsockopt(socket.SOL_TCP, socket.TCP_CORK, 1)
                 while buffer:
                     wait_write(dst.fileno())
                     sent = dst.send(buffer)
@@ -73,8 +72,7 @@ class ProxyServer:
                                 eof = True
                         except (BlockingIOError, TimeoutError):
                             pass
-                if CORK:
-                    dst.setsockopt(socket.SOL_TCP, socket.TCP_CORK, 0)
+                dst.setsockopt(socket.SOL_TCP, socket.TCP_CORK, 0)
                 if eof:
                     break
                 wait_read(src.fileno(), IDLE_TIMEOUT)
@@ -90,6 +88,7 @@ class ProxyServer:
         logging.debug(f"Closed relay {label} total {total_bytes} bytes")
 
     def _accept(self, client_sock: socket.socket, client_addr: tuple[str, int]):
+        prepare_start = time.perf_counter()
         try:
             client_sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
             client_sock.setsockopt(socket.SOL_TCP, socket.TCP_NODELAY, 1)
@@ -132,10 +131,11 @@ class ProxyServer:
                 wait_write(proxy_sock.fileno())
                 proxy_sock.sendall(buffer)
                 logging.debug(f"Sent remaining {len(buffer)} bytes to {up_label}")
+            prepare_time = time.perf_counter() - prepare_start
             if sent:
-                logging.info(f"Connected {up_label} with TFO {sent} bytes")
+                logging.info(f"Connected {up_label} with TFO {sent} bytes ({prepare_time * 1000:.2f}ms)")
             else:
-                logging.info(f"Connected {up_label}")
+                logging.info(f"Connected {up_label} ({prepare_time * 1000:.2f}ms)")
         except Exception as e:
             client_sock.shutdown(socket.SHUT_RDWR)
             client_sock.close()
@@ -186,9 +186,6 @@ if __name__ == "__main__":
     if os.getenv("DEBUG"):
         LOG_LEVEL = logging.DEBUG
     logging.basicConfig(level=LOG_LEVEL)
-    if os.getenv("CORK"):
-        CORK = True
-        logging.info("CORK enabled")
     c = os.cpu_count() or 1
     thread_pool = ThreadPool(c)
     try:
