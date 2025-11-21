@@ -15,8 +15,6 @@ IDLE_TIMEOUT = 43200
 FAST_TIMEOUT = 1 / 1000
 BUFFER_SIZE = 1 << 20
 TFO_MSS = 1220
-ANTI_LAG = True
-CORK = True
 
 
 class ProxyServer:
@@ -31,7 +29,7 @@ class ProxyServer:
     def __init__(self):
         self._group = Group()
 
-    def get_original_dst(self, sock: socket.socket):
+    def _get_orig_dst(self, sock: socket.socket):
         ip: str = ""
         port: int = 0
 
@@ -49,69 +47,54 @@ class ProxyServer:
 
         return ip, port
 
-    def _transfer(self, label: str, src_sock: socket.socket, dst_sock: socket.socket):
-        logging.debug(f"Start transfer {label}")
-
+    def _relay(self, label: str, src: socket.socket, dst: socket.socket):
+        logging.debug(f"Starting relay {label}")
+        total_bytes = 0
         try:
             eof = False
-            wait_read(src_sock.fileno(), IDLE_TIMEOUT)
-            while buffer := src_sock.recv(BUFFER_SIZE):
-                if CORK:
-                    dst_sock.setsockopt(socket.SOL_TCP, socket.TCP_CORK, 1)
-
+            wait_read(src.fileno(), IDLE_TIMEOUT)
+            while buffer := src.recv(BUFFER_SIZE):
                 while buffer:
-                    wait_write(dst_sock.fileno())
-                    sent = dst_sock.send(buffer)
+                    wait_write(dst.fileno())
+                    sent = dst.send(buffer)
                     buffer = bytes(memoryview(buffer)[sent:])
+                    total_bytes += sent
 
                     if not eof and len(buffer) < BUFFER_SIZE:
                         try:
-                            wait_read(src_sock.fileno(), FAST_TIMEOUT)
-                            if deficit := src_sock.recv(BUFFER_SIZE - len(buffer)):
-                                buffer += deficit
+                            wait_read(src.fileno(), FAST_TIMEOUT)
+                            if next_buffer := src.recv(BUFFER_SIZE - len(buffer)):
+                                buffer += next_buffer
                             else:
                                 eof = True
                         except (BlockingIOError, TimeoutError):
                             pass
-                        except (ConnectionResetError, OSError):
-                            eof = True
-
-                if CORK:
-                    dst_sock.setsockopt(socket.SOL_TCP, socket.TCP_CORK, 0)
-
                 if eof:
                     break
-                wait_read(src_sock.fileno(), IDLE_TIMEOUT)
-        except (ConnectionResetError, OSError) as e:
-            logging.debug(f"Failed to transfer {label}: {e}")
+                wait_read(src.fileno(), IDLE_TIMEOUT)
+        except (ConnectionResetError, BrokenPipeError, TimeoutError) as e:
+            logging.debug(f"Failed to relay {label}: {e}")
         except Exception as e:
-            logging.error(f"Failed to transfer {label}: {e}")
+            logging.error(f"Failed to relay {label}: {e}")
         finally:
             try:
-                if CORK:
-                    dst_sock.setsockopt(socket.SOL_TCP, socket.TCP_CORK, 0)
-                dst_sock.shutdown(socket.SHUT_WR)
-            except:
+                dst.shutdown(socket.SHUT_WR)
+            except Exception:
                 pass
-
-        logging.debug(f"End transfer {label}")
+        logging.debug(f"Closed relay {label} total {total_bytes} bytes")
 
     def _accept(self, client_sock: socket.socket, client_addr: tuple[str, int]):
-        logging.debug(f"New connection from [{client_addr[0]}]:{client_addr[1]}")
-
         try:
             client_sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
-            if ANTI_LAG:
-                client_sock.setsockopt(socket.SOL_TCP, socket.TCP_NODELAY, 1)
-                client_sock.setsockopt(socket.SOL_TCP, socket.TCP_QUICKACK, 1)
+            client_sock.setsockopt(socket.SOL_TCP, socket.TCP_NODELAY, 1)
+            client_sock.setsockopt(socket.SOL_TCP, socket.TCP_QUICKACK, 1)
 
             srv_addr = client_sock.getsockname()
-            dst_addr = self.get_original_dst(client_sock)
-
+            dst_addr = self._get_orig_dst(client_sock)
             if dst_addr[0] == srv_addr[0] and dst_addr[1] == srv_addr[1]:
                 client_sock.shutdown(socket.SHUT_RDWR)
                 client_sock.close()
-                logging.error(f"Blocked direct connection from [{client_addr[0]}]:{client_addr[1]}")
+                logging.error(f"Attempt to connect to the proxy server itself from [{client_addr[0]}]:{client_addr[1]}")
                 return
 
             up_label = f"[{client_addr[0]}]:{client_addr[1]} -> [{dst_addr[0]}]:{dst_addr[1]}"
@@ -119,40 +102,39 @@ class ProxyServer:
         except Exception as e:
             client_sock.shutdown(socket.SHUT_RDWR)
             client_sock.close()
-            logging.error(f"Failed to prepare connection for [{client_addr[0]}]:{client_addr[1]}: {e}")
+            logging.error(f"Failed to get original destination for client [{client_addr[0]}]:{client_addr[1]}: {e}")
             return
 
         try:
             proxy_sock = socket.socket(client_sock.family, client_sock.type)
             proxy_sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
+            proxy_sock.setsockopt(socket.SOL_TCP, socket.TCP_NODELAY, 1)
+            proxy_sock.setsockopt(socket.SOL_TCP, socket.TCP_QUICKACK, 1)
             proxy_sock.setsockopt(socket.SOL_TCP, socket.TCP_FASTOPEN_CONNECT, 1)
-            if ANTI_LAG:
-                proxy_sock.setsockopt(socket.SOL_TCP, socket.TCP_NODELAY, 1)
-                proxy_sock.setsockopt(socket.SOL_TCP, socket.TCP_QUICKACK, 1)
-
-            connected = False
+            proxy_sock.connect(dst_addr)
             buffer = bytes()
+            sent = 0
+
             try:
                 wait_read(client_sock.fileno(), FAST_TIMEOUT)
                 if buffer := client_sock.recv(TFO_MSS):
+                    wait_write(proxy_sock.fileno())
                     sent = proxy_sock.sendto(buffer, socket.MSG_FASTOPEN, dst_addr)
                     buffer = bytes(memoryview(buffer)[sent:])
-                    connected = True
-                    logging.info(f"Connected {up_label} with TCP Fast Open (sent {sent} bytes)")
                 else:
-                    raise Exception("Client closed connection before sending any data")
-            except (BlockingIOError, TimeoutError):
-                pass
-
-            if not connected:
-                proxy_sock.connect(dst_addr)
-                connected = True
-                logging.info(f"Connected {up_label}")
+                    raise Exception("Client disconnected before sending any data")
+            except (BlockingIOError, TimeoutError) as e:
+                logging.debug(f"Failed to TFO {up_label}: {e}")
 
             if buffer:
                 wait_write(proxy_sock.fileno())
                 proxy_sock.sendall(buffer)
-                logging.debug(f"Sent remaining {len(buffer)} bytes for {up_label}")
+                logging.debug(f"Sent remaining {len(buffer)} bytes to {up_label}")
+
+            if sent:
+                logging.info(f"Connected {up_label} with TFO {sent} bytes")
+            else:
+                logging.info(f"Connected {up_label}")
         except Exception as e:
             client_sock.shutdown(socket.SHUT_RDWR)
             client_sock.close()
@@ -160,49 +142,43 @@ class ProxyServer:
             return
 
         try:
-            t = [
-                self._group.spawn(self._transfer, down_label, proxy_sock, client_sock),
-                self._group.spawn(self._transfer, up_label, client_sock, proxy_sock),
+            j = [
+                self._group.spawn(self._relay, up_label, client_sock, proxy_sock),
+                self._group.spawn(self._relay, down_label, proxy_sock, client_sock),
             ]
-            gevent.joinall(t)
+            gevent.joinall(j)
         except Exception as e:
             logging.error(f"Failed to proxy {up_label}: {e}")
-
-        try:
-            proxy_sock.shutdown(socket.SHUT_RDWR)
-            proxy_sock.close()
-        except:
-            pass
-
-        try:
-            client_sock.shutdown(socket.SHUT_RDWR)
-            client_sock.close()
-        except:
-            pass
-
-        logging.info(f"Closed {up_label}")
+        finally:
+            try:
+                proxy_sock.shutdown(socket.SHUT_RDWR)
+                proxy_sock.close()
+            except Exception:
+                pass
+            try:
+                client_sock.shutdown(socket.SHUT_RDWR)
+                client_sock.close()
+            except Exception:
+                pass
+            logging.info(f"Disconnected {up_label}")
 
     def _listen(self, family: socket.AddressFamily = socket.AF_INET):
+        sock = socket.socket(family, socket.SOCK_STREAM)
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
+        sock.bind(("", PORT))
+        sock.listen(socket.SOMAXCONN)
+        addr = sock.getsockname()
+        logging.info(f"Listening on [{addr[0]}]:{addr[1]}")
+        server = StreamServer(sock, self._accept)
+        self._group.spawn(server.serve_forever).join()
+
+    def run(self, *_):
         try:
-            sock = socket.socket(family, socket.SOCK_STREAM)
-            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
-            sock.bind(("", PORT))
-            sock.listen(socket.SOMAXCONN)
-            addr = sock.getsockname()
-            logging.info(f"Listening on [{addr[0]}]:{addr[1]}")
-
-            server = StreamServer(sock, self._accept)
-            self._group.spawn(server.serve_forever).join()
+            self._group.map(self._listen, self._FAMILY)
+            self._group.join()
         except Exception as e:
-            logging.critical(f"Server error: {e}")
-
-    def run(self):
-        self._group.map(self._listen, self._FAMILY)
-        self._group.join()
-
-
-def run(*_):
-    ProxyServer().run()
+            logging.error(f"Failed to start proxy server: {e}")
+            self._group.kill()
 
 
 if __name__ == "__main__":
@@ -210,10 +186,10 @@ if __name__ == "__main__":
         LOG_LEVEL = logging.DEBUG
     logging.basicConfig(level=LOG_LEVEL)
 
+    c = os.cpu_count() or 1
+    thread_pool = ThreadPool(c)
     try:
-        cpu_count = os.cpu_count() or 1
-        thread_pool = ThreadPool(cpu_count)
-        thread_pool.map(run, range(cpu_count))
+        thread_pool.map(ProxyServer().run, range(c))
         thread_pool.join()
     except KeyboardInterrupt:
-        pass
+        thread_pool.kill()
