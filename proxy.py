@@ -91,15 +91,21 @@ class ProxyServer:
             srv_addr = client_sock.getsockname()
             dst_addr = self._get_orig_dst(client_sock)
             if dst_addr[0] == srv_addr[0] and dst_addr[1] == srv_addr[1]:
-                client_sock.shutdown(socket.SHUT_RDWR)
-                client_sock.close()
+                try:
+                    client_sock.shutdown(socket.SHUT_RDWR)
+                    client_sock.close()
+                except Exception:
+                    pass
                 logging.error(f"Attempt to connect to the proxy server itself from [{client_addr[0]}]:{client_addr[1]}")
                 return
             up_label = f"[{client_addr[0]}]:{client_addr[1]} -> [{dst_addr[0]}]:{dst_addr[1]}"
             down_label = f"[{client_addr[0]}]:{client_addr[1]} <- [{dst_addr[0]}]:{dst_addr[1]}"
         except Exception as e:
-            client_sock.shutdown(socket.SHUT_RDWR)
-            client_sock.close()
+            try:
+                client_sock.shutdown(socket.SHUT_RDWR)
+                client_sock.close()
+            except Exception:
+                pass
             logging.error(f"Failed to get original destination for client [{client_addr[0]}]:{client_addr[1]}: {e}")
             return
 
@@ -133,8 +139,11 @@ class ProxyServer:
             else:
                 logging.info(f"Connected {up_label} ({prepare_time * 1000:.2f}ms)")
         except Exception as e:
-            client_sock.shutdown(socket.SHUT_RDWR)
-            client_sock.close()
+            try:
+                client_sock.shutdown(socket.SHUT_RDWR)
+                client_sock.close()
+            except Exception:
+                pass
             logging.error(f"Failed to connect {up_label}: {e}")
             return
 
