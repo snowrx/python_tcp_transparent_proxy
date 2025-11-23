@@ -14,7 +14,8 @@ PORT = 8081
 IDLE_TIMEOUT = 43200
 FAST_TIMEOUT = 1 / 1000
 BUFFER_SIZE = 1 << 18
-THREAD_POOL_SIZE = 2
+SMART_BUFFER_SCALAR = 2
+THREAD_POOL_SIZE = 4
 
 
 class ProxyServer:
@@ -47,9 +48,9 @@ class ProxyServer:
 
     def _relay(self, label: str, src: socket.socket, dst: socket.socket):
         logging.debug(f"Starting relay {label}")
-        total_bytes = 0
         try:
             eof = False
+            buffer_size = BUFFER_SIZE
             wait_read(src.fileno(), IDLE_TIMEOUT)
             while buffer := src.recv(BUFFER_SIZE):
                 dst.setsockopt(socket.SOL_TCP, socket.TCP_CORK, 1)
@@ -57,7 +58,9 @@ class ProxyServer:
                     wait_write(dst.fileno())
                     sent = dst.send(buffer)
                     buffer = bytes(memoryview(buffer)[sent:])
-                    total_bytes += sent
+                    if (s := sent * SMART_BUFFER_SCALAR) > buffer_size:
+                        buffer_size = s
+                        logging.info(f"Smart buffer: {buffer_size} bytes {label}")
                     if not eof and len(buffer) < BUFFER_SIZE:
                         try:
                             wait_read(src.fileno(), FAST_TIMEOUT)
@@ -80,7 +83,7 @@ class ProxyServer:
                 dst.shutdown(socket.SHUT_WR)
             except Exception:
                 pass
-        logging.debug(f"Closed relay {label} total {total_bytes} bytes")
+        logging.debug(f"Closed relay {label}")
 
     def _accept(self, client_sock: socket.socket, client_addr: tuple[str, int]):
         prepare_start = time.perf_counter()
