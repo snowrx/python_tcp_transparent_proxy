@@ -52,7 +52,7 @@ class ProxyServer:
             eof = False
             buffer_size = BUFFER_SIZE
             wait_read(src.fileno(), IDLE_TIMEOUT)
-            while buffer := src.recv(BUFFER_SIZE):
+            while buffer := src.recv(buffer_size):
                 dst.setsockopt(socket.SOL_TCP, socket.TCP_CORK, 1)
                 while buffer:
                     wait_write(dst.fileno())
@@ -61,10 +61,10 @@ class ProxyServer:
                     if (s := sent * SMART_BUFFER_SCALAR) > buffer_size:
                         buffer_size = s
                         logging.info(f"Smart buffer: {buffer_size} bytes {label}")
-                    if not eof and len(buffer) < BUFFER_SIZE:
+                    if not eof and len(buffer) < buffer_size:
                         try:
                             wait_read(src.fileno(), FAST_TIMEOUT)
-                            if next_buffer := src.recv(BUFFER_SIZE - len(buffer)):
+                            if next_buffer := src.recv(buffer_size - len(buffer)):
                                 buffer += next_buffer
                             else:
                                 eof = True
