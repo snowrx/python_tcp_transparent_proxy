@@ -1,4 +1,5 @@
 import logging
+import multiprocessing
 import struct
 import os
 import time
@@ -7,7 +8,6 @@ from gevent import socket
 from gevent.socket import wait_read, wait_write
 from gevent.server import StreamServer
 from gevent.pool import Group
-from gevent.threadpool import ThreadPool
 
 LOG_LEVEL = logging.INFO
 PORT = 8081
@@ -15,7 +15,6 @@ IDLE_TIMEOUT = 43200
 FAST_TIMEOUT = 1 / 1000
 BUFFER_SIZE = 1 << 18
 SMART_BUFFER_SCALAR = 2
-THREAD_POOL_SIZE = 4
 
 
 class ProxyServer:
@@ -181,7 +180,7 @@ class ProxyServer:
         server = StreamServer(sock, self._accept)
         self._group.spawn(server.serve_forever).join()
 
-    def run(self, *_):
+    def run(self):
         try:
             self._group.map(self._listen, self._FAMILY)
             self._group.join()
@@ -190,13 +189,14 @@ class ProxyServer:
             self._group.kill()
 
 
+def main(*_):
+    ProxyServer().run()
+
+
 if __name__ == "__main__":
     if os.getenv("DEBUG"):
         LOG_LEVEL = logging.DEBUG
     logging.basicConfig(level=LOG_LEVEL)
-    thread_pool = ThreadPool(THREAD_POOL_SIZE)
-    try:
-        thread_pool.map(ProxyServer().run, range(THREAD_POOL_SIZE))
-        thread_pool.join()
-    except KeyboardInterrupt:
-        thread_pool.kill()
+    nproc = multiprocessing.cpu_count()
+    with multiprocessing.Pool(nproc) as pool:
+        pool.map(main, range(nproc))
