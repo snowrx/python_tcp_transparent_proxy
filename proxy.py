@@ -7,7 +7,7 @@ from gevent.socket import wait_read, wait_write
 from gevent.server import StreamServer
 from gevent.pool import Group
 
-LOG_LEVEL = logging.DEBUG
+LOG_LEVEL = logging.INFO
 
 PORT = 8081
 FAMILY = [socket.AF_INET, socket.AF_INET6]
@@ -168,7 +168,8 @@ class ProxyServer:
         try:
             self._group.spawn(Session(client_sock, client_addr).serve).join()
         except Exception as e:
-            logging.error(f"Failed to establish session for {client_addr}: {e}")
+            logging.error(f"Failed to establish session for [{client_addr[0]}]:{client_addr[1]}: {e}")
+        finally:
             try:
                 client_sock.shutdown(socket.SHUT_RDWR)
                 client_sock.close()
