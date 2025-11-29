@@ -1,6 +1,8 @@
-import logging
+import os
 import struct
 import multiprocessing
+import logging
+
 import gevent
 from gevent import socket
 from gevent.socket import wait_read, wait_write
@@ -79,13 +81,16 @@ class Session:
         try:
             self.proxy_sock.shutdown(socket.SHUT_RDWR)
             self.proxy_sock.close()
+            del self.proxy_sock
         except Exception:
             pass
         try:
             self.client_sock.shutdown(socket.SHUT_RDWR)
             self.client_sock.close()
+            del self.client_sock
         except Exception:
             pass
+        logging.debug(f"Deinitialized Session {self.up_label}")
 
     def _relay(self, label: str, src: socket.socket, dst: socket.socket):
         logging.debug(f"Starting relay {label}")
@@ -195,6 +200,8 @@ def entry_worker(*_):
 
 
 if __name__ == "__main__":
+    if os.getenv("DEBUG"):
+        LOG_LEVEL = logging.DEBUG
     logging.basicConfig(level=LOG_LEVEL)
     w = multiprocessing.cpu_count()
     with multiprocessing.Pool(w) as p:
