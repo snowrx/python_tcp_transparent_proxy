@@ -7,7 +7,7 @@ ConditionPathExists=/opt/proxy/proxy
 DynamicUser=true
 WorkingDirectory=/opt/proxy
 ExecStart=/opt/proxy/proxy
-MemoryHigh=50%
+EnvironmentFile=-/opt/proxy/proxy.env
 
 [Install]
 WantedBy=multi-user.target

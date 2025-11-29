@@ -27,6 +27,7 @@ cp proxy.service /etc/systemd/system/
 
 cd $DEST
 python3 -m venv .venv
+[ ! -f .venv/bin/activate ] && echo "venv not found" && exit 1
 source .venv/bin/activate
 pip install -U -r requirements.txt
 deactivate
