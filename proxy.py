@@ -126,45 +126,50 @@ class Session:
                 pass
 
     def serve(self):
-        self._remote_sock.connect(self._remote_addr)
-
-        buffer = bytes()
         try:
-            wait_read(self._client_sock.fileno(), TFO_TIMEOUT)
-            if buffer := self._client_sock.recv(BUFFER_SIZE):
-                logging.debug(f"{self._up_label} Received TFO {len(buffer)} bytes")
-                sent = self._remote_sock.sendto(buffer, socket.MSG_FASTOPEN, self._remote_addr)
-                buffer = bytes(memoryview(buffer)[sent:])
-                logging.debug(f"{self._up_label} Sent TFO {sent} bytes")
-            else:
-                raise ConnectionAbortedError("Client closed connection before any data was sent")
-        except (TimeoutError, BlockingIOError) as e:
-            logging.debug(f"{self._up_label} TFO failed: {e}")
+            self._remote_sock.connect(self._remote_addr)
 
-        if buffer:
-            wait_write(self._remote_sock.fileno())
-            self._remote_sock.sendall(buffer)
-            logging.debug(f"{self._up_label} Sent remaining {len(buffer)} bytes")
-        del buffer
+            buffer = bytes()
+            try:
+                wait_read(self._client_sock.fileno(), TFO_TIMEOUT)
+                if buffer := self._client_sock.recv(BUFFER_SIZE):
+                    logging.debug(f"{self._up_label} Received TFO {len(buffer)} bytes")
+                    sent = self._remote_sock.sendto(buffer, socket.MSG_FASTOPEN, self._remote_addr)
+                    buffer = bytes(memoryview(buffer)[sent:])
+                    logging.debug(f"{self._up_label} Sent TFO {sent} bytes")
+                else:
+                    raise ConnectionAbortedError("Client closed connection before any data was sent")
+            except (TimeoutError, BlockingIOError) as e:
+                logging.debug(f"{self._up_label} TFO failed: {e}")
 
-        prepare_time = time.perf_counter() - self._created_at
-        logging.info(f"{self._up_label} Session established ({prepare_time * 1000:.2f}ms)")
-        gevent.joinall(
-            [
-                gevent.spawn(self._forward_data, self._up_label, self._client_sock, self._remote_sock),
-                gevent.spawn(self._forward_data, self._down_label, self._remote_sock, self._client_sock),
-            ]
-        )
-        try:
-            self._remote_sock.shutdown(socket.SHUT_RDWR)
-            self._remote_sock.close()
-        except:
-            pass
-        try:
-            self._client_sock.shutdown(socket.SHUT_RDWR)
-            self._client_sock.close()
-        except:
-            pass
+            if buffer:
+                wait_write(self._remote_sock.fileno())
+                self._remote_sock.sendall(buffer)
+                logging.debug(f"{self._up_label} Sent remaining {len(buffer)} bytes")
+            del buffer
+
+            prepare_time = time.perf_counter() - self._created_at
+            logging.info(f"{self._up_label} Session established ({prepare_time * 1000:.2f}ms)")
+            gevent.joinall(
+                [
+                    gevent.spawn(self._forward_data, self._up_label, self._client_sock, self._remote_sock),
+                    gevent.spawn(self._forward_data, self._down_label, self._remote_sock, self._client_sock),
+                ]
+            )
+        except Exception as e:
+            logging.error(f"{self._up_label} Session error: {e}")
+        finally:
+            try:
+                self._remote_sock.shutdown(socket.SHUT_RDWR)
+                self._remote_sock.close()
+            except:
+                pass
+            try:
+                self._client_sock.shutdown(socket.SHUT_RDWR)
+                self._client_sock.close()
+            except:
+                pass
+
         session_time = time.perf_counter() - self._created_at
         logging.info(f"{self._up_label} Session closed ({session_time:.2f}s)")
 
