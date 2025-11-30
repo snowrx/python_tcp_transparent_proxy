@@ -2,6 +2,7 @@ import os
 import struct
 import multiprocessing
 import logging
+import time
 
 import gevent
 from gevent import socket
@@ -45,6 +46,7 @@ class Session:
                 raise RuntimeError(f"Unknown socket family: {sock.family}")
         return ip, port
 
+    _created_at: float
     _client_sock: socket.socket
     _client_addr: tuple[str, int]
     _remote_sock: socket.socket
@@ -53,6 +55,7 @@ class Session:
     _down_label: str
 
     def __init__(self, client_sock: socket.socket, client_addr: tuple[str, int]):
+        self._created_at = time.perf_counter()
         self._remote_addr = self._get_orig_dst(client_sock)
         srv_addr = client_sock.getsockname()
         if self._remote_addr[0] == srv_addr[0] and self._remote_addr[1] == srv_addr[1]:
@@ -144,7 +147,8 @@ class Session:
             logging.debug(f"{self._up_label} Sent remaining {len(buffer)} bytes")
         del buffer
 
-        logging.info(f"{self._up_label} Session established")
+        prepare_time = time.perf_counter() - self._created_at
+        logging.info(f"{self._up_label} Session established ({prepare_time * 1000:.2f}ms)")
         gevent.joinall(
             [
                 gevent.spawn(self._forward_data, self._up_label, self._client_sock, self._remote_sock),
@@ -161,7 +165,8 @@ class Session:
             self._client_sock.close()
         except:
             pass
-        logging.info(f"{self._up_label} Session closed")
+        session_time = time.perf_counter() - self._created_at
+        logging.info(f"{self._up_label} Session closed ({session_time:.2f}s)")
 
 
 class ProxyServer:
