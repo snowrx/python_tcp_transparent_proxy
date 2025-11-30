@@ -81,10 +81,6 @@ class Session:
 
         logging.debug(f"{self._up_label} Session created")
 
-    def __del__(self):
-        logging.debug("Session destroyed")
-        del self._remote_sock, self._client_sock
-
     def _forward_data(self, label: str, src: socket.socket, dst: socket.socket):
         try:
             eof = False
