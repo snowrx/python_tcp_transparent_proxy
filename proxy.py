@@ -112,6 +112,8 @@ class Session:
             logging.debug(f"{label} Timeout")
         except ConnectionResetError:
             logging.debug(f"{label} Connection reset by peer")
+        except BrokenPipeError:
+            logging.debug(f"{label} Broken pipe")
         except Exception as e:
             logging.error(f"{label} Unexpected error: {e}")
         finally:
@@ -149,6 +151,16 @@ class Session:
                 gevent.spawn(self._forward_data, self._down_label, self._remote_sock, self._client_sock),
             ]
         )
+        try:
+            self._remote_sock.shutdown(socket.SHUT_RDWR)
+            self._remote_sock.close()
+        except:
+            pass
+        try:
+            self._client_sock.shutdown(socket.SHUT_RDWR)
+            self._client_sock.close()
+        except:
+            pass
         logging.info(f"{self._up_label} Session closed")
 
 
