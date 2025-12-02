@@ -3,7 +3,6 @@ from threading import Lock
 
 class ZeroCopyRingBuffer:
     _MAX_SIZE: int = 1 << 30
-    _ERASE_WRITABLE_BUFFER: bool = True
 
     _lock: Lock
     _buffer: memoryview
@@ -37,7 +36,6 @@ class ZeroCopyRingBuffer:
         msg += f"wptr={self._wptr}\n"
         msg += f"rptr={self._rptr}\n"
         msg += f"emkr={self._end_marker}\n"
-        msg += f"buf:\n{self._buffer.tobytes().hex(" ")}\n"
         return msg
 
     def readable(self) -> int:
@@ -73,10 +71,7 @@ class ZeroCopyRingBuffer:
         with self._lock:
             self._status_validation()
             size = max(0, self._size - self.readable())
-            buf = self._buffer[self._wptr : self._wptr + size]
-            if self._ERASE_WRITABLE_BUFFER:
-                buf[:] = memoryview(bytes(size))
-            return buf
+            return self._buffer[self._wptr : self._wptr + size]
 
     def get_readable_buffer(self) -> memoryview:
         with self._lock:
@@ -117,19 +112,21 @@ if __name__ == "__main__":
         eof = False
         while True:
             if wbuf := rb.get_writable_buffer():
-                print(wbuf.tobytes().hex(" "))
                 l = min(W, len(send), len(wbuf))
                 wbuf[:l] = send[:l]
                 rb.commit_write(l)
                 del send[:l]
+                print(f"write {l}")
                 if not send:
                     eof = True
+                    print("eof")
                 print(rb)
 
             if rbuf := rb.get_readable_buffer():
                 l = min(R, len(rbuf))
                 recv += rbuf[:l]
                 rb.commit_read(l)
+                print(f"read {l}")
                 print(rb)
 
             if eof and not rb.readable():
