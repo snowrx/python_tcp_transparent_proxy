@@ -10,6 +10,8 @@ from gevent.socket import wait_read, wait_write
 from gevent.server import StreamServer
 from gevent.pool import Group
 
+from modules.circular import CircularBuffer
+
 LOG_LEVEL = logging.INFO
 
 PORT = 8081

@@ -23,6 +23,7 @@ else
 fi
 
 cp {proxy.py,requirements.txt,proxy} $DEST
+cp -r modules $DEST
 touch $DEST/proxy.env
 
 cp proxy.service /etc/systemd/system/
