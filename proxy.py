@@ -2,11 +2,10 @@ import os
 import struct
 import multiprocessing
 import logging
-import time
 
 import gevent
-from gevent import socket
-from gevent.socket import wait_read, wait_write
+from gevent import socket, sleep
+from gevent.socket import wait_read, wait_write, timeout
 from gevent.server import StreamServer
 from gevent.pool import Group
 
@@ -56,7 +55,7 @@ class Session:
     _down_label: str
 
     def __init__(self, client_sock: socket.socket, client_addr: tuple[str, int]):
-        self._created_at = time.perf_counter()
+        self._created_at = gevent.get_hub().loop.now()
         self._remote_addr = self._get_orig_dst(client_sock)
         srv_addr = client_sock.getsockname()
         if self._remote_addr[0] == srv_addr[0] and self._remote_addr[1] == srv_addr[1]:
@@ -105,14 +104,14 @@ class Session:
                                 buffer += next_buffer
                             else:
                                 eof = True
-                        except TimeoutError:
+                        except timeout:
                             pass
                 dst.setsockopt(socket.SOL_TCP, socket.TCP_CORK, 0)
                 if eof:
                     break
                 wait_read(src.fileno(), IDLE_TIMEOUT)
             logging.debug(f"{label} EOF")
-        except TimeoutError:
+        except timeout:
             logging.debug(f"{label} Timeout")
         except ConnectionResetError:
             logging.debug(f"{label} Connection reset by peer")
@@ -139,9 +138,13 @@ class Session:
                     buffer = bytes(memoryview(buffer)[sent:])
                     logging.debug(f"{self._up_label} Sent TFO {sent} bytes")
                 else:
-                    raise ConnectionAbortedError("Client closed connection before any data was sent")
-            except (TimeoutError, BlockingIOError) as e:
-                logging.debug(f"{self._up_label} TFO failed: {e}")
+                    raise ConnectionAbortedError("Client closed connection before any data was sent") from None
+            except timeout as e:
+                logging.debug(f"{self._up_label} TFO data not received in time, falling back to regular connect: {e}")
+                # TFOデータが来なかったので、通常のブロッキング接続を開始する
+                self._remote_sock.connect(self._remote_addr)
+            except BlockingIOError as e:
+                logging.debug(f"{self._up_label} TFO send failed (no cookie/support), will send data normally: {e}")
 
             if buffer:
                 wait_write(self._remote_sock.fileno())
@@ -149,7 +152,7 @@ class Session:
                 logging.debug(f"{self._up_label} Sent remaining {len(buffer)} bytes")
             del buffer
 
-            prepare_time = time.perf_counter() - self._created_at
+            prepare_time = gevent.get_hub().loop.now() - self._created_at
             logging.info(f"{self._up_label} Session established ({prepare_time * 1000:.2f}ms)")
             gevent.joinall(
                 [
@@ -171,7 +174,7 @@ class Session:
             except:
                 pass
 
-        session_time = time.perf_counter() - self._created_at
+        session_time = gevent.get_hub().loop.now() - self._created_at
         logging.info(f"{self._up_label} Session closed ({session_time:.2f}s)")
 
 
