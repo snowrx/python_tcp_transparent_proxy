@@ -9,6 +9,7 @@ from gevent.socket import wait_read, wait_write, timeout
 from gevent.server import StreamServer
 from gevent.pool import Group
 
+from modules.circular import RingBuffer
 
 LOG_LEVEL = logging.INFO
 
@@ -18,7 +19,6 @@ FAMILY = [socket.AF_INET, socket.AF_INET6]
 BUFFER_SIZE = 1 << 20
 
 IDLE_TIMEOUT = 43200
-FAST_TIMEOUT = 1 / 1000
 TFO_TIMEOUT = 10 / 1000
 
 
@@ -106,37 +106,37 @@ class Session:
 
     def _relay(self, label: str, src: socket.socket, dst: socket.socket):
         try:
-            buffer: bytes = b""
-            eof = False
-            while True:
-                wait_read(src.fileno(), IDLE_TIMEOUT)
-                if buffer := src.recv(BUFFER_SIZE):
-                    logging.debug(f"{label} Received {len(buffer)} bytes")
-                else:
-                    eof = True
+            with RingBuffer(BUFFER_SIZE) as rb:
+                eof = False
+                while True:
+                    if len(rb) < BUFFER_SIZE and (wbuf := rb.get_writable_buffer()):
+                        wait_read(src.fileno(), IDLE_TIMEOUT)
+                        if recv := src.recv_into(wbuf):
+                            rb.advance_write(recv)
+                        else:
+                            eof = True
 
-                if buffer:
-                    dst.setsockopt(socket.SOL_TCP, socket.TCP_CORK, 1)
-                    while buffer:
-                        wait_write(dst.fileno(), IDLE_TIMEOUT)
-                        if sent := dst.send(buffer):
-                            buffer = bytes(memoryview(buffer)[sent:])
-                            logging.debug(f"{label} Sent {sent} bytes")
+                    if len(rb):
+                        dst.setsockopt(socket.SOL_TCP, socket.TCP_CORK, 1)
+                        while len(rb):
+                            if rbuf := rb.get_readable_buffer():
+                                wait_write(dst.fileno(), IDLE_TIMEOUT)
+                                if sent := dst.send(rbuf):
+                                    rb.advance_read(sent)
 
-                        if not eof and len(buffer) < BUFFER_SIZE:
-                            try:
-                                wait_read(src.fileno(), 0)
-                                if next_buffer := src.recv(BUFFER_SIZE):
-                                    buffer += next_buffer
-                                    logging.debug(f"{label} Advanced {len(next_buffer)} bytes")
-                                else:
-                                    eof = True
-                            except timeout:
-                                pass
-                    dst.setsockopt(socket.SOL_TCP, socket.TCP_CORK, 0)
+                            if not eof and (wbuf := rb.get_writable_buffer()):
+                                try:
+                                    wait_read(src.fileno(), 0)
+                                    if recv := src.recv_into(wbuf):
+                                        rb.advance_write(recv)
+                                    else:
+                                        eof = True
+                                except timeout:
+                                    pass
+                        dst.setsockopt(socket.SOL_TCP, socket.TCP_CORK, 0)
 
-                if eof and not buffer:
-                    break
+                    if eof and not len(rb):
+                        break
         except timeout:
             pass
         except ConnectionResetError:
@@ -150,6 +150,7 @@ class Session:
                 dst.shutdown(socket.SHUT_WR)
             except:
                 pass
+            logging.info(f"{label} EOF")
 
     _SO_ORIGINAL_DST = 80
     _SOL_IPV6 = 41
