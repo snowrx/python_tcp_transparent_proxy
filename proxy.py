@@ -4,7 +4,7 @@ import multiprocessing
 import logging
 
 import gevent
-from gevent import socket, sleep
+from gevent import socket
 from gevent.socket import wait_read, wait_write, timeout
 from gevent.server import StreamServer
 from gevent.pool import Group
@@ -23,6 +23,134 @@ TFO_TIMEOUT = 10 / 1000
 
 
 class Session:
+    _client_sock: socket.socket
+    _client_addr: tuple[str, int]
+    _remote_sock: socket.socket
+    _remote_addr: tuple[str, int]
+    _up_label: str
+    _down_label: str
+
+    def __init__(self, client_sock: socket.socket, client_addr: tuple[str, int]):
+        self._remote_addr = self._get_orig_dst(client_sock)
+        srv_addr = client_sock.getsockname()
+        if self._remote_addr[0] == srv_addr[0] and self._remote_addr[1] == srv_addr[1]:
+            client_sock.shutdown(socket.SHUT_RDWR)
+            client_sock.close()
+            logging.error(f"[{client_addr[0]}]:{client_addr[1]} Refused direct connection")
+            return
+
+        self._client_sock = client_sock
+        self._client_addr = client_addr
+        client_sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
+        client_sock.setsockopt(socket.SOL_TCP, socket.TCP_NODELAY, 1)
+        client_sock.setsockopt(socket.SOL_TCP, socket.TCP_QUICKACK, 1)
+
+        self._remote_sock = socket.socket(client_sock.family, client_sock.type)
+        self._remote_sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
+        self._remote_sock.setsockopt(socket.SOL_TCP, socket.TCP_NODELAY, 1)
+        self._remote_sock.setsockopt(socket.SOL_TCP, socket.TCP_QUICKACK, 1)
+        self._remote_sock.setsockopt(socket.SOL_TCP, socket.TCP_FASTOPEN_CONNECT, 1)
+
+        cl_str = f"[{self._client_addr[0]}]:{self._client_addr[1]}"
+        rm_str = f"[{self._remote_addr[0]}]:{self._remote_addr[1]}"
+        self._up_label = f"{cl_str} -> {rm_str}"
+        self._down_label = f"{cl_str} <- {rm_str}"
+
+        logging.debug(f"{self._up_label} Session created")
+
+    def serve(self):
+        try:
+            self._remote_sock.connect(self._remote_addr)
+
+            buffer: bytes = b""
+            try:
+                wait_read(self._client_sock.fileno(), TFO_TIMEOUT)
+                if buffer := self._client_sock.recv(BUFFER_SIZE):
+                    logging.debug(f"{self._up_label} Received initial {len(buffer)} bytes")
+                else:
+                    raise ConnectionAbortedError("Client closed connection before send data")
+            except timeout:
+                logging.debug(f"{self._up_label} Client did not send data before timeout")
+
+            try:
+                if sent := self._remote_sock.sendto(buffer, socket.MSG_FASTOPEN, self._remote_addr):
+                    buffer = bytes(memoryview(buffer)[sent:])
+                    logging.debug(f"{self._up_label} Sent initial {sent} bytes")
+            except BlockingIOError:
+                logging.debug(f"{self._up_label} Failed to TFO (no cookie/support)")
+
+            wait_write(self._remote_sock.fileno(), IDLE_TIMEOUT)
+            if buffer:
+                self._remote_sock.sendall(buffer)
+                logging.debug(f"{self._up_label} Sent remaining {len(buffer)} bytes")
+
+            logging.info(f"{self._up_label} Connected")
+            group = Group()
+            group.spawn(self._relay, self._up_label, self._client_sock, self._remote_sock)
+            group.spawn(self._relay, self._down_label, self._remote_sock, self._client_sock)
+            group.join()
+        except Exception as e:
+            logging.error(f"{self._up_label} Error: {e}")
+        finally:
+            try:
+                self._remote_sock.shutdown(socket.SHUT_RDWR)
+                self._remote_sock.close()
+            except:
+                pass
+            try:
+                self._client_sock.shutdown(socket.SHUT_RDWR)
+                self._client_sock.close()
+            except:
+                pass
+            logging.info(f"{self._up_label} Closed")
+
+    def _relay(self, label: str, src: socket.socket, dst: socket.socket):
+        try:
+            buffer: bytes = b""
+            eof = False
+            while True:
+                wait_read(src.fileno(), IDLE_TIMEOUT)
+                if buffer := src.recv(BUFFER_SIZE):
+                    logging.debug(f"{label} Received {len(buffer)} bytes")
+                else:
+                    eof = True
+
+                if buffer:
+                    dst.setsockopt(socket.SOL_TCP, socket.TCP_CORK, 1)
+                    while buffer:
+                        wait_write(dst.fileno(), IDLE_TIMEOUT)
+                        if sent := dst.send(buffer):
+                            buffer = bytes(memoryview(buffer)[sent:])
+                            logging.debug(f"{label} Sent {sent} bytes")
+
+                        if not eof and len(buffer) < BUFFER_SIZE:
+                            try:
+                                wait_read(src.fileno(), 0)
+                                if next_buffer := src.recv(BUFFER_SIZE):
+                                    buffer += next_buffer
+                                    logging.debug(f"{label} Advanced {len(next_buffer)} bytes")
+                                else:
+                                    eof = True
+                            except timeout:
+                                pass
+                    dst.setsockopt(socket.SOL_TCP, socket.TCP_CORK, 0)
+
+                if eof and not buffer:
+                    break
+        except timeout:
+            pass
+        except ConnectionResetError:
+            pass
+        except BrokenPipeError:
+            pass
+        except OSError:
+            pass
+        finally:
+            try:
+                dst.shutdown(socket.SHUT_WR)
+            except:
+                pass
+
     _SO_ORIGINAL_DST = 80
     _SOL_IPV6 = 41
     _V4_LEN = 16
@@ -45,137 +173,6 @@ class Session:
             case _:
                 raise RuntimeError(f"Unknown socket family: {sock.family}")
         return ip, port
-
-    _created_at: float
-    _client_sock: socket.socket
-    _client_addr: tuple[str, int]
-    _remote_sock: socket.socket
-    _remote_addr: tuple[str, int]
-    _up_label: str
-    _down_label: str
-
-    def __init__(self, client_sock: socket.socket, client_addr: tuple[str, int]):
-        self._created_at = gevent.get_hub().loop.now()
-        self._remote_addr = self._get_orig_dst(client_sock)
-        srv_addr = client_sock.getsockname()
-        if self._remote_addr[0] == srv_addr[0] and self._remote_addr[1] == srv_addr[1]:
-            raise ConnectionRefusedError("The client tried to connect directly to the proxy")
-
-        self._client_sock = client_sock
-        self._client_addr = client_addr
-        self._remote_sock = socket.socket(client_sock.family, client_sock.type)
-        self._up_label = f"[{client_addr[0]}]:{client_addr[1]} -> [{self._remote_addr[0]}]:{self._remote_addr[1]}"
-        self._down_label = f"[{client_addr[0]}]:{client_addr[1]} <- [{self._remote_addr[0]}]:{self._remote_addr[1]}"
-
-        try:
-            client_sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
-            client_sock.setsockopt(socket.SOL_TCP, socket.TCP_NODELAY, 1)
-            client_sock.setsockopt(socket.SOL_TCP, socket.TCP_QUICKACK, 1)
-        except AttributeError:
-            pass
-
-        try:
-            self._remote_sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
-            self._remote_sock.setsockopt(socket.SOL_TCP, socket.TCP_NODELAY, 1)
-            self._remote_sock.setsockopt(socket.SOL_TCP, socket.TCP_QUICKACK, 1)
-            self._remote_sock.setsockopt(socket.SOL_TCP, socket.TCP_FASTOPEN_CONNECT, 1)
-        except AttributeError:
-            pass
-
-        logging.debug(f"{self._up_label} Session created")
-
-    def _forward_data(self, label: str, src: socket.socket, dst: socket.socket):
-        try:
-            eof = False
-            wait_read(src.fileno(), IDLE_TIMEOUT)
-            while buffer := src.recv(BUFFER_SIZE):
-                dst.setsockopt(socket.SOL_TCP, socket.TCP_CORK, 1)
-                while buffer:
-                    # send chunk
-                    wait_write(dst.fileno())
-                    sent = dst.send(buffer)
-                    buffer = bytes(memoryview(buffer)[sent:])
-
-                    # try fill more
-                    if not eof and len(buffer) < BUFFER_SIZE:
-                        try:
-                            wait_read(src.fileno(), FAST_TIMEOUT)
-                            if next_buffer := src.recv(BUFFER_SIZE - len(buffer)):
-                                buffer += next_buffer
-                            else:
-                                eof = True
-                        except timeout:
-                            pass
-                dst.setsockopt(socket.SOL_TCP, socket.TCP_CORK, 0)
-                if eof:
-                    break
-                wait_read(src.fileno(), IDLE_TIMEOUT)
-            logging.debug(f"{label} EOF")
-        except timeout:
-            logging.debug(f"{label} Timeout")
-        except ConnectionResetError:
-            logging.debug(f"{label} Connection reset by peer")
-        except BrokenPipeError:
-            logging.debug(f"{label} Broken pipe")
-        except Exception as e:
-            logging.error(f"{label} Unexpected error: {e}")
-        finally:
-            try:
-                dst.shutdown(socket.SHUT_WR)
-            except:
-                pass
-
-    def serve(self):
-        try:
-            self._remote_sock.connect(self._remote_addr)
-
-            buffer = bytes()
-            try:
-                wait_read(self._client_sock.fileno(), TFO_TIMEOUT)
-                if buffer := self._client_sock.recv(BUFFER_SIZE):
-                    logging.debug(f"{self._up_label} Received TFO {len(buffer)} bytes")
-                    sent = self._remote_sock.sendto(buffer, socket.MSG_FASTOPEN, self._remote_addr)
-                    buffer = bytes(memoryview(buffer)[sent:])
-                    logging.debug(f"{self._up_label} Sent TFO {sent} bytes")
-                else:
-                    raise ConnectionAbortedError("Client closed connection before any data was sent") from None
-            except timeout as e:
-                logging.debug(f"{self._up_label} TFO data not received in time, falling back to regular connect: {e}")
-                # TFOデータが来なかったので、通常のブロッキング接続を開始する
-                self._remote_sock.connect(self._remote_addr)
-            except BlockingIOError as e:
-                logging.debug(f"{self._up_label} TFO send failed (no cookie/support), will send data normally: {e}")
-
-            if buffer:
-                wait_write(self._remote_sock.fileno())
-                self._remote_sock.sendall(buffer)
-                logging.debug(f"{self._up_label} Sent remaining {len(buffer)} bytes")
-            del buffer
-
-            prepare_time = gevent.get_hub().loop.now() - self._created_at
-            logging.info(f"{self._up_label} Session established ({prepare_time * 1000:.2f}ms)")
-            gevent.joinall(
-                [
-                    gevent.spawn(self._forward_data, self._up_label, self._client_sock, self._remote_sock),
-                    gevent.spawn(self._forward_data, self._down_label, self._remote_sock, self._client_sock),
-                ]
-            )
-        except Exception as e:
-            logging.error(f"{self._up_label} Session error: {e}")
-        finally:
-            try:
-                self._remote_sock.shutdown(socket.SHUT_RDWR)
-                self._remote_sock.close()
-            except:
-                pass
-            try:
-                self._client_sock.shutdown(socket.SHUT_RDWR)
-                self._client_sock.close()
-            except:
-                pass
-
-        session_time = gevent.get_hub().loop.now() - self._created_at
-        logging.info(f"{self._up_label} Session closed ({session_time:.2f}s)")
 
 
 class ProxyServer:
