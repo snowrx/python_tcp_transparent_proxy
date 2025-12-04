@@ -49,8 +49,7 @@ class Session:
         self._remote_addr = self._get_orig_dst(client_sock)
         srv_addr = client_sock.getsockname()
         if self._remote_addr[0] == srv_addr[0] and self._remote_addr[1] == srv_addr[1]:
-            msg = f"[{client_addr[0]}]:{client_addr[1]} Refused direct connection to self"
-            raise ValueError(msg)
+            raise ConnectionRefusedError("Connections to the proxy server itself are not allowed")
 
         self._client_sock = client_sock
         self._client_addr = client_addr
@@ -197,8 +196,10 @@ class ProxyServer:
         try:
             session = Session(client_sock, client_addr)
             session.serve()
+        except ConnectionRefusedError as e:
+            logging.warning(f"[{client_addr[0]}]:{client_addr[1]} {e}")
         except Exception as e:
-            logging.error(f"[{client_addr[0]}]:{client_addr[1]} Session error: {e}")
+            logging.error(f"[{client_addr[0]}]:{client_addr[1]} Unhandled session error: {e}")
             try:
                 client_sock.shutdown(socket.SHUT_RDWR)
                 client_sock.close()
