@@ -1,25 +1,33 @@
+# Third-party imports (gevent and monkey patching first)
+import gevent
+import gevent.monkey
+from gevent import socket
+from gevent.pool import Group
+from gevent.server import StreamServer
+from gevent.socket import wait_read, wait_write, timeout
+
+gevent.monkey.patch_all()
+
+# Standard library imports
+import gc
+import logging
 import os
 import struct
-import multiprocessing
-import logging
-import gc
+from concurrent.futures import ProcessPoolExecutor
 
-import gevent
-from gevent import socket
-from gevent.socket import wait_read, wait_write, timeout
-from gevent.server import StreamServer
-from gevent.pool import Group
+# --- Global Configuration ---
 
+# Logging
 LOG_LEVEL = logging.INFO
 
+# Server settings
 PORT = 8081
-FAMILY = [socket.AF_INET, socket.AF_INET6]
-
 NUM_WORKERS = 4
-BUFFER_SIZE = 1 << 20
-
-IDLE_TIMEOUT = 43200
-TFO_TIMEOUT = 10 / 1000
+FAMILY = [socket.AF_INET, socket.AF_INET6]
+# Performance and timeouts
+BUFFER_SIZE = 1 << 20  # 1MB
+IDLE_TIMEOUT = 43200  # 12 hours
+TFO_TIMEOUT = 10 / 1000  # 10ms
 
 
 class Session:
@@ -30,25 +38,26 @@ class Session:
     _up_label: str
     _down_label: str
 
+    _SO_ORIGINAL_DST = 80
+    _SOL_IPV6 = 41
+    _V4_LEN = 16
+    _V4_FMT = "!2xH4s"
+    _V6_LEN = 28
+    _V6_FMT = "!2xH4x16s"
+
     def __init__(self, client_sock: socket.socket, client_addr: tuple[str, int]):
         self._remote_addr = self._get_orig_dst(client_sock)
         srv_addr = client_sock.getsockname()
         if self._remote_addr[0] == srv_addr[0] and self._remote_addr[1] == srv_addr[1]:
-            client_sock.shutdown(socket.SHUT_RDWR)
-            client_sock.close()
-            logging.error(f"[{client_addr[0]}]:{client_addr[1]} Refused direct connection")
-            return
+            msg = f"[{client_addr[0]}]:{client_addr[1]} Refused direct connection to self"
+            raise ValueError(msg)
 
         self._client_sock = client_sock
         self._client_addr = client_addr
-        client_sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
-        client_sock.setsockopt(socket.SOL_TCP, socket.TCP_NODELAY, 1)
-        client_sock.setsockopt(socket.SOL_TCP, socket.TCP_QUICKACK, 1)
+        self._configure_socket(client_sock)
 
         self._remote_sock = socket.socket(client_sock.family, client_sock.type)
-        self._remote_sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
-        self._remote_sock.setsockopt(socket.SOL_TCP, socket.TCP_NODELAY, 1)
-        self._remote_sock.setsockopt(socket.SOL_TCP, socket.TCP_QUICKACK, 1)
+        self._configure_socket(self._remote_sock)
         self._remote_sock.setsockopt(socket.SOL_TCP, socket.TCP_FASTOPEN_CONNECT, 1)
 
         cl_str = f"[{self._client_addr[0]}]:{self._client_addr[1]}"
@@ -97,12 +106,12 @@ class Session:
             try:
                 self._remote_sock.shutdown(socket.SHUT_RDWR)
                 self._remote_sock.close()
-            except:
+            except OSError:
                 pass
             try:
                 self._client_sock.shutdown(socket.SHUT_RDWR)
                 self._client_sock.close()
-            except:
+            except OSError:
                 pass
             logging.info(f"{self._up_label} Closed")
 
@@ -155,17 +164,10 @@ class Session:
             try:
                 dst.setsockopt(socket.SOL_TCP, socket.TCP_CORK, 0)
                 dst.shutdown(socket.SHUT_WR)
-            except:
+            except OSError:
                 pass
             del buffer, rbuf, wbuf, rlen, wlen
             logging.info(f"{label} EOF")
-
-    _SO_ORIGINAL_DST = 80
-    _SOL_IPV6 = 41
-    _V4_LEN = 16
-    _V4_FMT = "!2xH4s"
-    _V6_LEN = 28
-    _V6_FMT = "!2xH4x16s"
 
     def _get_orig_dst(self, sock: socket.socket):
         ip: str = ""
@@ -183,24 +185,24 @@ class Session:
                 raise RuntimeError(f"Unknown socket family: {sock.family}")
         return ip, port
 
+    def _configure_socket(self, sock: socket.socket):
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
+        sock.setsockopt(socket.SOL_TCP, socket.TCP_NODELAY, 1)
+        sock.setsockopt(socket.SOL_TCP, socket.TCP_QUICKACK, 1)
+
 
 class ProxyServer:
-    _session_pool: Group
-
-    def __init__(self):
-        self._session_pool = Group()
-
     def _accept_client(self, client_sock: socket.socket, client_addr: tuple[str, int]):
         logging.debug(f"Accepted client from [{client_addr[0]}]:{client_addr[1]}")
         try:
-            self._session_pool.spawn(Session(client_sock, client_addr).serve).join()
+            session = Session(client_sock, client_addr)
+            session.serve()
         except Exception as e:
             logging.error(f"[{client_addr[0]}]:{client_addr[1]} Session error: {e}")
-        finally:
             try:
                 client_sock.shutdown(socket.SHUT_RDWR)
                 client_sock.close()
-            except:
+            except OSError:
                 pass
 
     def _launch_listener(self, family: socket.AddressFamily):
@@ -210,7 +212,7 @@ class ProxyServer:
         sock.listen(socket.SOMAXCONN)
         addr = sock.getsockname()
         logging.info(f"Listening on [{addr[0]}]:{addr[1]}")
-        gevent.spawn(StreamServer(sock, self._accept_client).serve_forever).join()
+        StreamServer(sock, self._accept_client).serve_forever()
 
     def run(self):
         logging.info("Starting proxy server")
@@ -230,5 +232,5 @@ if __name__ == "__main__":
         gc.set_debug(gc.DEBUG_STATS)
     logging.basicConfig(level=LOG_LEVEL)
 
-    with multiprocessing.Pool(NUM_WORKERS) as pool:
+    with ProcessPoolExecutor(NUM_WORKERS) as pool:
         pool.map(main, range(NUM_WORKERS))
