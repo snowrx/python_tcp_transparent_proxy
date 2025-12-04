@@ -15,6 +15,7 @@ LOG_LEVEL = logging.INFO
 PORT = 8081
 FAMILY = [socket.AF_INET, socket.AF_INET6]
 
+NUM_WORKERS = 4
 BUFFER_SIZE = 1 << 16
 
 IDLE_TIMEOUT = 43200
@@ -229,8 +230,5 @@ if __name__ == "__main__":
         gc.set_debug(gc.DEBUG_STATS)
     logging.basicConfig(level=LOG_LEVEL)
 
-    w = multiprocessing.cpu_count()
-    with multiprocessing.Pool(w) as p:
-        p.map(main, range(w))
-
-    logging.shutdown()
+    with multiprocessing.Pool(NUM_WORKERS) as pool:
+        pool.map(main, range(NUM_WORKERS))
