@@ -2,6 +2,7 @@ import os
 import struct
 import multiprocessing
 import logging
+import gc
 
 import gevent
 from gevent import socket
@@ -155,6 +156,7 @@ class Session:
                 dst.shutdown(socket.SHUT_WR)
             except:
                 pass
+            del buffer, rbuf, wbuf, rlen, wlen
             logging.info(f"{label} EOF")
 
     _SO_ORIGINAL_DST = 80
@@ -224,6 +226,7 @@ def main(*_):
 if __name__ == "__main__":
     if os.getenv("DEBUG"):
         LOG_LEVEL = logging.DEBUG
+        gc.set_debug(gc.DEBUG_STATS)
     logging.basicConfig(level=LOG_LEVEL)
 
     w = multiprocessing.cpu_count()
