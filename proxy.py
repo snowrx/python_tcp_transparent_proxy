@@ -35,9 +35,9 @@ class Session:
     _client_addr: tuple[str, int]
     _remote_sock: socket.socket
     _remote_addr: tuple[str, int]
-    _up_label: str
-    _down_label: str
-
+    _cl_str: str
+    _rm_str: str
+    _logger: logging.Logger
     _SO_ORIGINAL_DST = 80
     _SOL_IPV6 = 41
     _V4_LEN = 16
@@ -61,46 +61,48 @@ class Session:
 
         cl_str = f"[{self._client_addr[0]}]:{self._client_addr[1]}"
         rm_str = f"[{self._remote_addr[0]}]:{self._remote_addr[1]}"
-        self._up_label = f"{cl_str} -> {rm_str}"
-        self._down_label = f"{cl_str} <- {rm_str}"
+        self._cl_str = cl_str
+        self._rm_str = rm_str
 
-        logging.debug(f"{self._up_label} Session created")
+        session_id = f"Session[{self._client_sock.fileno()}]"
+        self._logger = logging.getLogger(session_id)
+        self._log(logging.DEBUG, "->", "Session Created")
 
     def serve(self):
         try:
-            self._remote_sock.connect(self._remote_addr)
-
             buffer = memoryview(bytearray(BUFFER_SIZE))
             recv = 0
             sent = 0
             try:
                 wait_read(self._client_sock.fileno(), TFO_TIMEOUT)
                 if recv := self._client_sock.recv_into(buffer):
-                    logging.debug(f"{self._up_label} Received initial {recv} bytes")
+                    self._log(logging.DEBUG, "->", f"Received initial {recv} bytes")
                 else:
-                    raise ConnectionAbortedError("Client closed connection before send data")
+                    raise ConnectionAbortedError("Connection closed by client before data was sent")
             except timeout:
-                logging.debug(f"{self._up_label} Client did not send data before timeout")
+                self._log(logging.DEBUG, "->", "Client did not send data")
+
+            self._remote_sock.connect(self._remote_addr)
 
             try:
                 if sent := self._remote_sock.sendto(buffer[:recv], socket.MSG_FASTOPEN, self._remote_addr):
-                    logging.debug(f"{self._up_label} Sent initial {sent} bytes")
+                    self._log(logging.DEBUG, "->", f"Sent initial {sent} bytes (TFO)")
             except BlockingIOError:
-                logging.debug(f"{self._up_label} Failed to TFO (no cookie/support)")
+                self._log(logging.DEBUG, "->", "TFO not supported/failed")
 
             wait_write(self._remote_sock.fileno(), IDLE_TIMEOUT)
             if sent < recv:
                 self._remote_sock.sendall(buffer[sent:recv])
-                logging.debug(f"{self._up_label} Sent remaining {recv - sent} bytes")
+                self._log(logging.DEBUG, "->", f"Sent remaining {recv - sent} bytes")
             del buffer
 
-            logging.info(f"{self._up_label} Connected")
+            self._log(logging.INFO, "->", "Connected")
             group = Group()
-            group.spawn(self._relay, self._up_label, self._client_sock, self._remote_sock)
-            group.spawn(self._relay, self._down_label, self._remote_sock, self._client_sock)
+            group.spawn(self._relay, "->", self._client_sock, self._remote_sock)
+            group.spawn(self._relay, "<-", self._remote_sock, self._client_sock)
             group.join()
         except Exception as e:
-            logging.error(f"{self._up_label} Error: {e}")
+            self._log(logging.ERROR, "->", f"Session Failed: {e}")
         finally:
             try:
                 self._remote_sock.shutdown(socket.SHUT_RDWR)
@@ -112,9 +114,9 @@ class Session:
                 self._client_sock.close()
             except OSError:
                 pass
-            logging.info(f"{self._up_label} Closed")
+            self._log(logging.INFO, "->", "Session Closed")
 
-    def _relay(self, label: str, src: socket.socket, dst: socket.socket):
+    def _relay(self, direction: str, src: socket.socket, dst: socket.socket):
         eof = False
         buffer = memoryview(bytearray(BUFFER_SIZE << 1))
         rbuf = buffer[:BUFFER_SIZE]
@@ -166,7 +168,7 @@ class Session:
             except OSError:
                 pass
             del buffer, rbuf, wbuf, rlen, wlen
-            logging.info(f"{label} EOF")
+            self._log(logging.INFO, direction, "Relay Finished")
 
     def _get_orig_dst(self, sock: socket.socket):
         ip: str = ""
@@ -189,17 +191,36 @@ class Session:
         sock.setsockopt(socket.SOL_TCP, socket.TCP_NODELAY, 1)
         sock.setsockopt(socket.SOL_TCP, socket.TCP_QUICKACK, 1)
 
+    def _log(self, level: int, direction: str, message: str):
+        """Formats and logs a message with consistent structure."""
+        subject = f"{self._cl_str:<48s} {direction} {self._rm_str:<48s}"
+        log_msg = f"{subject:<99s} | {message}"
+        self._logger.log(level, log_msg)
+
 
 class ProxyServer:
+    _logger: logging.Logger
+
+    def __init__(self, worker_id: int):
+        self._logger = logging.getLogger(f"ProxyServer[{worker_id}]")
+
+    def _log(self, level: int, subject: str, direction: str, detail: str, message: str):
+        """Formats and logs a server message with consistent structure."""
+        # Mimic Session's log format for perfect alignment.
+        log_subject = f"{subject:<48s} {direction} {detail:<48s}"
+        log_msg = f"{log_subject:<99s} | {message}"
+        self._logger.log(level, log_msg)
+
     def _accept_client(self, client_sock: socket.socket, client_addr: tuple[str, int]):
-        logging.debug(f"Accepted client from [{client_addr[0]}]:{client_addr[1]}")
+        cl_str = f"[{client_addr[0]}]:{client_addr[1]}"
+        self._log(logging.DEBUG, cl_str, "::", "Accepted Client", "OK")
         try:
             session = Session(client_sock, client_addr)
             session.serve()
         except ConnectionRefusedError as e:
-            logging.warning(f"[{client_addr[0]}]:{client_addr[1]} {e}")
+            self._log(logging.WARNING, cl_str, "::", "Refused Client", str(e))
         except Exception as e:
-            logging.error(f"[{client_addr[0]}]:{client_addr[1]} Unhandled session error: {e}")
+            self._log(logging.ERROR, cl_str, "::", "Client Error", str(e))
             try:
                 client_sock.shutdown(socket.SHUT_RDWR)
                 client_sock.close()
@@ -212,26 +233,27 @@ class ProxyServer:
         sock.bind(("", PORT))
         sock.listen(socket.SOMAXCONN)
         addr = sock.getsockname()
-        logging.info(f"Listening on [{addr[0]}]:{addr[1]}")
+        self._log(logging.INFO, "Listening", "::", f"on [{addr[0]}]:{addr[1]}", "Ready")
         StreamServer(sock, self._accept_client).serve_forever()
 
     def run(self):
-        logging.info("Starting proxy server")
+        self._log(logging.INFO, "Worker", "::", "Process", "Starting")
         listener_pool = Group()
         listener_pool.map(self._launch_listener, FAMILY)
         listener_pool.join()
-        logging.info("Proxy server stopped")
+        self._log(logging.INFO, "Worker", "::", "Process", "Stopped")
 
 
-def main(*_):
-    gevent.spawn(ProxyServer().run).join()
+def main(worker_id: int):
+    server = ProxyServer(worker_id)
+    gevent.spawn(server.run).join()
 
 
 if __name__ == "__main__":
     if os.getenv("DEBUG"):
         LOG_LEVEL = logging.DEBUG
         gc.set_debug(gc.DEBUG_STATS)
-    logging.basicConfig(level=LOG_LEVEL)
+    logging.basicConfig(level=LOG_LEVEL, format="%(name)-20s [%(levelname)-8s] %(message)s")
 
     with ProcessPoolExecutor(NUM_WORKERS) as pool:
         pool.map(main, range(NUM_WORKERS))
