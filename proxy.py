@@ -112,6 +112,15 @@ class Session:
         rlen = 0
         wlen = 0
 
+        def send(buf: memoryview):
+            sent = 0
+            try:
+                wait_write(dst.fileno(), IDLE_TIMEOUT)
+                sent = dst.send(buf)
+            except:
+                pass
+            return sent
+
         try:
             self._log(logging.DEBUG, f"Starting relay", f"{self._cl_name:50} {direction} {self._rm_name:50}")
             while True:
@@ -124,9 +133,9 @@ class Session:
                 dst.setsockopt(socket.SOL_TCP, socket.TCP_CORK, 1)
                 while rlen:
                     rbuf, rlen, wbuf, wlen = wbuf, wlen, rbuf, rlen
-                    sent = 0
-                    while sent < wlen:
-                        sent += dst.send(wbuf[sent:wlen])
+                    progress = 0
+                    while progress < wlen:
+                        g = gevent.spawn(send, wbuf[progress:wlen])
 
                         if not eof and not rlen:
                             try:
@@ -137,6 +146,10 @@ class Session:
                                     eof = True
                             except timeout:
                                 pass
+
+                        if not (sent := g.get()):
+                            raise BrokenPipeError("Failed to send")
+                        progress += sent
                     wlen = 0
                 dst.setsockopt(socket.SOL_TCP, socket.TCP_CORK, 0)
 
@@ -144,13 +157,13 @@ class Session:
                     self._log(logging.DEBUG, f"EOF received", f"{self._cl_name:50} {direction} {self._rm_name:50}")
                     break
         except timeout:
-            pass
+            self._log(logging.DEBUG, f"Idle timeout", f"{self._cl_name:50} {direction} {self._rm_name:50}")
         except ConnectionResetError:
-            pass
+            self._log(logging.DEBUG, f"Connection reset", f"{self._cl_name:50} {direction} {self._rm_name:50}")
         except BrokenPipeError:
-            pass
+            self._log(logging.DEBUG, f"Broken pipe", f"{self._cl_name:50} {direction} {self._rm_name:50}")
         except OSError:
-            pass
+            self._log(logging.DEBUG, f"OS error", f"{self._cl_name:50} {direction} {self._rm_name:50}")
         finally:
             try:
                 dst.setsockopt(socket.SOL_TCP, socket.TCP_CORK, 0)
