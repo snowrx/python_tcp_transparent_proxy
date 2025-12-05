@@ -41,7 +41,7 @@ class Session:
 
     def __init__(self, client_sock: socket.socket, client_addr: tuple[str, int], accepted_at: float):
         self._accepted_at = accepted_at
-        self._name = f"Session-{client_sock.fileno()}"
+        self._name = f"Session-{hex(id(self))}"
         self._logger = logging.getLogger(self._name)
         self._cl_name = f"[{client_addr[0]}]:{client_addr[1]}"
 
@@ -263,10 +263,13 @@ def main(worker_id: int = 0):
 
 
 if __name__ == "__main__":
+    gc.set_threshold(3000)
+    gc.collect()
+    gc.freeze()
     if os.getenv("DEBUG"):
         LOG_LEVEL = logging.DEBUG
         gc.set_debug(gc.DEBUG_STATS)
-    logging.basicConfig(level=LOG_LEVEL, format="%(name)-16s | %(levelname)-10s | %(message)s")
+    logging.basicConfig(level=LOG_LEVEL, format="%(name)-25s | %(levelname)-10s | %(message)s")
 
     with ProcessPoolExecutor(NUM_WORKERS) as pool:
         pool.map(main, range(NUM_WORKERS))
