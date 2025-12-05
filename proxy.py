@@ -14,6 +14,7 @@ import struct
 from concurrent.futures import ProcessPoolExecutor
 
 LOG_LEVEL = logging.INFO
+LOG_SEND_PROGRESS = False
 
 PORT = 8081
 FAMILY = [socket.AF_INET, socket.AF_INET6]
@@ -21,8 +22,6 @@ FAMILY = [socket.AF_INET, socket.AF_INET6]
 NUM_WORKERS = 4
 BUFFER_SIZE = 1 << 20
 IDLE_TIMEOUT = 43200
-
-TFO_MSS = 1200
 TFO_TIMEOUT = 0.01
 
 
@@ -59,30 +58,40 @@ class Session:
         try:
             self._remote_sock.connect(self._remote_addr)
 
-            buffer = memoryview(bytearray(TFO_MSS))
+            buffer = memoryview(bytearray(BUFFER_SIZE))
             recv = 0
             sent = 0
             try:
                 wait_read(self._client_sock.fileno(), TFO_TIMEOUT)
                 if recv := self._client_sock.recv_into(buffer):
-                    self._log(logging.DEBUG, f"TFO: recv {recv} bytes", f"{self._cl_name:50} {self._DIR_UP} {self._rm_name:50}")
+                    self._log(logging.DEBUG, f"TFO-R {recv:17} bytes", f"{self._cl_name:50} {self._DIR_UP} {self._rm_name:50}")
                 else:
-                    raise ConnectionAbortedError("Empty connection")
+                    raise ConnectionAbortedError("Empty client connection")
             except timeout:
-                self._log(logging.DEBUG, f"TFO: recv timeout", f"{self._cl_name:50} {self._DIR_UP} {self._rm_name:50}")
+                self._log(logging.DEBUG, f"TFO-R timeout", f"{self._cl_name:50} {self._DIR_UP} {self._rm_name:50}")
 
             try:
                 if sent := self._remote_sock.sendto(buffer[:recv], socket.MSG_FASTOPEN, self._remote_addr):
-                    self._log(logging.DEBUG, f"TFO: sent {sent} bytes", f"{self._cl_name:50} {self._DIR_UP} {self._rm_name:50}")
+                    self._log(logging.DEBUG, f"TFO-T {sent:7} /{recv:8} bytes", f"{self._cl_name:50} {self._DIR_UP} {self._rm_name:50}")
             except BlockingIOError:
                 if recv:
-                    self._log(logging.DEBUG, f"TFO: failed to send", f"{self._cl_name:50} {self._DIR_UP} {self._rm_name:50}")
+                    self._log(logging.DEBUG, f"TFO-T failed", f"{self._cl_name:50} {self._DIR_UP} {self._rm_name:50}")
 
             wait_write(self._remote_sock.fileno(), IDLE_TIMEOUT)
             if sent < recv:
                 self._remote_sock.sendall(buffer[sent:recv])
-                self._log(logging.DEBUG, f"Sent remaining {recv - sent} bytes", f"{self._cl_name:50} {self._DIR_UP} {self._rm_name:50}")
-            del buffer
+                self._log(logging.DEBUG, f"Sent remaining {recv - sent:8} bytes", f"{self._cl_name:50} {self._DIR_UP} {self._rm_name:50}")
+
+            try:
+                wait_read(self._remote_sock.fileno(), TFO_TIMEOUT)
+                if recv := self._remote_sock.recv_into(buffer):
+                    wait_write(self._client_sock.fileno(), IDLE_TIMEOUT)
+                    self._client_sock.sendall(buffer[:recv])
+                    self._log(logging.DEBUG, f"TFO-A {recv:17} bytes", f"{self._cl_name:50} {self._DIR_UP} {self._rm_name:50}")
+                else:
+                    raise ConnectionAbortedError("Empty remote connection")
+            except timeout:
+                pass
 
             self._log(logging.INFO, "Established", f"{self._cl_name:50} {self._DIR_UP} {self._rm_name:50}")
             group = Group()
@@ -150,6 +159,8 @@ class Session:
                         if not (sent := g.get()):
                             raise BrokenPipeError("Failed to send")
                         progress += sent
+                        if LOG_SEND_PROGRESS:
+                            self._log(logging.DEBUG, f"Sent {progress:8} /{wlen:8} bytes", f"{self._cl_name:50} {direction} {self._rm_name:50}")
                     wlen = 0
                 dst.setsockopt(socket.SOL_TCP, socket.TCP_CORK, 0)
 
@@ -255,7 +266,7 @@ if __name__ == "__main__":
     if os.getenv("DEBUG"):
         LOG_LEVEL = logging.DEBUG
         gc.set_debug(gc.DEBUG_STATS)
-    logging.basicConfig(level=LOG_LEVEL, format="%(name)-16s | %(levelname)-8s | %(message)s")
+    logging.basicConfig(level=LOG_LEVEL, format="%(name)-16s | %(levelname)-10s | %(message)s")
 
     with ProcessPoolExecutor(NUM_WORKERS) as pool:
         pool.map(main, range(NUM_WORKERS))
