@@ -24,7 +24,7 @@ NUM_WORKERS = 4
 BUFFER_SIZE = 1 << 20
 IDLE_TIMEOUT = 43200
 SEND_TIMEOUT = 10
-TFO_TIMEOUT = 0.01
+TFO_TIMEOUT = 0
 
 
 class Session:
@@ -85,24 +85,13 @@ class Session:
             if sent < recv:
                 self._remote_sock.sendall(buffer[sent:recv])
                 self._log(logging.DEBUG, f"Sent remaining {recv - sent:8} bytes", f"{self._cl_name:50} {self._DIR_UP} {self._rm_name:50}")
-
-            try:
-                wait_read(self._remote_sock.fileno(), TFO_TIMEOUT)
-                if recv := self._remote_sock.recv_into(buffer):
-                    wait_write(self._client_sock.fileno(), SEND_TIMEOUT)
-                    self._client_sock.sendall(buffer[:recv])
-                    self._log(logging.DEBUG, f"TFO-A {recv:17} bytes", f"{self._cl_name:50} {self._DIR_DOWN} {self._rm_name:50}")
-                else:
-                    raise ConnectionAbortedError("Empty remote connection")
-            except timeout:
-                pass
             del buffer
 
             open_time = time.perf_counter() - self._accepted_at
             self._log(logging.INFO, f"Established ({open_time * 1000:.2f}ms)", f"{self._cl_name:50} {self._DIR_UP} {self._rm_name:50}")
             group = Group()
-            group.spawn(self._relay, self._DIR_UP, self._client_sock, self._remote_sock)
             group.spawn(self._relay, self._DIR_DOWN, self._remote_sock, self._client_sock)
+            group.spawn(self._relay, self._DIR_UP, self._client_sock, self._remote_sock)
             group.join()
         except Exception as e:
             self._log(logging.ERROR, f"Failed to serve: {e}", f"{self._cl_name:50} {self._DIR_UP} {self._rm_name:50}")
@@ -138,7 +127,8 @@ class Session:
             return sent
 
         try:
-            self._log(logging.DEBUG, f"Starting relay", f"{self._cl_name:50} {direction} {self._rm_name:50}")
+            start_to_relay_latency = time.perf_counter() - self._accepted_at
+            self._log(logging.DEBUG, f"Starting relay ({start_to_relay_latency * 1000:.2f}ms)", f"{self._cl_name:50} {direction} {self._rm_name:50}")
             while True:
                 wait_read(src.fileno(), IDLE_TIMEOUT)
                 if rlen := src.recv_into(rbuf):
