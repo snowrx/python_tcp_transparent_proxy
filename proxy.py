@@ -96,7 +96,7 @@ class Session:
             group.spawn(self._relay, self._DIR_UP, self._client_sock, self._remote_sock)
             group.join()
         except Exception as e:
-            self._log(logging.ERROR, f"Failed to serve: {e}", f"{self._cl_name:50} {self._DIR_UP} {self._rm_name:50}")
+            self._log(logging.ERROR, f"Serve failed: {e}", f"{self._cl_name:50} {self._DIR_UP} {self._rm_name:50}")
         finally:
             try:
                 self._remote_sock.shutdown(socket.SHUT_RDWR)
