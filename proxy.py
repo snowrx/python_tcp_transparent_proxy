@@ -7,12 +7,11 @@ from gevent.socket import wait_read, wait_write, timeout
 
 gevent.monkey.patch_all()
 
-import gc
 import logging
+import gc
 import os
 import struct
 from concurrent.futures import ProcessPoolExecutor
-
 
 LOG_LEVEL = logging.INFO
 
@@ -24,82 +23,73 @@ BUFFER_SIZE = 1 << 20
 IDLE_TIMEOUT = 43200
 
 TFO_MSS = 1200
-TFO_TIMEOUT = 0.01
+TFO_TIMEOUT = 0
 
 
 class Session:
-    _client_sock: socket.socket
-    _client_addr: tuple[str, int]
-    _remote_sock: socket.socket
-    _remote_addr: tuple[str, int]
-    _cl_str: str
-    _rm_str: str
-    _logger: logging.Logger
     _SO_ORIGINAL_DST = 80
     _SOL_IPV6 = 41
     _V4_LEN = 16
     _V4_FMT = "!2xH4s"
     _V6_LEN = 28
     _V6_FMT = "!2xH4x16s"
+    _DIR_UP = "->"
+    _DIR_DOWN = "<-"
 
     def __init__(self, client_sock: socket.socket, client_addr: tuple[str, int]):
+        self._name = f"Session-{client_sock.fileno()}"
+        self._logger = logging.getLogger(self._name)
+        self._cl_name = f"[{client_addr[0]}]:{client_addr[1]}"
+
         self._remote_addr = self._get_orig_dst(client_sock)
         srv_addr = client_sock.getsockname()
         if self._remote_addr[0] == srv_addr[0] and self._remote_addr[1] == srv_addr[1]:
-            raise ConnectionRefusedError("Connections to the proxy server itself are not allowed")
+            raise ConnectionRefusedError("Direct connections are not allowed")
+        self._rm_name = f"[{self._remote_addr[0]}]:{self._remote_addr[1]}"
 
         self._client_sock = client_sock
-        self._client_addr = client_addr
-        self._configure_socket(client_sock)
-
         self._remote_sock = socket.socket(client_sock.family, client_sock.type)
-        self._configure_socket(self._remote_sock)
-        self._remote_sock.setsockopt(socket.SOL_TCP, socket.TCP_FASTOPEN_CONNECT, 1)
 
-        cl_str = f"[{self._client_addr[0]}]:{self._client_addr[1]}"
-        rm_str = f"[{self._remote_addr[0]}]:{self._remote_addr[1]}"
-        self._cl_str = cl_str
-        self._rm_str = rm_str
+        self._configure_socket(client_sock)
+        self._configure_socket(self._remote_sock, tfo=True)
 
-        session_id = f"Session[{self._client_sock.fileno()}]"
-        self._logger = logging.getLogger(session_id)
-        self._log(logging.DEBUG, "->", "Session Created")
+        self._log(logging.DEBUG, "Created", f"{self._cl_name:50} {self._DIR_UP} {self._rm_name:50}")
 
     def serve(self):
         try:
+            self._remote_sock.connect(self._remote_addr)
+
             buffer = memoryview(bytearray(TFO_MSS))
             recv = 0
             sent = 0
             try:
                 wait_read(self._client_sock.fileno(), TFO_TIMEOUT)
                 if recv := self._client_sock.recv_into(buffer):
-                    self._log(logging.DEBUG, "->", f"Received initial {recv} bytes")
+                    self._log(logging.DEBUG, f"TFO: recv {recv} bytes", f"{self._cl_name:50} {self._DIR_UP} {self._rm_name:50}")
                 else:
-                    raise ConnectionAbortedError("Connection closed by client before data was sent")
+                    raise ConnectionAbortedError("Empty connection")
             except timeout:
-                self._log(logging.DEBUG, "->", "Client did not send data")
-
-            self._remote_sock.connect(self._remote_addr)
+                self._log(logging.DEBUG, f"TFO: recv timeout", f"{self._cl_name:50} {self._DIR_UP} {self._rm_name:50}")
 
             try:
                 if sent := self._remote_sock.sendto(buffer[:recv], socket.MSG_FASTOPEN, self._remote_addr):
-                    self._log(logging.DEBUG, "->", f"Sent initial {sent} bytes (TFO)")
+                    self._log(logging.DEBUG, f"TFO: sent {sent} bytes", f"{self._cl_name:50} {self._DIR_UP} {self._rm_name:50}")
             except BlockingIOError:
-                self._log(logging.DEBUG, "->", "TFO not supported/failed")
+                if recv:
+                    self._log(logging.DEBUG, f"TFO: failed to send", f"{self._cl_name:50} {self._DIR_UP} {self._rm_name:50}")
 
             wait_write(self._remote_sock.fileno(), IDLE_TIMEOUT)
             if sent < recv:
                 self._remote_sock.sendall(buffer[sent:recv])
-                self._log(logging.DEBUG, "->", f"Sent remaining {recv - sent} bytes")
+                self._log(logging.DEBUG, f"Sent remaining {recv - sent} bytes", f"{self._cl_name:50} {self._DIR_UP} {self._rm_name:50}")
             del buffer
 
-            self._log(logging.INFO, "->", "Connected")
             group = Group()
-            group.spawn(self._relay, "->", self._client_sock, self._remote_sock)
-            group.spawn(self._relay, "<-", self._remote_sock, self._client_sock)
+            group.spawn(self._relay, self._DIR_UP, self._client_sock, self._remote_sock)
+            group.spawn(self._relay, self._DIR_DOWN, self._remote_sock, self._client_sock)
             group.join()
         except Exception as e:
-            self._log(logging.ERROR, "->", f"Session Failed: {e}")
+            self._log(logging.ERROR, f"Failed to serve: {e}", f"{self._cl_name:50} {self._DIR_UP} {self._rm_name:50}")
         finally:
             try:
                 self._remote_sock.shutdown(socket.SHUT_RDWR)
@@ -111,7 +101,7 @@ class Session:
                 self._client_sock.close()
             except OSError:
                 pass
-            self._log(logging.INFO, "->", "Session Closed")
+            self._log(logging.INFO, "Closed", f"{self._cl_name:50} {self._DIR_UP} {self._rm_name:50}")
 
     def _relay(self, direction: str, src: socket.socket, dst: socket.socket):
         eof = False
@@ -122,6 +112,7 @@ class Session:
         wlen = 0
 
         try:
+            self._log(logging.DEBUG, f"Starting relay", f"{self._cl_name:50} {direction} {self._rm_name:50}")
             while True:
                 wait_read(src.fileno(), IDLE_TIMEOUT)
                 if rlen := src.recv_into(rbuf):
@@ -149,6 +140,7 @@ class Session:
                 dst.setsockopt(socket.SOL_TCP, socket.TCP_CORK, 0)
 
                 if eof and not rlen:
+                    self._log(logging.DEBUG, f"EOF received", f"{self._cl_name:50} {direction} {self._rm_name:50}")
                     break
         except timeout:
             pass
@@ -165,7 +157,7 @@ class Session:
             except OSError:
                 pass
             del buffer, rbuf, wbuf, rlen, wlen
-            self._log(logging.INFO, direction, "Relay Finished")
+            self._log(logging.DEBUG, f"Relay finished", f"{self._cl_name:50} {direction} {self._rm_name:50}")
 
     def _get_orig_dst(self, sock: socket.socket):
         ip: str = ""
@@ -183,46 +175,30 @@ class Session:
                 raise RuntimeError(f"Unknown socket family: {sock.family}")
         return ip, port
 
-    def _configure_socket(self, sock: socket.socket):
+    def _configure_socket(self, sock: socket.socket, tfo: bool = False):
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
         sock.setsockopt(socket.SOL_TCP, socket.TCP_NODELAY, 1)
         sock.setsockopt(socket.SOL_TCP, socket.TCP_QUICKACK, 1)
+        if tfo:
+            sock.setsockopt(socket.SOL_TCP, socket.TCP_FASTOPEN_CONNECT, 1)
 
-    def _log(self, level: int, direction: str, message: str):
-        """Formats and logs a message with consistent structure."""
-        subject = f"{self._cl_str:<48s} {direction} {self._rm_str:<48s}"
-        log_msg = f"{subject:<99s} | {message}"
-        self._logger.log(level, log_msg)
+    def _log(self, level: int, subject: str, msg: str = ""):
+        txt = f"{subject:50}"
+        if msg:
+            txt += f" | {msg}"
+        self._logger.log(level, txt)
 
 
 class ProxyServer:
-    _logger: logging.Logger
-
     def __init__(self, worker_id: int):
-        self._logger = logging.getLogger(f"ProxyServer[{worker_id}]")
+        self._name = f"Server-{worker_id}"
+        self._logger = logging.getLogger(self._name)
 
-    def _log(self, level: int, subject: str, direction: str, detail: str, message: str):
-        """Formats and logs a server message with consistent structure."""
-        # Mimic Session's log format for perfect alignment.
-        log_subject = f"{subject:<48s} {direction} {detail:<48s}"
-        log_msg = f"{log_subject:<99s} | {message}"
-        self._logger.log(level, log_msg)
-
-    def _accept_client(self, client_sock: socket.socket, client_addr: tuple[str, int]):
-        cl_str = f"[{client_addr[0]}]:{client_addr[1]}"
-        self._log(logging.DEBUG, cl_str, "::", "Accepted Client", "OK")
-        try:
-            session = Session(client_sock, client_addr)
-            session.serve()
-        except ConnectionRefusedError as e:
-            self._log(logging.WARNING, cl_str, "::", "Refused Client", str(e))
-        except Exception as e:
-            self._log(logging.ERROR, cl_str, "::", "Client Error", str(e))
-            try:
-                client_sock.shutdown(socket.SHUT_RDWR)
-                client_sock.close()
-            except OSError:
-                pass
+    def run(self):
+        self._log(logging.INFO, "Starting server")
+        listener_pool = Group()
+        listener_pool.map(self._launch_listener, FAMILY)
+        listener_pool.join()
 
     def _launch_listener(self, family: socket.AddressFamily):
         sock = socket.socket(family, socket.SOCK_STREAM)
@@ -230,18 +206,33 @@ class ProxyServer:
         sock.bind(("", PORT))
         sock.listen(socket.SOMAXCONN)
         addr = sock.getsockname()
-        self._log(logging.INFO, "Listening", "::", f"on [{addr[0]}]:{addr[1]}", "Ready")
+        self._log(logging.INFO, f"Listening on [{addr[0]}]:{addr[1]}")
         StreamServer(sock, self._accept_client).serve_forever()
 
-    def run(self):
-        self._log(logging.INFO, "Worker", "::", "Process", "Starting")
-        listener_pool = Group()
-        listener_pool.map(self._launch_listener, FAMILY)
-        listener_pool.join()
-        self._log(logging.INFO, "Worker", "::", "Process", "Stopped")
+    def _accept_client(self, client_sock: socket.socket, client_addr: tuple[str, int]):
+        cl_name = f"[{client_addr[0]}]:{client_addr[1]}"
+        self._log(logging.DEBUG, "Accepted", cl_name)
+        try:
+            session = Session(client_sock, client_addr)
+            session.serve()
+        except ConnectionRefusedError as e:
+            self._log(logging.WARNING, f"{e}", cl_name)
+        except Exception as e:
+            self._log(logging.ERROR, f"Session failed: {e}", cl_name)
+            try:
+                client_sock.shutdown(socket.SHUT_RDWR)
+                client_sock.close()
+            except OSError:
+                pass
+
+    def _log(self, level: int, subject: str, msg: str = ""):
+        txt = f"{subject:50}"
+        if msg:
+            txt += f" | {msg}"
+        self._logger.log(level, txt)
 
 
-def main(worker_id: int):
+def main(worker_id: int = 0):
     server = ProxyServer(worker_id)
     gevent.spawn(server.run).join()
 
@@ -250,7 +241,7 @@ if __name__ == "__main__":
     if os.getenv("DEBUG"):
         LOG_LEVEL = logging.DEBUG
         gc.set_debug(gc.DEBUG_STATS)
-    logging.basicConfig(level=LOG_LEVEL, format="%(name)-20s [%(levelname)-8s] %(message)s")
+    logging.basicConfig(level=LOG_LEVEL, format="%(name)-16s | %(levelname)-8s | %(message)s")
 
     with ProcessPoolExecutor(NUM_WORKERS) as pool:
         pool.map(main, range(NUM_WORKERS))
