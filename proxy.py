@@ -1,4 +1,3 @@
-# Third-party imports (gevent and monkey patching first)
 import gevent
 import gevent.monkey
 from gevent import socket
@@ -8,26 +7,24 @@ from gevent.socket import wait_read, wait_write, timeout
 
 gevent.monkey.patch_all()
 
-# Standard library imports
 import gc
 import logging
 import os
 import struct
 from concurrent.futures import ProcessPoolExecutor
 
-# --- Global Configuration ---
 
-# Logging
 LOG_LEVEL = logging.INFO
 
-# Server settings
 PORT = 8081
-NUM_WORKERS = 4
 FAMILY = [socket.AF_INET, socket.AF_INET6]
-# Performance and timeouts
-BUFFER_SIZE = 1 << 20  # 1MB
-IDLE_TIMEOUT = 43200  # 12 hours
-TFO_TIMEOUT = 10 / 1000  # 10ms
+
+NUM_WORKERS = 4
+BUFFER_SIZE = 1 << 20
+IDLE_TIMEOUT = 43200
+
+TFO_MSS = 1200
+TFO_TIMEOUT = 0.01
 
 
 class Session:
@@ -70,7 +67,7 @@ class Session:
 
     def serve(self):
         try:
-            buffer = memoryview(bytearray(BUFFER_SIZE))
+            buffer = memoryview(bytearray(TFO_MSS))
             recv = 0
             sent = 0
             try:
