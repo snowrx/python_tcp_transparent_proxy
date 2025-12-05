@@ -23,7 +23,7 @@ BUFFER_SIZE = 1 << 20
 IDLE_TIMEOUT = 43200
 
 TFO_MSS = 1200
-TFO_TIMEOUT = 0
+TFO_TIMEOUT = 0.01
 
 
 class Session:
@@ -84,6 +84,7 @@ class Session:
                 self._log(logging.DEBUG, f"Sent remaining {recv - sent} bytes", f"{self._cl_name:50} {self._DIR_UP} {self._rm_name:50}")
             del buffer
 
+            self._log(logging.INFO, "Established", f"{self._cl_name:50} {self._DIR_UP} {self._rm_name:50}")
             group = Group()
             group.spawn(self._relay, self._DIR_UP, self._client_sock, self._remote_sock)
             group.spawn(self._relay, self._DIR_DOWN, self._remote_sock, self._client_sock)
