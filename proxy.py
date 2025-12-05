@@ -87,7 +87,7 @@ class Session:
                 if recv := self._remote_sock.recv_into(buffer):
                     wait_write(self._client_sock.fileno(), IDLE_TIMEOUT)
                     self._client_sock.sendall(buffer[:recv])
-                    self._log(logging.DEBUG, f"TFO-A {recv:17} bytes", f"{self._cl_name:50} {self._DIR_UP} {self._rm_name:50}")
+                    self._log(logging.DEBUG, f"TFO-A {recv:17} bytes", f"{self._cl_name:50} {self._DIR_DOWN} {self._rm_name:50}")
                 else:
                     raise ConnectionAbortedError("Empty remote connection")
             except timeout:
