@@ -8,6 +8,7 @@ from gevent.socket import wait_read, wait_write, timeout
 gevent.monkey.patch_all()
 
 import logging
+import time
 import gc
 import os
 import struct
@@ -22,6 +23,7 @@ FAMILY = [socket.AF_INET, socket.AF_INET6]
 NUM_WORKERS = 4
 BUFFER_SIZE = 1 << 20
 IDLE_TIMEOUT = 43200
+SEND_TIMEOUT = 10
 TFO_TIMEOUT = 0.01
 
 
@@ -35,7 +37,8 @@ class Session:
     _DIR_UP = "->"
     _DIR_DOWN = "<-"
 
-    def __init__(self, client_sock: socket.socket, client_addr: tuple[str, int]):
+    def __init__(self, client_sock: socket.socket, client_addr: tuple[str, int], accepted_at: float):
+        self._accepted_at = accepted_at
         self._name = f"Session-{client_sock.fileno()}"
         self._logger = logging.getLogger(self._name)
         self._cl_name = f"[{client_addr[0]}]:{client_addr[1]}"
@@ -52,7 +55,8 @@ class Session:
         self._configure_socket(client_sock)
         self._configure_socket(self._remote_sock, tfo=True)
 
-        self._log(logging.DEBUG, "Created", f"{self._cl_name:50} {self._DIR_UP} {self._rm_name:50}")
+        creation_time = time.perf_counter() - self._accepted_at
+        self._log(logging.DEBUG, f"Created ({creation_time * 1000:.2f}ms)", f"{self._cl_name:50} {self._DIR_UP} {self._rm_name:50}")
 
     def serve(self):
         try:
@@ -77,7 +81,7 @@ class Session:
                 if recv:
                     self._log(logging.DEBUG, f"TFO-T failed", f"{self._cl_name:50} {self._DIR_UP} {self._rm_name:50}")
 
-            wait_write(self._remote_sock.fileno(), IDLE_TIMEOUT)
+            wait_write(self._remote_sock.fileno(), SEND_TIMEOUT)
             if sent < recv:
                 self._remote_sock.sendall(buffer[sent:recv])
                 self._log(logging.DEBUG, f"Sent remaining {recv - sent:8} bytes", f"{self._cl_name:50} {self._DIR_UP} {self._rm_name:50}")
@@ -85,15 +89,17 @@ class Session:
             try:
                 wait_read(self._remote_sock.fileno(), TFO_TIMEOUT)
                 if recv := self._remote_sock.recv_into(buffer):
-                    wait_write(self._client_sock.fileno(), IDLE_TIMEOUT)
+                    wait_write(self._client_sock.fileno(), SEND_TIMEOUT)
                     self._client_sock.sendall(buffer[:recv])
                     self._log(logging.DEBUG, f"TFO-A {recv:17} bytes", f"{self._cl_name:50} {self._DIR_DOWN} {self._rm_name:50}")
                 else:
                     raise ConnectionAbortedError("Empty remote connection")
             except timeout:
                 pass
+            del buffer
 
-            self._log(logging.INFO, "Established", f"{self._cl_name:50} {self._DIR_UP} {self._rm_name:50}")
+            open_time = time.perf_counter() - self._accepted_at
+            self._log(logging.INFO, f"Established ({open_time * 1000:.2f}ms)", f"{self._cl_name:50} {self._DIR_UP} {self._rm_name:50}")
             group = Group()
             group.spawn(self._relay, self._DIR_UP, self._client_sock, self._remote_sock)
             group.spawn(self._relay, self._DIR_DOWN, self._remote_sock, self._client_sock)
@@ -111,7 +117,8 @@ class Session:
                 self._client_sock.close()
             except OSError:
                 pass
-            self._log(logging.INFO, "Closed", f"{self._cl_name:50} {self._DIR_UP} {self._rm_name:50}")
+            run_time = time.perf_counter() - self._accepted_at
+            self._log(logging.INFO, f"Closed ({run_time:.2f}s)", f"{self._cl_name:50} {self._DIR_UP} {self._rm_name:50}")
 
     def _relay(self, direction: str, src: socket.socket, dst: socket.socket):
         eof = False
@@ -124,7 +131,7 @@ class Session:
         def send(buf: memoryview):
             sent = 0
             try:
-                wait_write(dst.fileno(), IDLE_TIMEOUT)
+                wait_write(dst.fileno(), SEND_TIMEOUT)
                 sent = dst.send(buf)
             except:
                 pass
@@ -235,10 +242,11 @@ class ProxyServer:
         StreamServer(sock, self._accept_client).serve_forever()
 
     def _accept_client(self, client_sock: socket.socket, client_addr: tuple[str, int]):
+        accepted_at = time.perf_counter()
         cl_name = f"[{client_addr[0]}]:{client_addr[1]}"
         self._log(logging.DEBUG, "Accepted", cl_name)
         try:
-            session = Session(client_sock, client_addr)
+            session = Session(client_sock, client_addr, accepted_at)
             session.serve()
         except ConnectionRefusedError as e:
             self._log(logging.WARNING, f"{e}", cl_name)
