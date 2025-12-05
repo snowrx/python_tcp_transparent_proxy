@@ -24,6 +24,8 @@ NUM_WORKERS = 4
 BUFFER_SIZE = 1 << 20
 IDLE_TIMEOUT = 43200
 SEND_TIMEOUT = 10
+
+TFO_MSS = 1200
 TFO_TIMEOUT = 0
 
 
@@ -62,7 +64,7 @@ class Session:
         try:
             self._remote_sock.connect(self._remote_addr)
 
-            buffer = memoryview(bytearray(BUFFER_SIZE))
+            buffer = memoryview(bytearray(TFO_MSS))
             recv = 0
             sent = 0
             try:
