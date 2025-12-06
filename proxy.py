@@ -15,7 +15,6 @@ import struct
 from concurrent.futures import ProcessPoolExecutor
 
 LOG_LEVEL = logging.INFO
-LOG_SEND_PROGRESS = False
 
 PORT = 8081
 FAMILY = [socket.AF_INET, socket.AF_INET6]
@@ -112,60 +111,42 @@ class Session:
             self._log(logging.INFO, f"Closed ({run_time:.2f}s)", f"{self._cl_name:50} {self._DIR_UP} {self._rm_name:50}")
 
     def _relay(self, direction: str, src: socket.socket, dst: socket.socket):
-        eof = False
         buffer = memoryview(bytearray(BUFFER_SIZE << 1))
         rbuf = buffer[:BUFFER_SIZE]
         wbuf = buffer[BUFFER_SIZE:]
         rlen = 0
         wlen = 0
 
-        def send(buf: memoryview):
-            sent = 0
+        def sendall(buf: memoryview):
             try:
                 wait_write(dst.fileno(), SEND_TIMEOUT)
-                sent = dst.send(buf)
+                dst.sendall(buf)
+                return True
             except:
-                pass
-            return sent
+                return False
 
         try:
-            start_to_relay_latency = time.perf_counter() - self._accepted_at
-            self._log(logging.DEBUG, f"Starting relay ({start_to_relay_latency * 1000:.2f}ms)", f"{self._cl_name:50} {direction} {self._rm_name:50}")
             while True:
                 wait_read(src.fileno(), IDLE_TIMEOUT)
-                if rlen := src.recv_into(rbuf):
-                    pass
-                else:
-                    eof = True
+                if not (rlen := src.recv_into(rbuf)):
+                    break
 
                 dst.setsockopt(socket.SOL_TCP, socket.TCP_CORK, 1)
                 while rlen:
                     rbuf, rlen, wbuf, wlen = wbuf, wlen, rbuf, rlen
-                    progress = 0
-                    while progress < wlen:
-                        g = gevent.spawn(send, wbuf[progress:wlen])
 
-                        if not eof and not rlen:
-                            try:
-                                wait_read(src.fileno(), 0)
-                                if rlen := src.recv_into(rbuf):
-                                    pass
-                                else:
-                                    eof = True
-                            except timeout:
-                                pass
+                    g = gevent.spawn(sendall, wbuf[:wlen])
+                    try:
+                        wait_read(src.fileno(), 0)
+                        if not (rlen := src.recv_into(rbuf)):
+                            break
+                    except timeout:
+                        pass
 
-                        if not (sent := g.get()):
-                            raise BrokenPipeError("Failed to send")
-                        progress += sent
-                        if LOG_SEND_PROGRESS:
-                            self._log(logging.DEBUG, f"Sent {progress:8} /{wlen:8} bytes", f"{self._cl_name:50} {direction} {self._rm_name:50}")
+                    if not g.get():
+                        raise ConnectionResetError("Remote connection closed")
                     wlen = 0
                 dst.setsockopt(socket.SOL_TCP, socket.TCP_CORK, 0)
-
-                if eof and not rlen:
-                    self._log(logging.DEBUG, f"EOF received", f"{self._cl_name:50} {direction} {self._rm_name:50}")
-                    break
         except timeout:
             self._log(logging.DEBUG, f"Idle timeout", f"{self._cl_name:50} {direction} {self._rm_name:50}")
         except ConnectionResetError:
