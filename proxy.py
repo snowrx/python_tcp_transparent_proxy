@@ -119,13 +119,18 @@ class Session:
 
         def sendall(buf: memoryview):
             try:
+                ts = time.perf_counter()
                 wait_write(dst.fileno(), SEND_TIMEOUT)
                 dst.sendall(buf)
+                if (latency := (time.perf_counter() - ts) * 1000) >= 200:
+                    self._log(logging.DEBUG, f"High latency {latency:.2f}ms", f"{self._cl_name:50} {direction} {self._rm_name:50}")
                 return True
             except:
                 return False
 
         try:
+            self._log(logging.DEBUG, f"Relay started", f"{self._cl_name:50} {direction} {self._rm_name:50}")
+
             while True:
                 wait_read(src.fileno(), IDLE_TIMEOUT)
                 if not (rlen := src.recv_into(rbuf)):
@@ -147,6 +152,8 @@ class Session:
                         raise ConnectionResetError("Remote connection closed")
                     wlen = 0
                 dst.setsockopt(socket.SOL_TCP, socket.TCP_CORK, 0)
+
+            self._log(logging.DEBUG, f"EOF received", f"{self._cl_name:50} {direction} {self._rm_name:50}")
         except timeout:
             self._log(logging.DEBUG, f"Idle timeout", f"{self._cl_name:50} {direction} {self._rm_name:50}")
         except ConnectionResetError:
