@@ -19,8 +19,8 @@ LOG_LEVEL = logging.INFO
 PORT = 8081
 FAMILY = [socket.AF_INET, socket.AF_INET6]
 
-NUM_WORKERS = 4
-BUFFER_SIZE = 1 << 20
+NUM_WORKERS = 1
+BUFFER_SIZE = 1 << 18
 IDLE_TIMEOUT = 43200
 SEND_TIMEOUT = 10
 
@@ -56,9 +56,6 @@ class Session:
         self._configure_socket(client_sock)
         self._configure_socket(self._remote_sock, tfo=True)
 
-        creation_time = time.perf_counter() - self._accepted_at
-        self._log(logging.DEBUG, f"Created ({creation_time * 1000:.2f}ms)", f"{self._cl_name:50} {self._DIR_UP} {self._rm_name:50}")
-
     def serve(self):
         try:
             self._remote_sock.connect(self._remote_addr)
@@ -71,7 +68,7 @@ class Session:
                 if recv := self._client_sock.recv_into(buffer):
                     self._log(logging.DEBUG, f"TFO-R {recv:17} bytes", f"{self._cl_name:50} {self._DIR_UP} {self._rm_name:50}")
                 else:
-                    raise ConnectionAbortedError("Empty client connection")
+                    self._log(logging.WARNING, "Client sent EOF with no data", f"{self._cl_name:50} {self._DIR_UP} {self._rm_name:50}")
             except timeout:
                 self._log(logging.DEBUG, f"TFO-R timeout", f"{self._cl_name:50} {self._DIR_UP} {self._rm_name:50}")
 
@@ -119,18 +116,13 @@ class Session:
 
         def sendall(buf: memoryview):
             try:
-                ts = time.perf_counter()
                 wait_write(dst.fileno(), SEND_TIMEOUT)
                 dst.sendall(buf)
-                if (latency := (time.perf_counter() - ts) * 1000) >= 200:
-                    self._log(logging.DEBUG, f"High latency {latency:.2f}ms", f"{self._cl_name:50} {direction} {self._rm_name:50}")
                 return True
             except:
                 return False
 
         try:
-            self._log(logging.DEBUG, f"Relay started", f"{self._cl_name:50} {direction} {self._rm_name:50}")
-
             while True:
                 wait_read(src.fileno(), IDLE_TIMEOUT)
                 if not (rlen := src.recv_into(rbuf)):
@@ -143,9 +135,9 @@ class Session:
                     g = gevent.spawn(sendall, wbuf[:wlen])
                     try:
                         wait_read(src.fileno(), 0)
-                        gevent.idle()
                         if not (rlen := src.recv_into(rbuf)):
                             break
+                        gevent.idle()
                     except timeout:
                         pass
 
@@ -153,7 +145,6 @@ class Session:
                         raise ConnectionResetError("Remote connection closed")
                     wlen = 0
                 dst.setsockopt(socket.SOL_TCP, socket.TCP_CORK, 0)
-
             self._log(logging.DEBUG, f"EOF received", f"{self._cl_name:50} {direction} {self._rm_name:50}")
         except timeout:
             self._log(logging.DEBUG, f"Idle timeout", f"{self._cl_name:50} {direction} {self._rm_name:50}")
@@ -252,13 +243,13 @@ def main(worker_id: int = 0):
 
 
 if __name__ == "__main__":
-    gc.set_threshold(3000)
-    gc.collect()
-    gc.freeze()
     if os.getenv("DEBUG"):
         LOG_LEVEL = logging.DEBUG
         gc.set_debug(gc.DEBUG_STATS)
     logging.basicConfig(level=LOG_LEVEL, format="%(name)-25s | %(levelname)-10s | %(message)s")
 
-    with ProcessPoolExecutor(NUM_WORKERS) as pool:
-        pool.map(main, range(NUM_WORKERS))
+    if NUM_WORKERS > 1:
+        with ProcessPoolExecutor(NUM_WORKERS) as pool:
+            pool.map(main, range(NUM_WORKERS))
+    else:
+        main()
