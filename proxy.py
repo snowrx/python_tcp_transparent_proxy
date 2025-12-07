@@ -143,6 +143,7 @@ class Session:
                     g = gevent.spawn(sendall, wbuf[:wlen])
                     try:
                         wait_read(src.fileno(), 0)
+                        gevent.idle()
                         if not (rlen := src.recv_into(rbuf)):
                             break
                     except timeout:
