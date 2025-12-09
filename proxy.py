@@ -118,35 +118,29 @@ class Session:
                 return False
 
         try:
-            while True:
+            while not eof:
                 wait_read(src.fileno(), IDLE_TIMEOUT)
                 if not (rlen := src.recv_into(rbuf)):
                     eof = True
-                else:
-                    dst.setsockopt(socket.SOL_TCP, socket.TCP_CORK, 1)
-
-                    while rlen:
-                        rbuf, rlen, wbuf, wlen = wbuf, wlen, rbuf, rlen
-
-                        g = gevent.spawn(sendall, wbuf[:wlen], time.perf_counter())
-
-                        try:
-                            wait_read(src.fileno(), 0)
-                            if not (rlen := src.recv_into(rbuf)):
-                                eof = True
-                            gevent.idle()
-                        except timeout:
-                            pass
-
-                        if not g.get():
-                            raise BrokenPipeError(f"Failed to send {wlen} bytes")
-                        wlen = 0
-
-                    dst.setsockopt(socket.SOL_TCP, socket.TCP_CORK, 0)
-
-                if eof:
-                    self._log(logging.DEBUG, f"EOF received", f"{self._cl_name:50} {direction} {self._rm_name:50}")
                     break
+
+                dst.setsockopt(socket.SOL_TCP, socket.TCP_CORK, 1)
+                while rlen:
+                    rbuf, rlen, wbuf, wlen = wbuf, wlen, rbuf, rlen
+                    gevent.idle()
+                    g = gevent.spawn(sendall, wbuf[:wlen], time.perf_counter())
+                    try:
+                        wait_read(src.fileno(), 0)
+                        if not (rlen := src.recv_into(rbuf)):
+                            eof = True
+                    except timeout:
+                        pass
+                    if not g.get():
+                        raise BrokenPipeError(f"Failed to send {wlen} bytes")
+                    wlen = 0
+                dst.setsockopt(socket.SOL_TCP, socket.TCP_CORK, 0)
+
+            self._log(logging.DEBUG, f"EOF received", f"{self._cl_name:50} {direction} {self._rm_name:50}")
         except timeout:
             self._log(logging.DEBUG, f"Idle timeout", f"{self._cl_name:50} {direction} {self._rm_name:50}")
         except ConnectionResetError:
