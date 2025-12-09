@@ -30,7 +30,6 @@ TFO_TIMEOUT = 0
 
 class Session:
     _SO_ORIGINAL_DST = 80
-    _SOL_IPV6 = 41
     _V4_LEN = 16
     _V4_FMT = "!2xH4s"
     _V6_LEN = 28
@@ -183,7 +182,7 @@ class Session:
                 port, raw_ip = struct.unpack_from(self._V4_FMT, dst)
                 ip = socket.inet_ntop(socket.AF_INET, raw_ip)
             case socket.AF_INET6:
-                dst = sock.getsockopt(self._SOL_IPV6, self._SO_ORIGINAL_DST, self._V6_LEN)
+                dst = sock.getsockopt(socket.IPPROTO_IPV6, self._SO_ORIGINAL_DST, self._V6_LEN)
                 port, raw_ip = struct.unpack_from(self._V6_FMT, dst)
                 ip = socket.inet_ntop(socket.AF_INET6, raw_ip)
             case _:
