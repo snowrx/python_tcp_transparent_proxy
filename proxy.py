@@ -19,7 +19,6 @@ LOG_LEVEL = logging.INFO
 
 PORT = 8081
 
-NUM_WORKERS = 1
 BUFFER_SIZE = 250 << 10
 IDLE_TIMEOUT = 43200
 SEND_TIMEOUT = 10
@@ -237,8 +236,9 @@ if __name__ == "__main__":
         gc.set_debug(gc.DEBUG_STATS)
     logging.basicConfig(level=LOG_LEVEL, format="%(name)-25s | %(levelname)-10s | %(message)s")
 
-    if NUM_WORKERS > 1:
-        with ProcessPoolExecutor(NUM_WORKERS) as pool:
-            pool.map(main, range(NUM_WORKERS))
+    w = os.cpu_count() or 1
+    if w > 1:
+        with ProcessPoolExecutor(w) as pool:
+            pool.map(main, range(w))
     else:
         main()
