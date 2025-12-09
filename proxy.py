@@ -113,6 +113,7 @@ class Session:
         wbuf = buffer[BUFFER_SIZE:]
         rlen = 0
         wlen = 0
+        eof = False
 
         def sendall(buf: memoryview):
             try:
@@ -126,32 +127,37 @@ class Session:
             while True:
                 wait_read(src.fileno(), IDLE_TIMEOUT)
                 if not (rlen := src.recv_into(rbuf)):
+                    eof = True
+                else:
+                    dst.setsockopt(socket.SOL_TCP, socket.TCP_CORK, 1)
+
+                    while rlen:
+                        rbuf, rlen, wbuf, wlen = wbuf, wlen, rbuf, rlen
+
+                        g = gevent.spawn(sendall, wbuf[:wlen])
+                        try:
+                            wait_read(src.fileno(), 0)
+                            if not (rlen := src.recv_into(rbuf)):
+                                eof = True
+                            gevent.idle()
+                        except timeout:
+                            pass
+
+                        if not g.get():
+                            raise BrokenPipeError(f"Failed to send {wlen} bytes")
+                        wlen = 0
+
+                    dst.setsockopt(socket.SOL_TCP, socket.TCP_CORK, 0)
+
+                if eof:
+                    self._log(logging.DEBUG, f"EOF received", f"{self._cl_name:50} {direction} {self._rm_name:50}")
                     break
-
-                dst.setsockopt(socket.SOL_TCP, socket.TCP_CORK, 1)
-                while rlen:
-                    rbuf, rlen, wbuf, wlen = wbuf, wlen, rbuf, rlen
-
-                    g = gevent.spawn(sendall, wbuf[:wlen])
-                    try:
-                        wait_read(src.fileno(), 0)
-                        if not (rlen := src.recv_into(rbuf)):
-                            break
-                        gevent.idle()
-                    except timeout:
-                        pass
-
-                    if not g.get():
-                        raise ConnectionResetError("Remote connection closed")
-                    wlen = 0
-                dst.setsockopt(socket.SOL_TCP, socket.TCP_CORK, 0)
-            self._log(logging.DEBUG, f"EOF received", f"{self._cl_name:50} {direction} {self._rm_name:50}")
         except timeout:
             self._log(logging.DEBUG, f"Idle timeout", f"{self._cl_name:50} {direction} {self._rm_name:50}")
         except ConnectionResetError:
             self._log(logging.DEBUG, f"Connection reset", f"{self._cl_name:50} {direction} {self._rm_name:50}")
-        except BrokenPipeError:
-            self._log(logging.DEBUG, f"Broken pipe", f"{self._cl_name:50} {direction} {self._rm_name:50}")
+        except BrokenPipeError as e:
+            self._log(logging.DEBUG, f"Broken pipe: {e}", f"{self._cl_name:50} {direction} {self._rm_name:50}")
         except OSError:
             self._log(logging.DEBUG, f"OS error", f"{self._cl_name:50} {direction} {self._rm_name:50}")
         finally:
