@@ -58,55 +58,46 @@ class Session:
         self._configure_socket(self._remote_sock, tfo=True)
 
     def serve(self):
-        try:
-            self._remote_sock.connect(self._remote_addr)
-
-            buffer = memoryview(bytearray(TFO_MSS))
-            recv = 0
-            sent = 0
+        with self._remote_sock:
             try:
-                wait_read(self._client_sock.fileno(), TFO_TIMEOUT)
-                if recv := self._client_sock.recv_into(buffer):
-                    self._log(logging.DEBUG, f"TFO-R {recv:17} bytes", f"{self._cl_name:50} {self._DIR_UP} {self._rm_name:50}")
-                else:
-                    self._log(logging.WARNING, "Client sent EOF with no data", f"{self._cl_name:50} {self._DIR_UP} {self._rm_name:50}")
-            except timeout:
-                self._log(logging.DEBUG, f"TFO-R timeout", f"{self._cl_name:50} {self._DIR_UP} {self._rm_name:50}")
+                self._remote_sock.connect(self._remote_addr)
 
-            try:
-                if sent := self._remote_sock.sendto(buffer[:recv], socket.MSG_FASTOPEN, self._remote_addr):
-                    self._log(logging.DEBUG, f"TFO-T {sent:7} /{recv:8} bytes", f"{self._cl_name:50} {self._DIR_UP} {self._rm_name:50}")
-            except BlockingIOError:
-                if recv:
-                    self._log(logging.DEBUG, f"TFO-T failed", f"{self._cl_name:50} {self._DIR_UP} {self._rm_name:50}")
+                buffer = memoryview(bytearray(TFO_MSS))
+                recv = 0
+                sent = 0
+                try:
+                    wait_read(self._client_sock.fileno(), TFO_TIMEOUT)
+                    if recv := self._client_sock.recv_into(buffer):
+                        self._log(logging.DEBUG, f"TFO-R {recv:17} bytes", f"{self._cl_name:50} {self._DIR_UP} {self._rm_name:50}")
+                    else:
+                        self._log(logging.WARNING, "Client sent EOF with no data", f"{self._cl_name:50} {self._DIR_UP} {self._rm_name:50}")
+                except timeout:
+                    self._log(logging.DEBUG, f"TFO-R timeout", f"{self._cl_name:50} {self._DIR_UP} {self._rm_name:50}")
 
-            wait_write(self._remote_sock.fileno(), SEND_TIMEOUT)
-            if sent < recv:
-                self._remote_sock.sendall(buffer[sent:recv])
-                self._log(logging.DEBUG, f"Sent remaining {recv - sent:8} bytes", f"{self._cl_name:50} {self._DIR_UP} {self._rm_name:50}")
-            del buffer
+                try:
+                    if sent := self._remote_sock.sendto(buffer[:recv], socket.MSG_FASTOPEN, self._remote_addr):
+                        self._log(logging.DEBUG, f"TFO-T {sent:7} /{recv:8} bytes", f"{self._cl_name:50} {self._DIR_UP} {self._rm_name:50}")
+                except BlockingIOError:
+                    if recv:
+                        self._log(logging.DEBUG, f"TFO-T failed", f"{self._cl_name:50} {self._DIR_UP} {self._rm_name:50}")
 
-            open_time = time.perf_counter() - self._accepted_at
-            self._log(logging.INFO, f"Established ({open_time * 1000:.2f}ms)", f"{self._cl_name:50} {self._DIR_UP} {self._rm_name:50}")
-            group = Group()
-            group.spawn(self._relay, self._DIR_DOWN, self._remote_sock, self._client_sock)
-            group.spawn(self._relay, self._DIR_UP, self._client_sock, self._remote_sock)
-            group.join()
-        except Exception as e:
-            self._log(logging.ERROR, f"Serve failed: {e}", f"{self._cl_name:50} {self._DIR_UP} {self._rm_name:50}")
-        finally:
-            try:
-                self._remote_sock.shutdown(socket.SHUT_RDWR)
-                self._remote_sock.close()
-            except OSError:
-                pass
-            try:
-                self._client_sock.shutdown(socket.SHUT_RDWR)
-                self._client_sock.close()
-            except OSError:
-                pass
-            run_time = time.perf_counter() - self._accepted_at
-            self._log(logging.INFO, f"Closed ({run_time:.2f}s)", f"{self._cl_name:50} {self._DIR_UP} {self._rm_name:50}")
+                wait_write(self._remote_sock.fileno(), SEND_TIMEOUT)
+                if sent < recv:
+                    self._remote_sock.sendall(buffer[sent:recv])
+                    self._log(logging.DEBUG, f"Sent remaining {recv - sent:8} bytes", f"{self._cl_name:50} {self._DIR_UP} {self._rm_name:50}")
+                del buffer
+
+                open_time = time.perf_counter() - self._accepted_at
+                self._log(logging.INFO, f"Established ({open_time * 1000:.2f}ms)", f"{self._cl_name:50} {self._DIR_UP} {self._rm_name:50}")
+                group = Group()
+                group.spawn(self._relay, self._DIR_DOWN, self._remote_sock, self._client_sock)
+                group.spawn(self._relay, self._DIR_UP, self._client_sock, self._remote_sock)
+                group.join()
+            except Exception as e:
+                self._log(logging.ERROR, f"Serve failed: {e}", f"{self._cl_name:50} {self._DIR_UP} {self._rm_name:50}")
+
+        run_time = time.perf_counter() - self._accepted_at
+        self._log(logging.INFO, f"Closed ({run_time:.2f}s)", f"{self._cl_name:50} {self._DIR_UP} {self._rm_name:50}")
 
     def _relay(self, direction: str, src: socket.socket, dst: socket.socket):
         buffer = memoryview(bytearray(BUFFER_SIZE << 1))
@@ -170,8 +161,9 @@ class Session:
                 dst.shutdown(socket.SHUT_WR)
             except OSError:
                 pass
-            del buffer, rbuf, wbuf, rlen, wlen
-            self._log(logging.DEBUG, f"Relay finished", f"{self._cl_name:50} {direction} {self._rm_name:50}")
+
+        del buffer, rbuf, wbuf, rlen, wlen
+        self._log(logging.DEBUG, f"Relay finished", f"{self._cl_name:50} {direction} {self._rm_name:50}")
 
     def _get_orig_dst(self, sock: socket.socket, family: socket.AddressFamily):
         ip: str = ""
@@ -210,31 +202,28 @@ class ProxyServer:
 
     def run(self):
         self._log(logging.INFO, "Starting server")
-        sock = socket.socket(socket.AF_INET6, socket.SOCK_STREAM)
-        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
-        sock.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 0)
-        sock.bind(("", PORT))
-        sock.listen(socket.SOMAXCONN)
-        self._log(logging.INFO, f"Listening on *:{PORT}")
-        server = StreamServer(sock, self._accept_client)
-        server.serve_forever()
+        with socket.socket(socket.AF_INET6, socket.SOCK_STREAM) as sock:
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
+            sock.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 0)
+            sock.bind(("", PORT))
+            sock.listen(socket.SOMAXCONN)
+            self._log(logging.INFO, f"Listening on *:{PORT}")
+            server = StreamServer(sock, self._accept_client)
+            server.serve_forever()
 
     def _accept_client(self, client_sock: socket.socket, client_addr: tuple[str, int]):
-        accepted_at = time.perf_counter()
-        cl_name = f"[{client_addr[0]}]:{client_addr[1]}"
-        self._log(logging.DEBUG, "Accepted", cl_name)
-        try:
-            session = Session(client_sock, client_addr, accepted_at)
-            session.serve()
-        except ConnectionRefusedError as e:
-            self._log(logging.WARNING, f"{e}", cl_name)
-        except Exception as e:
-            self._log(logging.ERROR, f"Session failed: {e}", cl_name)
+        with client_sock:
+            accepted_at = time.perf_counter()
+            cl_name = f"[{client_addr[0]}]:{client_addr[1]}"
+            self._log(logging.DEBUG, "Accepted", cl_name)
             try:
-                client_sock.shutdown(socket.SHUT_RDWR)
-                client_sock.close()
-            except OSError:
-                pass
+                session = Session(client_sock, client_addr, accepted_at)
+                session.serve()
+            except ConnectionRefusedError as e:
+                self._log(logging.WARNING, f"{e}", cl_name)
+            except Exception as e:
+                self._log(logging.ERROR, f"Session failed: {e}", cl_name)
+        self._log(logging.DEBUG, "Closed", cl_name)
 
     def _log(self, level: int, subject: str, msg: str = ""):
         txt = f"{subject:50}"
