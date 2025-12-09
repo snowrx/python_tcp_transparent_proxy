@@ -133,6 +133,7 @@ class Session:
                         wait_read(src.fileno(), 0)
                         if not (rlen := src.recv_into(rbuf)):
                             eof = True
+                            break
                     except timeout:
                         pass
                     if not g.get():
@@ -217,7 +218,6 @@ class ProxyServer:
                 self._log(logging.WARNING, f"{e}", cl_name)
             except Exception as e:
                 self._log(logging.ERROR, f"Session failed: {e}", cl_name)
-        self._log(logging.DEBUG, "Closed", cl_name)
 
     def _log(self, level: int, subject: str, msg: str = ""):
         txt = f"{subject:50}"
