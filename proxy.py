@@ -116,7 +116,9 @@ class Session:
         wlen = 0
         eof = False
 
-        def sendall(buf: memoryview):
+        def sendall(buf: memoryview, ts: float):
+            if (delay := (time.perf_counter() - ts) * 1000) >= 1:
+                self._log(logging.DEBUG, f"Send delayed {delay:.2f}ms", f"{self._cl_name:50} {direction} {self._rm_name:50}")
             try:
                 wait_write(dst.fileno(), SEND_TIMEOUT)
                 dst.sendall(buf)
@@ -135,7 +137,8 @@ class Session:
                     while rlen:
                         rbuf, rlen, wbuf, wlen = wbuf, wlen, rbuf, rlen
 
-                        g = gevent.spawn(sendall, wbuf[:wlen])
+                        g = gevent.spawn(sendall, wbuf[:wlen], time.perf_counter())
+
                         try:
                             wait_read(src.fileno(), 0)
                             if not (rlen := src.recv_into(rbuf)):
