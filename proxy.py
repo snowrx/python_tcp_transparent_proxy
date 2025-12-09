@@ -4,7 +4,6 @@ from gevent import socket
 from gevent.pool import Group
 from gevent.server import StreamServer
 from gevent.socket import wait_read, wait_write, timeout
-from gevent.threadpool import ThreadPool
 
 gevent.monkey.patch_all()
 
@@ -13,12 +12,12 @@ import time
 import gc
 import os
 import struct
+import ipaddress
 from concurrent.futures import ProcessPoolExecutor
 
 LOG_LEVEL = logging.INFO
 
 PORT = 8081
-FAMILY = [socket.AF_INET, socket.AF_INET6]
 
 NUM_WORKERS = 1
 BUFFER_SIZE = 1 << 18
@@ -44,15 +43,17 @@ class Session:
         self._name = f"Session-{hex(id(self))}"
         self._logger = logging.getLogger(self._name)
         self._cl_name = f"[{client_addr[0]}]:{client_addr[1]}"
+        ip = ipaddress.IPv6Address(client_addr[0])
+        self._family = socket.AF_INET if ip.ipv4_mapped else socket.AF_INET6
 
-        self._remote_addr = self._get_orig_dst(client_sock)
+        self._remote_addr = self._get_orig_dst(client_sock, self._family)
         srv_addr = client_sock.getsockname()
         if self._remote_addr[0] == srv_addr[0] and self._remote_addr[1] == srv_addr[1]:
             raise ConnectionRefusedError("Direct connections are not allowed")
         self._rm_name = f"[{self._remote_addr[0]}]:{self._remote_addr[1]}"
 
         self._client_sock = client_sock
-        self._remote_sock = socket.socket(client_sock.family, client_sock.type)
+        self._remote_sock = socket.socket(self._family, client_sock.type)
 
         self._configure_socket(client_sock)
         self._configure_socket(self._remote_sock, tfo=True)
@@ -173,10 +174,10 @@ class Session:
             del buffer, rbuf, wbuf, rlen, wlen
             self._log(logging.DEBUG, f"Relay finished", f"{self._cl_name:50} {direction} {self._rm_name:50}")
 
-    def _get_orig_dst(self, sock: socket.socket):
+    def _get_orig_dst(self, sock: socket.socket, family: socket.AddressFamily):
         ip: str = ""
         port: int = 0
-        match sock.family:
+        match family:
             case socket.AF_INET:
                 dst = sock.getsockopt(socket.SOL_IP, self._SO_ORIGINAL_DST, self._V4_LEN)
                 port, raw_ip = struct.unpack_from(self._V4_FMT, dst)
@@ -186,7 +187,7 @@ class Session:
                 port, raw_ip = struct.unpack_from(self._V6_FMT, dst)
                 ip = socket.inet_ntop(socket.AF_INET6, raw_ip)
             case _:
-                raise RuntimeError(f"Unknown socket family: {sock.family}")
+                raise RuntimeError(f"Unknown socket family: {family}")
         return ip, port
 
     def _configure_socket(self, sock: socket.socket, tfo: bool = False):
@@ -210,18 +211,14 @@ class ProxyServer:
 
     def run(self):
         self._log(logging.INFO, "Starting server")
-        listener_pool = ThreadPool(len(FAMILY))
-        listener_pool.map(self._launch_listener, FAMILY)
-        listener_pool.join()
-
-    def _launch_listener(self, family: socket.AddressFamily):
-        sock = socket.socket(family, socket.SOCK_STREAM)
+        sock = socket.socket(socket.AF_INET6, socket.SOCK_STREAM)
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
+        sock.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 0)
         sock.bind(("", PORT))
         sock.listen(socket.SOMAXCONN)
-        addr = sock.getsockname()
-        self._log(logging.INFO, f"Listening on [{addr[0]}]:{addr[1]}")
-        StreamServer(sock, self._accept_client).serve_forever()
+        self._log(logging.INFO, f"Listening on *:{PORT}")
+        server = StreamServer(sock, self._accept_client)
+        server.serve_forever()
 
     def _accept_client(self, client_sock: socket.socket, client_addr: tuple[str, int]):
         accepted_at = time.perf_counter()
