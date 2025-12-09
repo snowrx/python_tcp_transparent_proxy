@@ -4,6 +4,7 @@ from gevent import socket
 from gevent.pool import Group
 from gevent.server import StreamServer
 from gevent.socket import wait_read, wait_write, timeout
+from gevent.threadpool import ThreadPool
 
 gevent.monkey.patch_all()
 
@@ -206,7 +207,7 @@ class ProxyServer:
 
     def run(self):
         self._log(logging.INFO, "Starting server")
-        listener_pool = Group()
+        listener_pool = ThreadPool(len(FAMILY))
         listener_pool.map(self._launch_listener, FAMILY)
         listener_pool.join()
 
