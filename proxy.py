@@ -232,6 +232,9 @@ def main(worker_id: int = 0):
 
 
 if __name__ == "__main__":
+    gc.collect()
+    gc.freeze()
+
     if os.getenv("DEBUG"):
         LOG_LEVEL = logging.DEBUG
         gc.set_debug(gc.DEBUG_STATS)
