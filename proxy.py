@@ -119,6 +119,7 @@ class Session:
         try:
             while not eof:
                 wait_read(src.fileno(), IDLE_TIMEOUT)
+                gevent.idle()
                 if not (rlen := src.recv_into(rbuf)):
                     eof = True
                     break
@@ -129,10 +130,10 @@ class Session:
                     g = gevent.spawn(sendall, wbuf[:wlen], time.perf_counter())
                     try:
                         wait_read(src.fileno(), 0)
+                        gevent.idle()
                         if not (rlen := src.recv_into(rbuf)):
                             eof = True
                             break
-                        gevent.idle()
                     except timeout:
                         pass
                     if not g.get():
