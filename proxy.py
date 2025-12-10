@@ -19,7 +19,7 @@ LOG_LEVEL = logging.INFO
 
 PORT = 8081
 
-BUFFER_SIZE = 250 << 10
+BUFFER_SIZE = 1000 << 10
 IDLE_TIMEOUT = 43200
 SEND_TIMEOUT = 10
 
@@ -126,13 +126,13 @@ class Session:
                 dst.setsockopt(socket.SOL_TCP, socket.TCP_CORK, 1)
                 while rlen:
                     rbuf, rlen, wbuf, wlen = wbuf, wlen, rbuf, rlen
-                    gevent.idle()
                     g = gevent.spawn(sendall, wbuf[:wlen], time.perf_counter())
                     try:
                         wait_read(src.fileno(), 0)
                         if not (rlen := src.recv_into(rbuf)):
                             eof = True
                             break
+                        gevent.idle()
                     except timeout:
                         pass
                     if not g.get():
