@@ -84,6 +84,7 @@ class Session:
                 if sent < recv:
                     self._remote_sock.sendall(buffer[sent:recv])
                     self._log(logging.DEBUG, f"Sent remaining {recv - sent:8} bytes", f"{self._cl_name:50} {self._DIR_UP} {self._rm_name:50}")
+                buffer[:] = b"\0" * len(buffer)
                 del buffer
 
                 open_time = time.perf_counter() - self._accepted_at
@@ -157,6 +158,7 @@ class Session:
             except OSError:
                 pass
 
+        buffer[:] = b"\0" * len(buffer)
         del buffer, rbuf, wbuf, rlen, wlen
         self._log(logging.DEBUG, f"Relay finished", f"{self._cl_name:50} {direction} {self._rm_name:50}")
 
