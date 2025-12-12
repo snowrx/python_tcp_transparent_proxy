@@ -13,7 +13,6 @@ import gc
 import os
 import struct
 import ipaddress
-import mmap
 from concurrent.futures import ProcessPoolExecutor
 
 LOG_LEVEL = logging.INFO
@@ -61,33 +60,31 @@ class Session:
             try:
                 self._remote_sock.connect(self._remote_addr)
 
-                with mmap.mmap(-1, BUFFER_SIZE, mmap.MAP_PRIVATE | mmap.MAP_ANONYMOUS) as mm:
-                    mm.madvise(mmap.MADV_WILLNEED | mmap.MADV_SEQUENTIAL | mmap.MADV_HUGEPAGE)
-                    buffer = memoryview(mm)
-                    recv = 0
-                    sent = 0
+                buffer = memoryview(bytearray(BUFFER_SIZE))
+                recv = 0
+                sent = 0
 
-                    try:
-                        wait_read(self._client_sock.fileno(), INITIAL_DATA_TIMEOUT)
-                        if recv := self._client_sock.recv_into(buffer):
-                            self._log(logging.DEBUG, f"TFO-R {recv:17} bytes", f"{self._cl_name:50} {self._DIR_UP} {self._rm_name:50}")
-                        else:
-                            self._log(logging.WARNING, "Client sent EOF with no data", f"{self._cl_name:50} {self._DIR_UP} {self._rm_name:50}")
-                    except timeout:
-                        self._log(logging.DEBUG, f"TFO-R timeout", f"{self._cl_name:50} {self._DIR_UP} {self._rm_name:50}")
+                try:
+                    wait_read(self._client_sock.fileno(), INITIAL_DATA_TIMEOUT)
+                    if recv := self._client_sock.recv_into(buffer):
+                        self._log(logging.DEBUG, f"TFO-R {recv:17} bytes", f"{self._cl_name:50} {self._DIR_UP} {self._rm_name:50}")
+                    else:
+                        self._log(logging.WARNING, "Client sent EOF with no data", f"{self._cl_name:50} {self._DIR_UP} {self._rm_name:50}")
+                except timeout:
+                    self._log(logging.DEBUG, f"TFO-R timeout", f"{self._cl_name:50} {self._DIR_UP} {self._rm_name:50}")
 
-                    try:
-                        if sent := self._remote_sock.sendto(buffer[:recv], socket.MSG_FASTOPEN, self._remote_addr):
-                            self._log(logging.DEBUG, f"TFO-T {sent:7} /{recv:8} bytes", f"{self._cl_name:50} {self._DIR_UP} {self._rm_name:50}")
-                    except BlockingIOError:
-                        if recv:
-                            self._log(logging.DEBUG, f"TFO-T failed", f"{self._cl_name:50} {self._DIR_UP} {self._rm_name:50}")
+                try:
+                    if sent := self._remote_sock.sendto(buffer[:recv], socket.MSG_FASTOPEN, self._remote_addr):
+                        self._log(logging.DEBUG, f"TFO-T {sent:7} /{recv:8} bytes", f"{self._cl_name:50} {self._DIR_UP} {self._rm_name:50}")
+                except BlockingIOError:
+                    if recv:
+                        self._log(logging.DEBUG, f"TFO-T failed", f"{self._cl_name:50} {self._DIR_UP} {self._rm_name:50}")
 
-                    wait_write(self._remote_sock.fileno(), SEND_TIMEOUT)
-                    if sent < recv:
-                        self._remote_sock.sendall(buffer[sent:recv])
-                        self._log(logging.DEBUG, f"Sent remaining {recv - sent:8} bytes", f"{self._cl_name:50} {self._DIR_UP} {self._rm_name:50}")
-                    del buffer
+                wait_write(self._remote_sock.fileno(), SEND_TIMEOUT)
+                if sent < recv:
+                    self._remote_sock.sendall(buffer[sent:recv])
+                    self._log(logging.DEBUG, f"Sent remaining {recv - sent:8} bytes", f"{self._cl_name:50} {self._DIR_UP} {self._rm_name:50}")
+                del buffer
 
                 open_time = time.perf_counter() - self._accepted_at
                 self._log(logging.INFO, f"Established ({open_time * 1000:.2f}ms)", f"{self._cl_name:50} {self._DIR_UP} {self._rm_name:50}")
@@ -112,60 +109,59 @@ class Session:
                 pass
             return sent
 
-        with mmap.mmap(-1, BUFFER_SIZE << 1, mmap.MAP_PRIVATE | mmap.MAP_ANONYMOUS) as mm:
-            mm.madvise(mmap.MADV_WILLNEED | mmap.MADV_SEQUENTIAL | mmap.MADV_HUGEPAGE)
-            rcvbuf = memoryview(mm)[:BUFFER_SIZE]
-            sndbuf = memoryview(mm)[BUFFER_SIZE:]
-            rcvlen = 0
-            sndlen = 0
-            eof = False
+        buffer = memoryview(bytearray(BUFFER_SIZE << 1))
+        rcvbuf = buffer[:BUFFER_SIZE]
+        sndbuf = buffer[BUFFER_SIZE:]
+        rcvlen = 0
+        sndlen = 0
+        eof = False
 
-            try:
-                while not eof:
-                    wait_read(src.fileno(), IDLE_TIMEOUT)
-                    gevent.idle()
-                    if not (rcvlen := src.recv_into(rcvbuf)):
-                        eof = True
-                        break
+        try:
+            while not eof:
+                wait_read(src.fileno(), IDLE_TIMEOUT)
+                gevent.idle()
+                if not (rcvlen := src.recv_into(rcvbuf)):
+                    eof = True
+                    break
 
-                    dst.setsockopt(socket.SOL_TCP, socket.TCP_CORK, 1)
-                    while rcvlen:
-                        rcvbuf, rcvlen, sndbuf, sndlen = sndbuf, sndlen, rcvbuf, rcvlen
+                dst.setsockopt(socket.SOL_TCP, socket.TCP_CORK, 1)
+                while rcvlen:
+                    rcvbuf, rcvlen, sndbuf, sndlen = sndbuf, sndlen, rcvbuf, rcvlen
 
-                        snd = gevent.spawn(sendall, sndbuf[:sndlen])
-                        try:
-                            wait_read(src.fileno(), 0)
-                            gevent.idle()
-                            if not (rcvlen := src.recv_into(rcvbuf)):
-                                eof = True
-                        except timeout:
-                            pass
+                    snd = gevent.spawn(sendall, sndbuf[:sndlen])
+                    try:
+                        wait_read(src.fileno(), 0)
+                        gevent.idle()
+                        if not (rcvlen := src.recv_into(rcvbuf)):
+                            eof = True
+                    except timeout:
+                        pass
 
-                        if not snd.get():
-                            raise ConnectionError(f"Failed to send {sndlen} bytes")
-                        sndlen = 0
-                    dst.setsockopt(socket.SOL_TCP, socket.TCP_CORK, 0)
-
-                self._log(logging.DEBUG, "EOF", f"{self._cl_name:50} {direction} {self._rm_name:50}")
-            except timeout:
-                self._log(logging.DEBUG, "Idle timeout", f"{self._cl_name:50} {direction} {self._rm_name:50}")
-            except ConnectionResetError:
-                self._log(logging.DEBUG, "Connection reset", f"{self._cl_name:50} {direction} {self._rm_name:50}")
-            except BrokenPipeError:
-                self._log(logging.DEBUG, "Broken pipe", f"{self._cl_name:50} {direction} {self._rm_name:50}")
-            except ConnectionError as e:
-                self._log(logging.DEBUG, f"{e}", f"{self._cl_name:50} {direction} {self._rm_name:50}")
-            except OSError:
-                self._log(logging.DEBUG, "Socket error", f"{self._cl_name:50} {direction} {self._rm_name:50}")
-            except Exception as e:
-                self._log(logging.ERROR, f"Relay failed: {e}", f"{self._cl_name:50} {direction} {self._rm_name:50}")
-
-            try:
+                    if not snd.get():
+                        raise ConnectionError(f"Failed to send {sndlen} bytes")
+                    sndlen = 0
                 dst.setsockopt(socket.SOL_TCP, socket.TCP_CORK, 0)
-                dst.shutdown(socket.SHUT_WR)
-            except:
-                pass
-            del rcvbuf, sndbuf
+
+            self._log(logging.DEBUG, "EOF", f"{self._cl_name:50} {direction} {self._rm_name:50}")
+        except timeout:
+            self._log(logging.DEBUG, "Idle timeout", f"{self._cl_name:50} {direction} {self._rm_name:50}")
+        except ConnectionResetError:
+            self._log(logging.DEBUG, "Connection reset", f"{self._cl_name:50} {direction} {self._rm_name:50}")
+        except BrokenPipeError:
+            self._log(logging.DEBUG, "Broken pipe", f"{self._cl_name:50} {direction} {self._rm_name:50}")
+        except ConnectionError as e:
+            self._log(logging.DEBUG, f"{e}", f"{self._cl_name:50} {direction} {self._rm_name:50}")
+        except OSError:
+            self._log(logging.DEBUG, "Socket error", f"{self._cl_name:50} {direction} {self._rm_name:50}")
+        except Exception as e:
+            self._log(logging.ERROR, f"Relay failed: {e}", f"{self._cl_name:50} {direction} {self._rm_name:50}")
+
+        try:
+            dst.setsockopt(socket.SOL_TCP, socket.TCP_CORK, 0)
+            dst.shutdown(socket.SHUT_WR)
+        except:
+            pass
+        del rcvbuf, sndbuf, buffer
 
     def _get_orig_dst(self, sock: socket.socket, family: socket.AddressFamily):
         ip: str = ""
