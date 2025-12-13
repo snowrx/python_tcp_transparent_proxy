@@ -4,6 +4,8 @@ from gevent import socket
 from gevent.pool import Group
 from gevent.server import StreamServer
 from gevent.socket import wait_read, wait_write, timeout
+from gevent.lock import RLock
+from gevent.queue import SimpleQueue
 
 gevent.monkey.patch_all()
 
@@ -19,10 +21,54 @@ LOG_LEVEL = logging.INFO
 
 PORT = 8081
 
-BUFFER_SIZE = 255 << 12
+BUFFER_SIZE = 2 << 20
 
 IDLE_TIMEOUT = 7200
 SEND_TIMEOUT = 10
+
+
+class BufferPool:
+    def __init__(self, buffer_size: int, max_pool: int = 100, clear_on_release: bool = True):
+        self._buffer_size = buffer_size
+        self._max_pool = max_pool
+        self._lock = RLock()
+        self._queue = SimpleQueue()
+        self._newly_created = 0
+        self._clear_on_release = clear_on_release
+        self._logger = logging.getLogger(f"BufferPool-{hex(id(self))}")
+
+    def acquire(self) -> memoryview:
+        with self._lock:
+            if self._queue.empty():
+                self._newly_created += 1
+                self._logger.debug(f"Creating new buffer, newly created: {self._newly_created}")
+                return memoryview(bytearray(self._buffer_size))
+            self._logger.debug(f"Reusing buffer from queue, size: {self._queue.qsize()}")
+            return self._queue.get()
+
+    def release(self, buffer: memoryview):
+        with self._lock:
+            if self._queue.qsize() >= self._max_pool:
+                del buffer
+                self._logger.debug(f"Discarding buffer, queue size: {self._queue.qsize()}")
+                return
+            if self._clear_on_release:
+                buffer[:] = b"\0" * self._buffer_size
+            self._queue.put(buffer)
+            self._logger.debug(f"Releasing buffer to queue, size: {self._queue.qsize()}")
+
+    def __repr__(self) -> str:
+        with self._lock:
+            return f"BufferPool(size={self._buffer_size}, qsize={self._queue.qsize()}, newly_created={self._newly_created})"
+
+    @property
+    def newly_created(self) -> int:
+        with self._lock:
+            return self._newly_created
+
+    def __len__(self) -> int:
+        with self._lock:
+            return self._queue.qsize()
 
 
 class Session:
@@ -34,8 +80,9 @@ class Session:
     _DIR_UP = "->"
     _DIR_DOWN = "<-"
 
-    def __init__(self, client_sock: socket.socket, client_addr: tuple[str, int], accepted_at: float):
+    def __init__(self, client_sock: socket.socket, client_addr: tuple[str, int], buffer_pool: BufferPool, accepted_at: float):
         self._accepted_at = accepted_at
+        self._buffer_pool = buffer_pool
         self._name = f"Session-{hex(id(self))}"
         self._logger = logging.getLogger(self._name)
         self._cl_name = f"[{client_addr[0]}]:{client_addr[1]}"
@@ -59,7 +106,7 @@ class Session:
             try:
                 self._remote_sock.connect(self._remote_addr)
 
-                buffer = memoryview(bytearray(BUFFER_SIZE))
+                buffer = self._buffer_pool.acquire()
                 recv = 0
                 sent = 0
 
@@ -83,7 +130,7 @@ class Session:
                 if sent < recv:
                     self._remote_sock.sendall(buffer[sent:recv])
                     self._log(logging.DEBUG, f"Sent remaining {recv - sent:8} bytes", f"{self._cl_name:50} {self._DIR_UP} {self._rm_name:50}")
-                del buffer
+                self._buffer_pool.release(buffer)
 
                 open_time = time.perf_counter() - self._accepted_at
                 self._log(logging.INFO, f"Established ({open_time * 1000:.2f}ms)", f"{self._cl_name:50} {self._DIR_UP} {self._rm_name:50}")
@@ -108,9 +155,10 @@ class Session:
                 pass
             return sent
 
-        buffer = memoryview(bytearray(BUFFER_SIZE << 1))
-        rcvbuf = buffer[:BUFFER_SIZE]
-        sndbuf = buffer[BUFFER_SIZE:]
+        buffer = self._buffer_pool.acquire()
+        center = BUFFER_SIZE // 2
+        rcvbuf = buffer[:center]
+        sndbuf = buffer[center:]
         rcvlen = 0
         sndlen = 0
         eof = False
@@ -118,7 +166,6 @@ class Session:
         try:
             while not eof:
                 wait_read(src.fileno(), IDLE_TIMEOUT)
-                gevent.idle()
                 if not (rcvlen := src.recv_into(rcvbuf)):
                     eof = True
                     break
@@ -130,7 +177,6 @@ class Session:
                     snd = gevent.spawn(sendall, sndbuf[:sndlen])
                     try:
                         wait_read(src.fileno(), 0)
-                        gevent.idle()
                         if not (rcvlen := src.recv_into(rcvbuf)):
                             eof = True
                     except timeout:
@@ -160,7 +206,8 @@ class Session:
             dst.shutdown(socket.SHUT_WR)
         except:
             pass
-        del rcvbuf, sndbuf, buffer
+        del rcvbuf, sndbuf
+        self._buffer_pool.release(buffer)
 
     def _get_orig_dst(self, sock: socket.socket, family: socket.AddressFamily):
         ip: str = ""
@@ -196,6 +243,7 @@ class ProxyServer:
     def __init__(self, worker_id: int):
         self._name = f"Server-{worker_id}"
         self._logger = logging.getLogger(self._name)
+        self._buffer_pool = BufferPool(BUFFER_SIZE)
 
     def run(self):
         self._log(logging.INFO, "Starting server")
@@ -214,7 +262,7 @@ class ProxyServer:
             cl_name = f"[{client_addr[0]}]:{client_addr[1]}"
             self._log(logging.DEBUG, "Accepted", cl_name)
             try:
-                session = Session(client_sock, client_addr, accepted_at)
+                session = Session(client_sock, client_addr, self._buffer_pool, accepted_at)
                 session.serve()
             except ConnectionRefusedError as e:
                 self._log(logging.WARNING, f"{e}", cl_name)
