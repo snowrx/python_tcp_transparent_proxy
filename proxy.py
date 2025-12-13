@@ -16,11 +16,14 @@ import os
 import struct
 import ipaddress
 from concurrent.futures import ProcessPoolExecutor
+from contextlib import contextmanager
 
 LOG_LEVEL = logging.INFO
 
 PORT = 8081
 
+# 0: auto, 1: single process, >1: use process pool
+NUM_WORKERS = 4
 BUFFER_SIZE = 2 << 20
 
 IDLE_TIMEOUT = 7200
@@ -36,6 +39,14 @@ class BufferPool:
         self._newly_created = 0
         self._clear_on_release = clear_on_release
         self._logger = logging.getLogger(f"BufferPool-{hex(id(self))}")
+
+    @contextmanager
+    def use(self):
+        buffer = self.acquire()
+        try:
+            yield buffer
+        finally:
+            self.release(buffer)
 
     def acquire(self) -> memoryview:
         with self._lock:
@@ -106,31 +117,30 @@ class Session:
             try:
                 self._remote_sock.connect(self._remote_addr)
 
-                buffer = self._buffer_pool.acquire()
-                recv = 0
-                sent = 0
+                with self._buffer_pool.use() as buffer:
+                    recv = 0
+                    sent = 0
 
-                try:
-                    wait_read(self._client_sock.fileno(), 0)
-                    if recv := self._client_sock.recv_into(buffer):
-                        self._log(logging.DEBUG, f"TFO-R {recv:17} bytes", f"{self._cl_name:50} {self._DIR_UP} {self._rm_name:50}")
-                    else:
-                        self._log(logging.WARNING, "Client sent EOF with no data", f"{self._cl_name:50} {self._DIR_UP} {self._rm_name:50}")
-                except timeout:
-                    self._log(logging.DEBUG, f"TFO-R timeout", f"{self._cl_name:50} {self._DIR_UP} {self._rm_name:50}")
+                    try:
+                        wait_read(self._client_sock.fileno(), 0)
+                        if recv := self._client_sock.recv_into(buffer):
+                            self._log(logging.DEBUG, f"TFO-R {recv:17} bytes", f"{self._cl_name:50} {self._DIR_UP} {self._rm_name:50}")
+                        else:
+                            self._log(logging.WARNING, "Client sent EOF with no data", f"{self._cl_name:50} {self._DIR_UP} {self._rm_name:50}")
+                    except timeout:
+                        self._log(logging.DEBUG, f"TFO-R timeout", f"{self._cl_name:50} {self._DIR_UP} {self._rm_name:50}")
 
-                try:
-                    if sent := self._remote_sock.sendto(buffer[:recv], socket.MSG_FASTOPEN, self._remote_addr):
-                        self._log(logging.DEBUG, f"TFO-T {sent:7} /{recv:8} bytes", f"{self._cl_name:50} {self._DIR_UP} {self._rm_name:50}")
-                except BlockingIOError:
-                    if recv:
-                        self._log(logging.DEBUG, f"TFO-T failed", f"{self._cl_name:50} {self._DIR_UP} {self._rm_name:50}")
+                    try:
+                        if sent := self._remote_sock.sendto(buffer[:recv], socket.MSG_FASTOPEN, self._remote_addr):
+                            self._log(logging.DEBUG, f"TFO-T {sent:7} /{recv:8} bytes", f"{self._cl_name:50} {self._DIR_UP} {self._rm_name:50}")
+                    except BlockingIOError:
+                        if recv:
+                            self._log(logging.DEBUG, f"TFO-T failed", f"{self._cl_name:50} {self._DIR_UP} {self._rm_name:50}")
 
-                wait_write(self._remote_sock.fileno(), SEND_TIMEOUT)
-                if sent < recv:
-                    self._remote_sock.sendall(buffer[sent:recv])
-                    self._log(logging.DEBUG, f"Sent remaining {recv - sent:8} bytes", f"{self._cl_name:50} {self._DIR_UP} {self._rm_name:50}")
-                self._buffer_pool.release(buffer)
+                    wait_write(self._remote_sock.fileno(), SEND_TIMEOUT)
+                    if sent < recv:
+                        self._remote_sock.sendall(buffer[sent:recv])
+                        self._log(logging.DEBUG, f"Sent remaining {recv - sent:8} bytes", f"{self._cl_name:50} {self._DIR_UP} {self._rm_name:50}")
 
                 open_time = time.perf_counter() - self._accepted_at
                 self._log(logging.INFO, f"Established ({open_time * 1000:.2f}ms)", f"{self._cl_name:50} {self._DIR_UP} {self._rm_name:50}")
@@ -140,9 +150,9 @@ class Session:
                 group.join()
             except Exception as e:
                 self._log(logging.ERROR, f"Serve failed: {e}", f"{self._cl_name:50} {self._DIR_UP} {self._rm_name:50}")
-
-        run_time = time.perf_counter() - self._accepted_at
-        self._log(logging.INFO, f"Closed ({run_time:.2f}s)", f"{self._cl_name:50} {self._DIR_UP} {self._rm_name:50}")
+            finally:
+                run_time = time.perf_counter() - self._accepted_at
+                self._log(logging.INFO, f"Closed ({run_time:.2f}s)", f"{self._cl_name:50} {self._DIR_UP} {self._rm_name:50}")
 
     def _relay(self, direction: str, src: socket.socket, dst: socket.socket):
         def sendall(buf: memoryview) -> bool:
@@ -155,59 +165,58 @@ class Session:
                 pass
             return sent
 
-        buffer = self._buffer_pool.acquire()
-        center = BUFFER_SIZE // 2
-        rcvbuf = buffer[:center]
-        sndbuf = buffer[center:]
-        rcvlen = 0
-        sndlen = 0
-        eof = False
+        with self._buffer_pool.use() as buffer:
+            center = BUFFER_SIZE // 2
+            rcvbuf = buffer[:center]
+            sndbuf = buffer[center:]
+            rcvlen = 0
+            sndlen = 0
+            eof = False
 
-        try:
-            while not eof:
-                wait_read(src.fileno(), IDLE_TIMEOUT)
-                if not (rcvlen := src.recv_into(rcvbuf)):
-                    eof = True
-                    break
+            try:
+                while not eof:
+                    wait_read(src.fileno(), IDLE_TIMEOUT)
+                    if not (rcvlen := src.recv_into(rcvbuf)):
+                        eof = True
+                        break
 
-                dst.setsockopt(socket.SOL_TCP, socket.TCP_CORK, 1)
-                while rcvlen:
-                    rcvbuf, rcvlen, sndbuf, sndlen = sndbuf, sndlen, rcvbuf, rcvlen
+                    dst.setsockopt(socket.SOL_TCP, socket.TCP_CORK, 1)
+                    while rcvlen:
+                        rcvbuf, rcvlen, sndbuf, sndlen = sndbuf, sndlen, rcvbuf, rcvlen
 
-                    snd = gevent.spawn(sendall, sndbuf[:sndlen])
-                    try:
-                        wait_read(src.fileno(), 0)
-                        if not (rcvlen := src.recv_into(rcvbuf)):
-                            eof = True
-                    except timeout:
-                        pass
+                        snd = gevent.spawn(sendall, sndbuf[:sndlen])
+                        try:
+                            wait_read(src.fileno(), 0)
+                            if not (rcvlen := src.recv_into(rcvbuf)):
+                                eof = True
+                        except timeout:
+                            pass
 
-                    if not snd.get():
-                        raise ConnectionError(f"Failed to send {sndlen} bytes")
-                    sndlen = 0
-                dst.setsockopt(socket.SOL_TCP, socket.TCP_CORK, 0)
+                        if not snd.get():
+                            raise ConnectionError(f"Failed to send {sndlen} bytes")
+                        sndlen = 0
+                    dst.setsockopt(socket.SOL_TCP, socket.TCP_CORK, 0)
 
-            self._log(logging.DEBUG, "EOF", f"{self._cl_name:50} {direction} {self._rm_name:50}")
-        except timeout:
-            self._log(logging.DEBUG, "Idle timeout", f"{self._cl_name:50} {direction} {self._rm_name:50}")
-        except ConnectionResetError:
-            self._log(logging.DEBUG, "Connection reset", f"{self._cl_name:50} {direction} {self._rm_name:50}")
-        except BrokenPipeError:
-            self._log(logging.DEBUG, "Broken pipe", f"{self._cl_name:50} {direction} {self._rm_name:50}")
-        except ConnectionError as e:
-            self._log(logging.DEBUG, f"{e}", f"{self._cl_name:50} {direction} {self._rm_name:50}")
-        except OSError:
-            self._log(logging.DEBUG, "Socket error", f"{self._cl_name:50} {direction} {self._rm_name:50}")
-        except Exception as e:
-            self._log(logging.ERROR, f"Relay failed: {e}", f"{self._cl_name:50} {direction} {self._rm_name:50}")
-
-        try:
-            dst.setsockopt(socket.SOL_TCP, socket.TCP_CORK, 0)
-            dst.shutdown(socket.SHUT_WR)
-        except:
-            pass
-        del rcvbuf, sndbuf
-        self._buffer_pool.release(buffer)
+                self._log(logging.DEBUG, "EOF", f"{self._cl_name:50} {direction} {self._rm_name:50}")
+            except timeout:
+                self._log(logging.DEBUG, "Idle timeout", f"{self._cl_name:50} {direction} {self._rm_name:50}")
+            except ConnectionResetError:
+                self._log(logging.DEBUG, "Connection reset", f"{self._cl_name:50} {direction} {self._rm_name:50}")
+            except BrokenPipeError:
+                self._log(logging.DEBUG, "Broken pipe", f"{self._cl_name:50} {direction} {self._rm_name:50}")
+            except ConnectionError as e:
+                self._log(logging.DEBUG, f"{e}", f"{self._cl_name:50} {direction} {self._rm_name:50}")
+            except OSError:
+                self._log(logging.DEBUG, "Socket error", f"{self._cl_name:50} {direction} {self._rm_name:50}")
+            except Exception as e:
+                self._log(logging.ERROR, f"Relay failed: {e}", f"{self._cl_name:50} {direction} {self._rm_name:50}")
+            finally:
+                try:
+                    dst.setsockopt(socket.SOL_TCP, socket.TCP_CORK, 0)
+                    dst.shutdown(socket.SHUT_WR)
+                except:
+                    pass
+                del rcvbuf, sndbuf
 
     def _get_orig_dst(self, sock: socket.socket, family: socket.AddressFamily):
         ip: str = ""
@@ -290,7 +299,8 @@ if __name__ == "__main__":
         gc.set_debug(gc.DEBUG_STATS)
     logging.basicConfig(level=LOG_LEVEL, format="%(name)-25s | %(levelname)-10s | %(message)s")
 
-    w = os.cpu_count() or 1
+    w = NUM_WORKERS if NUM_WORKERS > 0 else os.cpu_count() or 1
+    logging.info(f"Starting {w} workers")
     if w > 1:
         with ProcessPoolExecutor(w) as pool:
             pool.map(main, range(w))
