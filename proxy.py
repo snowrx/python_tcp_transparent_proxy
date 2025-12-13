@@ -19,11 +19,10 @@ LOG_LEVEL = logging.INFO
 
 PORT = 8081
 
-BUFFER_SIZE = 1000 << 10
+BUFFER_SIZE = 255 << 12
 
 IDLE_TIMEOUT = 7200
 SEND_TIMEOUT = 10
-INITIAL_DATA_TIMEOUT = 0.1
 
 
 class Session:
@@ -65,7 +64,7 @@ class Session:
                 sent = 0
 
                 try:
-                    wait_read(self._client_sock.fileno(), INITIAL_DATA_TIMEOUT)
+                    wait_read(self._client_sock.fileno(), 0)
                     if recv := self._client_sock.recv_into(buffer):
                         self._log(logging.DEBUG, f"TFO-R {recv:17} bytes", f"{self._cl_name:50} {self._DIR_UP} {self._rm_name:50}")
                     else:
