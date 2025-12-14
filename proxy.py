@@ -31,11 +31,15 @@ SEND_TIMEOUT = 10
 
 
 class BufferPool:
-    def __init__(self, buffer_size: int, max_pool: int = 100, clear_on_release: bool = True):
+    def __init__(self, buffer_size: int, max_pool: int = 100, prealloc: bool = True, clear_on_release: bool = True):
         self._buffer_size = buffer_size
         self._lock = RLock()
-        self._buffer_pool = SimpleQueue(max_pool)
-        self._newly_created = 0
+        self._buffer_pool: SimpleQueue[memoryview] = SimpleQueue(max_pool)
+        self._known = 0
+        if prealloc:
+            for _ in range(max_pool):
+                self._buffer_pool.put(memoryview(bytearray(buffer_size)))
+                self._known += 1
         self._clear_on_release = clear_on_release
         self._logger = logging.getLogger(f"BufferPool-{hex(id(self))}")
 
@@ -45,40 +49,30 @@ class BufferPool:
         try:
             yield buffer
         finally:
-            self.release(buffer)
+            # self.release(buffer)
+            gevent.spawn(self.release, buffer)
 
     def acquire(self) -> memoryview:
         with self._lock:
             if self._buffer_pool.empty():
-                self._newly_created += 1
-                self._logger.debug(f"Created new buffer (newly_created={self._newly_created})")
+                self._known += 1
+                self._logger.debug(f"Allocated new buffer, known: {self._known}, in pool: {self._buffer_pool.qsize()}")
                 return memoryview(bytearray(self._buffer_size))
-            self._logger.debug(f"Reusing buffer (pooled={self._buffer_pool.qsize()})")
+            self._logger.debug(f"Reusing buffer, known: {self._known}, in pool: {self._buffer_pool.qsize()}")
             return self._buffer_pool.get()
 
     def release(self, buffer: memoryview):
+        gevent.idle()
         with self._lock:
             if self._buffer_pool.full():
                 buffer.release()
-                self._logger.debug(f"Discarded buffer (pooled={self._buffer_pool.qsize()})")
+                self._known -= 1
+                self._logger.debug(f"Discarded buffer, known: {self._known}, in pool: {self._buffer_pool.qsize()}")
                 return
             if self._clear_on_release:
                 buffer[:] = b"\0" * self._buffer_size
             self._buffer_pool.put(buffer)
-            self._logger.debug(f"Released buffer (pooled={self._buffer_pool.qsize()})")
-
-    def __repr__(self) -> str:
-        with self._lock:
-            return f"BufferPool(pooled={self._buffer_pool.qsize()}, newly_created={self._newly_created})"
-
-    @property
-    def newly_created(self) -> int:
-        with self._lock:
-            return self._newly_created
-
-    def __len__(self) -> int:
-        with self._lock:
-            return self._buffer_pool.qsize()
+            self._logger.debug(f"Released buffer, known: {self._known}, in pool: {self._buffer_pool.qsize()}")
 
 
 class Session:
