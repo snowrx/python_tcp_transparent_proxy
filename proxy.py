@@ -31,16 +31,11 @@ SEND_TIMEOUT = 10
 
 
 class BufferPool:
-    def __init__(self, buffer_size: int, max_pool: int = 100, prealloc: bool = True, clear_on_release: bool = True):
+    def __init__(self, buffer_size: int, max_pool: int = 100):
         self._buffer_size = buffer_size
         self._lock = RLock()
         self._buffer_pool: SimpleQueue[memoryview] = SimpleQueue(max_pool)
         self._known = 0
-        if prealloc:
-            for _ in range(max_pool):
-                self._buffer_pool.put(memoryview(bytearray(buffer_size)))
-                self._known += 1
-        self._clear_on_release = clear_on_release
         self._logger = logging.getLogger(f"BufferPool-{hex(id(self))}")
 
     @contextmanager
@@ -49,30 +44,26 @@ class BufferPool:
         try:
             yield buffer
         finally:
-            # self.release(buffer)
             gevent.spawn(self.release, buffer)
 
     def acquire(self) -> memoryview:
         with self._lock:
             if self._buffer_pool.empty():
                 self._known += 1
-                self._logger.debug(f"Allocated new buffer, known: {self._known}, in pool: {self._buffer_pool.qsize()}")
+                self._logger.debug(f"New buffer allocated, known: {self._known}")
                 return memoryview(bytearray(self._buffer_size))
-            self._logger.debug(f"Reusing buffer, known: {self._known}, in pool: {self._buffer_pool.qsize()}")
             return self._buffer_pool.get()
 
     def release(self, buffer: memoryview):
         gevent.idle()
         with self._lock:
             if self._buffer_pool.full():
-                buffer.release()
                 self._known -= 1
-                self._logger.debug(f"Discarded buffer, known: {self._known}, in pool: {self._buffer_pool.qsize()}")
+                buffer.release()
+                self._logger.debug(f"Buffer discarded, known: {self._known}")
                 return
-            if self._clear_on_release:
-                buffer[:] = b"\0" * self._buffer_size
+            buffer[:] = b"\0" * self._buffer_size
             self._buffer_pool.put(buffer)
-            self._logger.debug(f"Released buffer, known: {self._known}, in pool: {self._buffer_pool.qsize()}")
 
 
 class Session:
@@ -167,6 +158,9 @@ class Session:
             eof = False
 
             try:
+                relay_start_time = (time.perf_counter() - self._accepted_at) * 1000
+                self._log(logging.DEBUG, f"Relay started ({relay_start_time:.2f}ms)", f"{self._cl_name:50} {direction} {self._rm_name:50}")
+
                 while not eof:
                     wait_read(src.fileno(), IDLE_TIMEOUT)
                     if not (rcvlen := src.recv_into(rcvbuf)):
@@ -191,7 +185,6 @@ class Session:
                         sndlen = 0
                     dst.setsockopt(socket.SOL_TCP, socket.TCP_CORK, 0)
 
-                self._log(logging.DEBUG, "EOF", f"{self._cl_name:50} {direction} {self._rm_name:50}")
             except timeout:
                 self._log(logging.DEBUG, "Idle timeout", f"{self._cl_name:50} {direction} {self._rm_name:50}")
             except ConnectionResetError:
@@ -211,6 +204,7 @@ class Session:
                 except:
                     pass
                 del rcvbuf, sndbuf
+                self._log(logging.DEBUG, "Relay finished", f"{self._cl_name:50} {direction} {self._rm_name:50}")
 
     def _get_orig_dst(self, sock: socket.socket, family: socket.AddressFamily):
         ip: str = ""
@@ -292,7 +286,6 @@ if __name__ == "__main__":
     logging.basicConfig(level=LOG_LEVEL, format="%(name)-25s | %(levelname)-10s | %(message)s")
 
     w = NUM_WORKERS if NUM_WORKERS > 0 else os.cpu_count() or 1
-    logging.info(f"Starting {w} workers")
     if w > 1:
         with ProcessPoolExecutor(w) as pool:
             pool.map(main, range(w))
