@@ -24,7 +24,7 @@ PORT = 8081
 
 # 0: auto, 1: single process, >1: use process pool
 NUM_WORKERS = 4
-BUFFER_SIZE = 2 << 20
+BUFFER_SIZE = 500 << 10
 
 IDLE_TIMEOUT = 7200
 SEND_TIMEOUT = 10
@@ -59,7 +59,7 @@ class BufferPool:
     def release(self, buffer: memoryview):
         with self._lock:
             if self._buffer_pool.full():
-                del buffer
+                buffer.release()
                 self._logger.debug(f"Discarded buffer (pooled={self._buffer_pool.qsize()})")
                 return
             if self._clear_on_release:
@@ -181,11 +181,12 @@ class Session:
 
                     dst.setsockopt(socket.SOL_TCP, socket.TCP_CORK, 1)
                     while rcvlen:
-                        rcvbuf, rcvlen, sndbuf, sndlen = sndbuf, sndlen, rcvbuf, rcvlen
+                        (rcvbuf, rcvlen), (sndbuf, sndlen) = (sndbuf, sndlen), (rcvbuf, rcvlen)
 
                         snd = gevent.spawn(sendall, sndbuf[:sndlen])
                         try:
                             wait_read(src.fileno(), 0)
+                            gevent.idle()
                             if not (rcvlen := src.recv_into(rcvbuf)):
                                 eof = True
                         except timeout:
@@ -291,8 +292,6 @@ def main(worker_id: int = 0):
 
 if __name__ == "__main__":
     gc.collect()
-    gc.freeze()
-
     if os.getenv("DEBUG"):
         LOG_LEVEL = logging.DEBUG
         gc.set_debug(gc.DEBUG_STATS)
