@@ -17,7 +17,7 @@ LOG_LEVEL = logging.INFO
 PORT = 8081
 NUM_WORKERS = 4
 IDLE_TIMEOUT = 86400
-BUFFER_SIZE = 1 << 20
+BUFFER_SIZE = 1 << 21
 
 
 def main():
