@@ -1,42 +1,42 @@
 import gevent
 import gevent.monkey
 from gevent import socket
+from gevent.lock import RLock
 from gevent.pool import Group
+from gevent.queue import SimpleQueue
 from gevent.server import StreamServer
 from gevent.socket import wait_read, wait_write, timeout
-from gevent.lock import RLock
-from gevent.queue import SimpleQueue
 
 gevent.monkey.patch_all()
 
-import logging
-import time
 import gc
+import ipaddress
+import logging
 import os
 import struct
-import ipaddress
+import time
 from concurrent.futures import ProcessPoolExecutor
 from contextlib import contextmanager
 
+# settings
 LOG_LEVEL = logging.INFO
-
 PORT = 8081
-
-# 0: auto, 1: single process, >1: use process pool
 NUM_WORKERS = 4
 BUFFER_SIZE = 500 << 10
-
-IDLE_TIMEOUT = 7200
-SEND_TIMEOUT = 10
+IDLE_TIMEOUT = 86400
 
 
 class BufferPool:
-    def __init__(self, buffer_size: int, max_pool: int = 100):
+    def __init__(self, buffer_size: int, max_pool: int = 100, preallocate: bool = True):
         self._buffer_size = buffer_size
         self._lock = RLock()
         self._buffer_pool: SimpleQueue[memoryview] = SimpleQueue(max_pool)
         self._known = 0
         self._logger = logging.getLogger(f"BufferPool-{hex(id(self))}")
+        if preallocate:
+            for _ in range(max_pool):
+                self._buffer_pool.put(memoryview(bytearray(buffer_size)))
+                self._known += 1
 
     @contextmanager
     def use(self):
@@ -121,7 +121,7 @@ class Session:
                         if recv:
                             self._log(logging.DEBUG, f"TFO-T failed", f"{self._cl_name:50} {self._DIR_UP} {self._rm_name:50}")
 
-                    wait_write(self._remote_sock.fileno(), SEND_TIMEOUT)
+                    wait_write(self._remote_sock.fileno())
                     if sent < recv:
                         self._remote_sock.sendall(buffer[sent:recv])
                         self._log(logging.DEBUG, f"Sent remaining {recv - sent:8} bytes", f"{self._cl_name:50} {self._DIR_UP} {self._rm_name:50}")
@@ -142,7 +142,7 @@ class Session:
         def sendall(buf: memoryview) -> bool:
             sent = False
             try:
-                wait_write(dst.fileno(), SEND_TIMEOUT)
+                wait_write(dst.fileno())
                 dst.sendall(buf)
                 sent = True
             except:
