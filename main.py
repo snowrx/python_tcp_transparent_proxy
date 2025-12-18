@@ -1,10 +1,12 @@
+import gevent
+from gevent import socket
+from gevent import monkey
+
+monkey.patch_all()
+
 import logging
 import os
 from concurrent.futures import ProcessPoolExecutor
-
-import gevent
-from gevent import socket
-
 
 from core.buffer_pool import BufferPool
 from core.server import Server
