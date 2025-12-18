@@ -1,4 +1,5 @@
 from contextlib import contextmanager
+import logging
 
 import gevent
 from gevent.queue import SimpleQueue
@@ -10,6 +11,7 @@ DEFAULT_POOL_SIZE = 100
 
 class BufferPool:
     def __init__(self, buffer_size: int = DEFAULT_BUFFER_SIZE, pool_size: int = DEFAULT_POOL_SIZE, pre_fill: bool = True):
+        self._logger = logging.getLogger(f"{self.__class__.__name__}-{hex(id(self))}")
         self._buffer_size = buffer_size if buffer_size > 0 else DEFAULT_BUFFER_SIZE
         self._pool_size = pool_size if pool_size > 0 else DEFAULT_POOL_SIZE
         self._pool = SimpleQueue(self._pool_size)
@@ -32,6 +34,7 @@ class BufferPool:
             if self._pool.empty():
                 self._pool.put(memoryview(bytearray(self._buffer_size)))
                 self._known += 1
+                self._logger.debug(f"Allocated new buffer, total known: {self._known}")
             return self._pool.get()
 
     def release(self, buffer: memoryview):
@@ -39,6 +42,7 @@ class BufferPool:
             if self._pool.full():
                 buffer.release()
                 self._known -= 1
+                self._logger.debug(f"Dropped extra buffer, total known: {self._known}")
             else:
                 buffer[:] = self._eraser
                 self._pool.put(buffer)
