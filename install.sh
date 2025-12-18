@@ -9,7 +9,7 @@ if [ "$EUID" -ne 0 ]; then
 fi
 
 # check if proxy is already installed
-if [ -f "$DEST/proxy.py" ]; then
+if [ -f "/etc/systemd/system/proxy.service" ]; then
   systemctl stop proxy.service
   for arg in "$@"; do
     if [ "$arg" == "--clean" ]; then
@@ -22,10 +22,11 @@ else
   mkdir -p $DEST
 fi
 
-cp {proxy.py,requirements.txt,proxy} $DEST
+cp -r {proxy,requirements.txt,main.py,core} $DEST
 cp proxy.service /etc/systemd/system/
 
 cd $DEST
+touch proxy.env
 python3 -m venv .venv
 [ ! -f .venv/bin/activate ] && echo "venv not found" && exit 1
 source .venv/bin/activate
