@@ -1,6 +1,7 @@
 import logging
 import struct
 import ipaddress
+import time
 
 import gevent
 from gevent import socket
@@ -41,6 +42,7 @@ def get_original_dst(sock: socket.socket, family: socket.AddressFamily):
 
 class Session:
     def __init__(self, client_sock: socket.socket, client_addr: tuple[str, int], buffer: memoryview, idle_timeout: int = DEFAULT_TIMEOUT):
+        self._created = time.perf_counter()
         self._logger = logging.getLogger(f"{self.__class__.__name__}-{hex(id(self))}")
         self._buffer = buffer
         self._idle_timeout = idle_timeout if idle_timeout > 0 else DEFAULT_TIMEOUT
@@ -73,9 +75,9 @@ class Session:
                 group.spawn(self._relay, DIR_UP, self._client_sock, self._remote_sock, up_buf)
                 group.spawn(self._relay, DIR_DOWN, self._remote_sock, self._client_sock, down_buf)
 
-                self._log(logging.INFO, "Session established", f"{self._cl_name:50} {DIR_UP} {self._rm_name:50}")
+                start_time = (time.perf_counter() - self._created) * 1000
+                self._log(logging.INFO, f"Session started in {start_time:.2f}ms", f"{self._cl_name:50} {DIR_UP} {self._rm_name:50}")
                 group.join()
-                self._log(logging.INFO, "Session closed", f"{self._cl_name:50} {DIR_UP} {self._rm_name:50}")
 
             except TimeoutError:
                 self._log(logging.WARNING, "Connection timed out", f"{self._cl_name:50} {DIR_UP} {self._rm_name:50}")
@@ -83,6 +85,9 @@ class Session:
                 self._log(logging.WARNING, "Connection refused", f"{self._cl_name:50} {DIR_UP} {self._rm_name:50}")
             except Exception as e:
                 self._log(logging.ERROR, f"Unexpected error in session: {e}", f"{self._cl_name:50} {DIR_UP} {self._rm_name:50}")
+
+        session_time = time.perf_counter() - self._created
+        self._log(logging.INFO, f"Session ended in {session_time:.2f}s", f"{self._cl_name:50} {DIR_UP} {self._rm_name:50}")
 
     def _relay(self, direction: str, src: socket.socket, dst: socket.socket, buf: memoryview):
         center = len(buf) // 2
@@ -157,7 +162,7 @@ class Session:
         try:
             wait_read(self._client_sock.fileno(), 0)
             if recv := self._client_sock.recv_into(self._buffer):
-                self._log(logging.DEBUG, f"TFO-R {recv:17} bytes", f"{self._cl_name:50} {DIR_UP} {self._rm_name:50}")
+                self._log(logging.DEBUG, f"TFO-R {recv} bytes", f"{self._cl_name:50} {DIR_UP} {self._rm_name:50}")
             else:
                 self._log(logging.WARNING, "Client sent EOF with no data", f"{self._cl_name:50} {DIR_UP} {self._rm_name:50}")
         except TimeoutError:
@@ -165,7 +170,7 @@ class Session:
 
         try:
             if sent := self._remote_sock.sendto(self._buffer[:recv], socket.MSG_FASTOPEN, self._remote_addr):
-                self._log(logging.DEBUG, f"TFO-T {sent:7} /{recv:8} bytes", f"{self._cl_name:50} {DIR_UP} {self._rm_name:50}")
+                self._log(logging.DEBUG, f"TFO-T {sent} / {recv} bytes", f"{self._cl_name:50} {DIR_UP} {self._rm_name:50}")
         except BlockingIOError:
             if recv:
                 self._log(logging.DEBUG, f"TFO-T failed", f"{self._cl_name:50} {DIR_UP} {self._rm_name:50}")
@@ -173,7 +178,7 @@ class Session:
         wait_write(self._remote_sock.fileno())
         if sent < recv:
             self._remote_sock.sendall(self._buffer[sent:recv])
-            self._log(logging.DEBUG, f"Sent remaining {recv - sent:8} bytes", f"{self._cl_name:50} {DIR_UP} {self._rm_name:50}")
+            self._log(logging.DEBUG, f"Sent remaining {recv - sent} bytes", f"{self._cl_name:50} {DIR_UP} {self._rm_name:50}")
 
     def _log(self, level: int, subject: str, msg: str = ""):
         txt = f"{subject:60}"
