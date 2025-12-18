@@ -6,5 +6,5 @@ if [ ! -d ".venv" ]; then
 fi
 
 source .venv/bin/activate
-exec python3 proxy.py
+exec python3 main.py
 deactivate
