@@ -70,8 +70,8 @@ class Session:
                 up_buf = self._buffer[:center]
                 down_buf = self._buffer[center:]
                 group = Group()
-                group.spawn(self._relay, DIR_DOWN, self._client_sock, self._remote_sock, down_buf)
-                group.spawn(self._relay, DIR_UP, self._remote_sock, self._client_sock, up_buf)
+                group.spawn(self._relay, DIR_UP, self._client_sock, self._remote_sock, up_buf)
+                group.spawn(self._relay, DIR_DOWN, self._remote_sock, self._client_sock, down_buf)
 
                 self._log(logging.INFO, "Session established", f"{self._cl_name:50} {DIR_UP} {self._rm_name:50}")
                 group.join()
