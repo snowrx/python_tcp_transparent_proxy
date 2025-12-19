@@ -27,7 +27,7 @@ def main():
         with buffer_pool.borrow() as buffer:
             gevent.sleep()
             session = Session(client_sock, client_addr, buffer, IDLE_TIMEOUT)
-            session.serve()
+            gevent.spawn(session.run).join()
 
     server = Server(PORT, on_accepted)
     gevent.spawn(server.serve_forever).join()
