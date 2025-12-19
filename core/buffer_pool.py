@@ -3,6 +3,7 @@ import logging
 
 import gevent
 from gevent.lock import BoundedSemaphore
+from gevent.queue import SimpleQueue
 
 DEFAULT_BUFFER_SIZE = 1 << 20
 DEFAULT_POOL_SIZE = 100
@@ -18,9 +19,12 @@ class BufferPool:
         self._pool_size = pool_size if pool_size > 0 else DEFAULT_POOL_SIZE
 
         self._bedrock = memoryview(bytearray(self._buffer_size * self._pool_size))
-        self._free_list = list(range(self._pool_size))
-        self._temp_count = 0
+        self._free_list = SimpleQueue(self._pool_size)
+        for i in range(self._pool_size):
+            self._free_list.put(i)
+
         self._eraser = bytes(self._buffer_size)
+        self._temp_count = 0
 
     @contextmanager
     def borrow(self):
@@ -32,12 +36,12 @@ class BufferPool:
 
     def _acquire(self) -> tuple[int, memoryview]:
         with self._lock:
-            if not self._free_list:
+            if self._free_list.empty():
                 self._temp_count += 1
                 self._logger.warning(f"No free buffers, allocating temporary buffer {self._temp_count}")
                 return TEMP_INDEX, memoryview(bytearray(self._buffer_size))
             else:
-                idx = self._free_list.pop(0)
+                idx = self._free_list.get()
                 buffer = self._bedrock[idx * self._buffer_size : (idx + 1) * self._buffer_size]
                 self._logger.debug(f"Acquired buffer {idx}")
                 return idx, buffer
@@ -51,5 +55,5 @@ class BufferPool:
                 self._logger.warning(f"Released temporary buffer, {self._temp_count} remaining")
             else:
                 buffer[:] = self._eraser
-                self._free_list.append(idx)
+                self._free_list.put(idx)
                 self._logger.debug(f"Released buffer {idx}")
