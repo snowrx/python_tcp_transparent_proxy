@@ -123,6 +123,7 @@ class Session:
             self._log(logging.DEBUG, "Starting relay", f"{self._cl_name:50} {direction} {self._rm_name:50}")
 
             while not eof:
+                dst.setsockopt(socket.SOL_TCP, socket.TCP_CORK, 0)
                 wait_read(src.fileno(), self._idle_timeout)
                 if not (rcvlen := src.recv_into(rcvbuf)):
                     eof = True
@@ -130,7 +131,7 @@ class Session:
                 self._log(logging.DEBUG, f"recv {rcvlen:7} bytes", f"{self._cl_name:50} {direction} {self._rm_name:50}")
                 gevent.sleep()
 
-                dst.setsockopt(socket.SOL_TCP, socket.TCP_CORK, 1)
+                cork = False
                 while rcvlen:
                     (rcvbuf, rcvlen), (sndbuf, sndlen) = (sndbuf, 0), (rcvbuf, rcvlen)
 
@@ -142,6 +143,9 @@ class Session:
                         if not (rcvlen := src.recv_into(rcvbuf)):
                             eof = True
                             break
+                        if not cork:
+                            dst.setsockopt(socket.SOL_TCP, socket.TCP_CORK, 1)
+                            cork = True
                         self._log(logging.DEBUG, f"recv {rcvlen:7} bytes (fast)", f"{self._cl_name:50} {direction} {self._rm_name:50}")
                         gevent.sleep()
                     except TimeoutError:
@@ -149,8 +153,6 @@ class Session:
 
                     if not snd.get():
                         raise BrokenPipeError(f"Failed to send {sndlen} bytes")
-
-                dst.setsockopt(socket.SOL_TCP, socket.TCP_CORK, 0)
 
         except BrokenPipeError as e:
             self._log(logging.WARNING, f"{e}", f"{self._cl_name:50} {direction} {self._rm_name:50}")
