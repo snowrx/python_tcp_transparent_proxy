@@ -2,6 +2,7 @@ import logging
 import struct
 import ipaddress
 import time
+from functools import cache
 
 import gevent
 from gevent import socket
@@ -40,6 +41,11 @@ def get_original_dst(sock: socket.socket, family: socket.AddressFamily):
     return ip, port
 
 
+@cache
+def ipv4_mapped(addr: str) -> bool:
+    return ipaddress.IPv6Address(addr).ipv4_mapped is not None
+
+
 class Session:
     def __init__(self, client_sock: socket.socket, client_addr: tuple[str, int], buffer: memoryview, idle_timeout: int = DEFAULT_TIMEOUT):
         self._created = time.perf_counter()
@@ -50,7 +56,7 @@ class Session:
         self._client_sock = client_sock
         self._client_addr = client_addr
         self._cl_name = f"[{client_addr[0]}]:{client_addr[1]}"
-        self._family = socket.AF_INET if ipaddress.IPv6Address(client_addr[0]).ipv4_mapped else socket.AF_INET6
+        self._family = socket.AF_INET if ipv4_mapped(client_addr[0]) else socket.AF_INET6
 
         self._remote_addr = get_original_dst(client_sock, self._family)
         srvaddr = client_sock.getsockname()
