@@ -124,11 +124,11 @@ class Session:
                 dst.setsockopt(socket.SOL_TCP, socket.TCP_CORK, 0)
 
         except BrokenPipeError as e:
-            self._log(logging.DEBUG, f"{e}", f"{self._cl_name:50} {direction} {self._rm_name:50}")
+            self._log(logging.WARNING, f"{e}", f"{self._cl_name:50} {direction} {self._rm_name:50}")
         except ConnectionResetError:
-            self._log(logging.DEBUG, "Connection reset", f"{self._cl_name:50} {direction} {self._rm_name:50}")
+            self._log(logging.WARNING, "Connection reset", f"{self._cl_name:50} {direction} {self._rm_name:50}")
         except TimeoutError:
-            self._log(logging.DEBUG, "Connection timed out", f"{self._cl_name:50} {direction} {self._rm_name:50}")
+            self._log(logging.WARNING, "Connection timed out", f"{self._cl_name:50} {direction} {self._rm_name:50}")
         except Exception as e:
             self._log(logging.ERROR, f"Unexpected error in relay: {e}", f"{self._cl_name:50} {direction} {self._rm_name:50}")
         finally:
