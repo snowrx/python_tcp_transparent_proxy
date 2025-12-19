@@ -2,54 +2,54 @@ from contextlib import contextmanager
 import logging
 
 import gevent
-from gevent.queue import SimpleQueue
 from gevent.lock import BoundedSemaphore
 
 DEFAULT_BUFFER_SIZE = 1 << 20
 DEFAULT_POOL_SIZE = 100
+TEMP_INDEX = -1
 
 
 class BufferPool:
-    def __init__(self, buffer_size: int = DEFAULT_BUFFER_SIZE, pool_size: int = DEFAULT_POOL_SIZE, pre_fill: bool = True):
+    def __init__(self, buffer_size: int = DEFAULT_BUFFER_SIZE, pool_size: int = DEFAULT_POOL_SIZE):
         self._logger = logging.getLogger(f"{self.__class__.__name__}-{hex(id(self))}")
+        self._lock = BoundedSemaphore()
+
         self._buffer_size = buffer_size if buffer_size > 0 else DEFAULT_BUFFER_SIZE
         self._pool_size = pool_size if pool_size > 0 else DEFAULT_POOL_SIZE
-        self._pool = SimpleQueue(self._pool_size)
+
+        self._bedrock = memoryview(bytearray(self._buffer_size * self._pool_size))
+        self._free_list = list(range(self._pool_size))
+        self._temp_count = 0
         self._eraser = bytes(self._buffer_size)
-        self._bsem = BoundedSemaphore()
-        self._known = 0
-        if pre_fill:
-            self._pre_fill()
 
     @contextmanager
     def borrow(self):
-        buffer = self.acquire()
+        idx, buffer = self._acquire()
         try:
             yield buffer
         finally:
-            gevent.spawn(self.release, buffer)
+            gevent.spawn(self._release, idx, buffer)
 
-    def acquire(self) -> memoryview:
-        with self._bsem:
-            if self._pool.empty():
-                self._pool.put(memoryview(bytearray(self._buffer_size)))
-                self._known += 1
-                self._logger.debug(f"Allocated new buffer, total known: {self._known}")
-            return self._pool.get()
+    def _acquire(self) -> tuple[int, memoryview]:
+        with self._lock:
+            if not self._free_list:
+                self._temp_count += 1
+                self._logger.warning(f"No free buffers, allocating temporary buffer {self._temp_count}")
+                return TEMP_INDEX, memoryview(bytearray(self._buffer_size))
+            else:
+                idx = self._free_list.pop(0)
+                buffer = self._bedrock[idx * self._buffer_size : (idx + 1) * self._buffer_size]
+                self._logger.debug(f"Acquired buffer {idx}")
+                return idx, buffer
 
-    def release(self, buffer: memoryview):
+    def _release(self, idx: int, buffer: memoryview):
         gevent.idle()
-        with self._bsem:
-            if self._pool.full():
+        with self._lock:
+            if idx is TEMP_INDEX:
+                self._temp_count -= 1
                 buffer.release()
-                self._known -= 1
-                self._logger.debug(f"Dropped extra buffer, total known: {self._known}")
+                self._logger.warning(f"Released temporary buffer, {self._temp_count} remaining")
             else:
                 buffer[:] = self._eraser
-                self._pool.put(buffer)
-
-    def _pre_fill(self):
-        with self._bsem:
-            for _ in range(self._pool_size):
-                self._pool.put(memoryview(bytearray(self._buffer_size)))
-                self._known += 1
+                self._free_list.append(idx)
+                self._logger.debug(f"Released buffer {idx}")

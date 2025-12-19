@@ -1,15 +1,12 @@
 import logging
 import struct
 import ipaddress
-import time
 from functools import cache
 
 import gevent
 from gevent import socket
 from gevent.socket import wait_read, wait_write
 from gevent.pool import Group
-
-NULL = b"\0"
 
 SO_ORIGINAL_DST = 80
 V4_LEN = 16
@@ -23,7 +20,7 @@ DIR_DOWN = "<-"
 DEFAULT_TIMEOUT = 86400
 
 
-def get_original_dst(sock: socket.socket, family: socket.AddressFamily):
+def get_original_dst(sock: socket.socket, family: socket.AddressFamily) -> tuple[str, int]:
     ip: str
     port: int
 
@@ -49,172 +46,175 @@ def ipv4_mapped(addr: str) -> bool:
 
 class Session:
     def __init__(self, client_sock: socket.socket, client_addr: tuple[str, int], buffer: memoryview, idle_timeout: int = DEFAULT_TIMEOUT):
-        self._created = time.perf_counter()
         self._logger = logging.getLogger(f"{self.__class__.__name__}-{hex(id(self))}")
-        self._buffer = buffer
-        self._idle_timeout = idle_timeout if idle_timeout > 0 else DEFAULT_TIMEOUT
-
         self._client_sock = client_sock
         self._client_addr = client_addr
-        self._cl_name = f"[{client_addr[0]}]:{client_addr[1]}"
-        self._family = socket.AF_INET if ipv4_mapped(client_addr[0]) else socket.AF_INET6
+        self._buffer = buffer
+        self._idle_timeout = idle_timeout
 
-        self._remote_addr = get_original_dst(client_sock, self._family)
-        srvaddr = client_sock.getsockname()
-        if self._remote_addr[0] == srvaddr[0] and self._remote_addr[1] == srvaddr[1]:
-            raise ConnectionRefusedError("Direct connections are not allowed")
-        self._rm_name = f"[{self._remote_addr[0]}]:{self._remote_addr[1]}"
+        self._init()
 
-        self._remote_sock = socket.socket(self._family, client_sock.type)
-        self._configure_socket(self._client_sock)
-        self._configure_socket(self._remote_sock, tfo=True)
+    def run(self) -> None:
+        self._log(logging.DEBUG, "Session started", f"{self._client_name} {DIR_UP} {self._remote_name}")
 
-    def serve(self):
         with self._client_sock, self._remote_sock:
-            established = False
+            if not self._connect():
+                return
 
-            try:
-                self._remote_sock.connect(self._remote_addr)
-                tfo = self._attemt_tfo()
+            self._log(logging.INFO, "Session connected", f"{self._client_name} {DIR_UP} {self._remote_name}")
+            self._run()
 
-                center = len(self._buffer) // 2
-                up_buf = self._buffer[:center]
-                down_buf = self._buffer[center:]
-                group = Group()
-                group.spawn(self._relay, DIR_UP, self._client_sock, self._remote_sock, up_buf)
-                group.spawn(self._relay, DIR_DOWN, self._remote_sock, self._client_sock, down_buf)
+        self._log(logging.INFO, "Session ended", f"{self._client_name} {DIR_UP} {self._remote_name}")
 
-                start_time = (time.perf_counter() - self._created) * 1000
-                self._log(logging.INFO, f"Session started in {start_time:6.1f}ms{" (TFO)" if tfo else ""}", f"{self._cl_name:50} {DIR_UP} {self._rm_name:50}")
-                established = True
-                group.join()
+    def _init(self) -> None:
+        self._client_name = f"[{self._client_addr[0]}]:{self._client_addr[1]}"
+        self._family = socket.AF_INET if ipv4_mapped(self._client_addr[0]) else socket.AF_INET6
 
-            except TimeoutError:
-                self._log(logging.WARNING, "Connection timed out", f"{self._cl_name:50} {DIR_UP} {self._rm_name:50}")
-            except ConnectionRefusedError:
-                self._log(logging.WARNING, "Connection refused", f"{self._cl_name:50} {DIR_UP} {self._rm_name:50}")
-            except Exception as e:
-                self._log(logging.ERROR, f"Unexpected in session: {e}", f"{self._cl_name:50} {DIR_UP} {self._rm_name:50}")
-            finally:
-                if established:
-                    try:
-                        self._remote_sock.shutdown(socket.SHUT_RDWR)
-                    except:
-                        pass
-                try:
-                    if not established:
-                        self._client_sock.sendall(NULL)
-                    self._client_sock.shutdown(socket.SHUT_RDWR)
-                except:
-                    pass
+        sock_addr = self._client_sock.getsockname()
+        self._remote_addr = get_original_dst(self._client_sock, self._family)
+        if self._remote_addr[0] == sock_addr[0] and self._remote_addr[1] == sock_addr[1]:
+            raise ConnectionRefusedError("Direct connection not allowed")
 
-        session_time = time.perf_counter() - self._created
-        self._log(logging.INFO, f"Session {"closed" if established else "aborted"} in {session_time:.1f}s", f"{self._cl_name:50} {DIR_UP} {self._rm_name:50}")
+        self._remote_name = f"[{self._remote_addr[0]}]:{self._remote_addr[1]}"
+        self._remote_sock = socket.socket(self._family, socket.SOCK_STREAM)
 
-    def _relay(self, direction: str, src: socket.socket, dst: socket.socket, buf: memoryview):
-        center = len(buf) // 2
-        rcvbuf = buf[:center]
-        sndbuf = buf[center:]
-        rcvlen = 0
-        sndlen = 0
-        eof = False
+        self._setsockopt(self._client_sock)
+        self._setsockopt(self._remote_sock, tfo=True)
+
+    def _connect(self) -> bool:
+        success = False
+        recv = 0
+        sent = 0
 
         try:
-            self._log(logging.DEBUG, "Starting relay", f"{self._cl_name:50} {direction} {self._rm_name:50}")
+            self._remote_sock.connect(self._remote_addr)
 
-            while not eof:
-                dst.setsockopt(socket.SOL_TCP, socket.TCP_CORK, 0)
+            try:
+                wait_read(self._client_sock.fileno(), 0)
+                if recv := self._client_sock.recv_into(self._buffer):
+                    self._log(logging.DEBUG, f"TFO-R {recv:17} bytes", f"{self._client_name} {DIR_UP} {self._remote_name}")
+                else:
+                    self._log(logging.WARNING, "Client sent EOF before data", f"{self._client_name} {DIR_UP} {self._remote_name}")
+            except TimeoutError:
+                self._log(logging.DEBUG, "TFO-R Timeout", f"{self._client_name} {DIR_UP} {self._remote_name}")
+
+            try:
+                wait_write(self._remote_sock.fileno())
+                if sent := self._remote_sock.sendto(self._buffer[:recv], socket.MSG_FASTOPEN, self._remote_addr):
+                    self._log(logging.DEBUG, f"TFO-S {sent:7} / {recv:7} bytes", f"{self._client_name} {DIR_UP} {self._remote_name}")
+            except BlockingIOError:
+                self._log(logging.DEBUG, "TFO-S Failed", f"{self._client_name} {DIR_UP} {self._remote_name}")
+
+            if sent < recv:
+                wait_write(self._remote_sock.fileno())
+                self._remote_sock.sendall(self._buffer[sent:recv])
+                self._log(logging.DEBUG, f"Sent {recv - sent:18} bytes", f"{self._client_name} {DIR_UP} {self._remote_name}")
+
+            success = True
+        except Exception as e:
+            self._log(logging.ERROR, f"Failed to connect: {e}", f"{self._client_name} {DIR_UP} {self._remote_name}")
+
+        return success
+
+    def _run(self) -> None:
+        center = len(self._buffer) // 2
+        ubuf = self._buffer[:center]
+        dbuf = self._buffer[center:]
+        group = Group()
+
+        group.spawn(self._pipe, self._client_sock, self._remote_sock, ubuf, DIR_UP)
+        group.spawn(self._pipe, self._remote_sock, self._client_sock, dbuf, DIR_DOWN)
+        group.join()
+
+        try:
+            self._remote_sock.shutdown(socket.SHUT_RDWR)
+        except:
+            pass
+        try:
+            self._client_sock.shutdown(socket.SHUT_RDWR)
+        except:
+            pass
+
+    def _pipe(self, src: socket.socket, dst: socket.socket, buf: memoryview, dir: str) -> None:
+        center = len(buf) // 2
+        rbuf = buf[:center]
+        wbuf = buf[center:]
+        rlen = 0
+        wlen = 0
+        closed = False
+
+        self._log(logging.DEBUG, "Pipe started", f"{self._client_name} {dir} {self._remote_name}")
+
+        try:
+            while not closed:
                 wait_read(src.fileno(), self._idle_timeout)
-                if not (rcvlen := src.recv_into(rcvbuf)):
-                    eof = True
+                if not (rlen := src.recv_into(rbuf)):
+                    closed = True
                     break
-                self._log(logging.DEBUG, f"recv {rcvlen:7} bytes", f"{self._cl_name:50} {direction} {self._rm_name:50}")
+                self._log(logging.DEBUG, f"Recv {rlen:18} bytes", f"{self._client_name} {dir} {self._remote_name}")
                 gevent.sleep()
 
-                cork = False
-                while rcvlen:
-                    (rcvbuf, rcvlen), (sndbuf, sndlen) = (sndbuf, 0), (rcvbuf, rcvlen)
+                dst.setsockopt(socket.SOL_TCP, socket.TCP_CORK, 1)
+                while rlen:
+                    (rbuf, rlen), (wbuf, wlen) = (wbuf, 0), (rbuf, rlen)
 
-                    snd = gevent.spawn(self._sendto, dst, sndbuf[:sndlen], direction)
+                    send = gevent.spawn(self._sendto, dst, wbuf[:wlen], dir)
                     gevent.sleep()
 
                     try:
                         wait_read(src.fileno(), 0)
-                        if not (rcvlen := src.recv_into(rcvbuf)):
-                            eof = True
+                        if not (rlen := src.recv_into(rbuf)):
+                            closed = True
                             break
-                        if not cork:
-                            dst.setsockopt(socket.SOL_TCP, socket.TCP_CORK, 1)
-                            cork = True
-                        self._log(logging.DEBUG, f"recv {rcvlen:7} bytes (fast)", f"{self._cl_name:50} {direction} {self._rm_name:50}")
+                        self._log(logging.DEBUG, f"Recv {rlen:18} bytes (fast)", f"{self._client_name} {dir} {self._remote_name}")
                         gevent.sleep()
                     except TimeoutError:
                         pass
 
-                    if not snd.get():
-                        raise BrokenPipeError(f"Failed to send {sndlen} bytes")
-
-        except BrokenPipeError as e:
-            self._log(logging.WARNING, f"{e}", f"{self._cl_name:50} {direction} {self._rm_name:50}")
+                    if not send.get():
+                        closed = True
+                        break
+                dst.setsockopt(socket.SOL_TCP, socket.TCP_CORK, 0)
         except ConnectionResetError:
-            self._log(logging.WARNING, "Connection reset", f"{self._cl_name:50} {direction} {self._rm_name:50}")
+            self._log(logging.WARNING, "Connection reset", f"{self._client_name} {dir} {self._remote_name}")
         except TimeoutError:
-            self._log(logging.WARNING, "Connection timed out", f"{self._cl_name:50} {direction} {self._rm_name:50}")
+            self._log(logging.WARNING, "Connection timed out", f"{self._client_name} {dir} {self._remote_name}")
+        except BrokenPipeError:
+            self._log(logging.WARNING, "Broken pipe", f"{self._client_name} {dir} {self._remote_name}")
         except Exception as e:
-            self._log(logging.ERROR, f"Unexpected in relay: {e}", f"{self._cl_name:50} {direction} {self._rm_name:50}")
+            self._log(logging.ERROR, f"Pipe failed: {e}", f"{self._client_name} {dir} {self._remote_name}")
         finally:
             try:
-                dst.setsockopt(socket.SOL_TCP, socket.TCP_CORK, 0)
                 dst.shutdown(socket.SHUT_WR)
             except:
                 pass
-            self._log(logging.DEBUG, "Relay finished", f"{self._cl_name:50} {direction} {self._rm_name:50}")
 
-    def _configure_socket(self, sock: socket.socket, tfo: bool = False):
+        self._log(logging.DEBUG, "Pipe ended", f"{self._client_name} {dir} {self._remote_name}")
+
+    def _sendto(self, sock: socket.socket, buf: memoryview, dir: str) -> bool:
+        success = False
+        sent = 0
+
+        try:
+            while sent < len(buf):
+                wait_write(sock.fileno())
+                sent += sock.send(buf[sent:])
+                self._log(logging.DEBUG, f"Sent {sent:18} bytes", f"{self._client_name} {dir} {self._remote_name}")
+                gevent.sleep()
+            success = True
+        except Exception as e:
+            self._log(logging.ERROR, f"Failed to send {len(buf)} bytes: {e}", f"{self._client_name} {dir} {self._remote_name}")
+
+        return success
+
+    def _setsockopt(self, sock: socket.socket, tfo: bool = False) -> None:
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
         sock.setsockopt(socket.SOL_TCP, socket.TCP_NODELAY, 1)
         sock.setsockopt(socket.SOL_TCP, socket.TCP_QUICKACK, 1)
         if tfo:
             sock.setsockopt(socket.SOL_TCP, socket.TCP_FASTOPEN_CONNECT, 1)
 
-    def _sendto(self, sock: socket.socket, buf: memoryview, dir: str) -> bool:
-        try:
-            wait_write(sock.fileno())
-            sock.sendall(buf)
-            self._log(logging.DEBUG, f"sent {len(buf):7} bytes", f"{self._cl_name:50} {dir} {self._rm_name:50}")
-            return True
-        except Exception as e:
-            self._log(logging.DEBUG, f"Failed to send: {e}", f"{self._cl_name:50} {dir} {self._rm_name:50}")
-            return False
-
-    def _attemt_tfo(self):
-        recv = 0
-        sent = 0
-
-        try:
-            wait_read(self._client_sock.fileno(), 0)
-            if recv := self._client_sock.recv_into(self._buffer):
-                self._log(logging.DEBUG, f"TFO-R {recv} bytes", f"{self._cl_name:50} {DIR_UP} {self._rm_name:50}")
-            else:
-                self._log(logging.WARNING, "Client sent EOF with no data", f"{self._cl_name:50} {DIR_UP} {self._rm_name:50}")
-        except TimeoutError:
-            self._log(logging.DEBUG, f"TFO-R timeout", f"{self._cl_name:50} {DIR_UP} {self._rm_name:50}")
-
-        try:
-            if sent := self._remote_sock.sendto(self._buffer[:recv], socket.MSG_FASTOPEN, self._remote_addr):
-                self._log(logging.DEBUG, f"TFO-T {sent} / {recv} bytes", f"{self._cl_name:50} {DIR_UP} {self._rm_name:50}")
-        except BlockingIOError:
-            if recv:
-                self._log(logging.DEBUG, f"TFO-T failed", f"{self._cl_name:50} {DIR_UP} {self._rm_name:50}")
-
-        wait_write(self._remote_sock.fileno())
-        if sent < recv:
-            self._remote_sock.sendall(self._buffer[sent:recv])
-            self._log(logging.DEBUG, f"Sent remaining {recv - sent} bytes", f"{self._cl_name:50} {DIR_UP} {self._rm_name:50}")
-
-        return sent > 0
-
-    def _log(self, level: int, subject: str, msg: str = ""):
+    def _log(self, level: int, subject: str, msg: str = "") -> None:
         txt = f"{subject:60}"
         if msg:
             txt += f" | {msg}"
