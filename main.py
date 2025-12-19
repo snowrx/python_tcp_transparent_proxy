@@ -37,6 +37,7 @@ if __name__ == "__main__":
         LOG_LEVEL = logging.DEBUG
     logging.basicConfig(level=LOG_LEVEL, format="%(name)-25s | %(levelname)-10s | %(message)s")
 
+    gevent.setswitchinterval(1e-100)
     if NUM_WORKERS > 0:
         with ProcessPoolExecutor(NUM_WORKERS) as pool:
             for _ in range(NUM_WORKERS):

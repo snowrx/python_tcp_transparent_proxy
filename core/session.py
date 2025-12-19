@@ -90,7 +90,7 @@ class Session:
             except ConnectionRefusedError:
                 self._log(logging.WARNING, "Connection refused", f"{self._cl_name:50} {DIR_UP} {self._rm_name:50}")
             except Exception as e:
-                self._log(logging.ERROR, f"Unexpected error in session: {e}", f"{self._cl_name:50} {DIR_UP} {self._rm_name:50}")
+                self._log(logging.ERROR, f"Unexpected in session: {e}", f"{self._cl_name:50} {DIR_UP} {self._rm_name:50}")
 
         session_time = time.perf_counter() - self._created
         self._log(logging.INFO, f"Session ended in {session_time:.2f}s", f"{self._cl_name:50} {DIR_UP} {self._rm_name:50}")
@@ -136,7 +136,7 @@ class Session:
         except TimeoutError:
             self._log(logging.WARNING, "Connection timed out", f"{self._cl_name:50} {direction} {self._rm_name:50}")
         except Exception as e:
-            self._log(logging.ERROR, f"Unexpected error in relay: {e}", f"{self._cl_name:50} {direction} {self._rm_name:50}")
+            self._log(logging.ERROR, f"Unexpected in relay: {e}", f"{self._cl_name:50} {direction} {self._rm_name:50}")
         finally:
             try:
                 dst.setsockopt(socket.SOL_TCP, socket.TCP_CORK, 0)
