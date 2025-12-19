@@ -17,7 +17,7 @@ LOG_LEVEL = logging.INFO
 PORT = 8081
 NUM_WORKERS = 4
 IDLE_TIMEOUT = 86400
-BUFFER_SIZE = 1 << 21
+BUFFER_SIZE = 63 << 12
 
 
 def main():
@@ -25,6 +25,7 @@ def main():
 
     def on_accepted(client_sock: socket.socket, client_addr: tuple[str, int]):
         with buffer_pool.borrow() as buffer:
+            gevent.sleep()
             session = Session(client_sock, client_addr, buffer, IDLE_TIMEOUT)
             session.serve()
 
@@ -37,7 +38,6 @@ if __name__ == "__main__":
         LOG_LEVEL = logging.DEBUG
     logging.basicConfig(level=LOG_LEVEL, format="%(name)-25s | %(levelname)-10s | %(message)s")
 
-    gevent.setswitchinterval(1e-100)
     if NUM_WORKERS > 0:
         with ProcessPoolExecutor(NUM_WORKERS) as pool:
             for _ in range(NUM_WORKERS):

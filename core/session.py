@@ -127,24 +127,29 @@ class Session:
                 if not (rcvlen := src.recv_into(rcvbuf)):
                     eof = True
                     break
+                self._log(logging.DEBUG, f"recv {rcvlen:7} bytes", f"{self._cl_name:50} {direction} {self._rm_name:50}")
+                gevent.sleep()
 
                 dst.setsockopt(socket.SOL_TCP, socket.TCP_CORK, 1)
                 while rcvlen:
                     (rcvbuf, rcvlen), (sndbuf, sndlen) = (sndbuf, 0), (rcvbuf, rcvlen)
 
-                    snd = gevent.spawn(self._sendto, dst, sndbuf[:sndlen])
-                    gevent.sleep(0)
+                    snd = gevent.spawn(self._sendto, dst, sndbuf[:sndlen], direction)
+                    gevent.sleep()
 
                     try:
                         wait_read(src.fileno(), 0)
                         if not (rcvlen := src.recv_into(rcvbuf)):
                             eof = True
                             break
+                        self._log(logging.DEBUG, f"recv {rcvlen:7} bytes (fast)", f"{self._cl_name:50} {direction} {self._rm_name:50}")
+                        gevent.sleep()
                     except TimeoutError:
                         pass
 
                     if not snd.get():
                         raise BrokenPipeError(f"Failed to send {sndlen} bytes")
+
                 dst.setsockopt(socket.SOL_TCP, socket.TCP_CORK, 0)
 
         except BrokenPipeError as e:
@@ -161,7 +166,7 @@ class Session:
                 dst.shutdown(socket.SHUT_WR)
             except:
                 pass
-            self._log(logging.DEBUG, "Relay stopped", f"{self._cl_name:50} {direction} {self._rm_name:50}")
+            self._log(logging.DEBUG, "Relay finished", f"{self._cl_name:50} {direction} {self._rm_name:50}")
 
     def _configure_socket(self, sock: socket.socket, tfo: bool = False):
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
@@ -170,13 +175,14 @@ class Session:
         if tfo:
             sock.setsockopt(socket.SOL_TCP, socket.TCP_FASTOPEN_CONNECT, 1)
 
-    def _sendto(self, sock: socket.socket, buf: memoryview) -> bool:
+    def _sendto(self, sock: socket.socket, buf: memoryview, dir: str) -> bool:
         try:
             wait_write(sock.fileno())
             sock.sendall(buf)
+            self._log(logging.DEBUG, f"sent {len(buf):7} bytes", f"{self._cl_name:50} {dir} {self._rm_name:50}")
             return True
         except Exception as e:
-            self._log(logging.DEBUG, f"Failed to send: {e}", f"{self._cl_name:50} {DIR_UP} {self._rm_name:50}")
+            self._log(logging.DEBUG, f"Failed to send: {e}", f"{self._cl_name:50} {dir} {self._rm_name:50}")
             return False
 
     def _attemt_tfo(self):
