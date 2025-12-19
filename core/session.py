@@ -9,6 +9,7 @@ from gevent import socket
 from gevent.socket import wait_read, wait_write
 from gevent.pool import Group
 
+NULL = b"\0"
 
 SO_ORIGINAL_DST = 80
 V4_LEN = 16
@@ -70,9 +71,11 @@ class Session:
 
     def serve(self):
         with self._client_sock, self._remote_sock:
+            established = False
+
             try:
                 self._remote_sock.connect(self._remote_addr)
-                self._attemt_tfo()
+                tfo = self._attemt_tfo()
 
                 center = len(self._buffer) // 2
                 up_buf = self._buffer[:center]
@@ -82,7 +85,8 @@ class Session:
                 group.spawn(self._relay, DIR_DOWN, self._remote_sock, self._client_sock, down_buf)
 
                 start_time = (time.perf_counter() - self._created) * 1000
-                self._log(logging.INFO, f"Session started in {start_time:.2f}ms", f"{self._cl_name:50} {DIR_UP} {self._rm_name:50}")
+                self._log(logging.INFO, f"Session started in {start_time:6.1f}ms{" (TFO)" if tfo else ""}", f"{self._cl_name:50} {DIR_UP} {self._rm_name:50}")
+                established = True
                 group.join()
 
             except TimeoutError:
@@ -91,9 +95,21 @@ class Session:
                 self._log(logging.WARNING, "Connection refused", f"{self._cl_name:50} {DIR_UP} {self._rm_name:50}")
             except Exception as e:
                 self._log(logging.ERROR, f"Unexpected in session: {e}", f"{self._cl_name:50} {DIR_UP} {self._rm_name:50}")
+            finally:
+                if established:
+                    try:
+                        self._remote_sock.shutdown(socket.SHUT_RDWR)
+                    except:
+                        pass
+                try:
+                    if not established:
+                        self._client_sock.sendall(NULL)
+                    self._client_sock.shutdown(socket.SHUT_RDWR)
+                except:
+                    pass
 
         session_time = time.perf_counter() - self._created
-        self._log(logging.INFO, f"Session ended in {session_time:.2f}s", f"{self._cl_name:50} {DIR_UP} {self._rm_name:50}")
+        self._log(logging.INFO, f"Session {"closed" if established else "aborted"} in {session_time:.1f}s", f"{self._cl_name:50} {DIR_UP} {self._rm_name:50}")
 
     def _relay(self, direction: str, src: socket.socket, dst: socket.socket, buf: memoryview):
         center = len(buf) // 2
@@ -187,6 +203,8 @@ class Session:
         if sent < recv:
             self._remote_sock.sendall(self._buffer[sent:recv])
             self._log(logging.DEBUG, f"Sent remaining {recv - sent} bytes", f"{self._cl_name:50} {DIR_UP} {self._rm_name:50}")
+
+        return sent > 0
 
     def _log(self, level: int, subject: str, msg: str = ""):
         txt = f"{subject:60}"
