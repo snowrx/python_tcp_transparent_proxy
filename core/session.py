@@ -217,7 +217,7 @@ class Session:
             sock.setsockopt(socket.SOL_TCP, socket.TCP_FASTOPEN_CONNECT, 1)
 
     def _log(self, level: int, subject: str, msg: str = "") -> None:
-        txt = f"{subject:60}"
+        txt = f"{subject:80}"
         if msg:
             txt += f" | {msg}"
         gevent.spawn(self._logger.log, level, txt)
