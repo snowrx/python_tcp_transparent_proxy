@@ -38,6 +38,7 @@ class BufferPool:
             return self._pool.get()
 
     def release(self, buffer: memoryview):
+        gevent.idle()
         with self._bsem:
             if self._pool.full():
                 buffer.release()

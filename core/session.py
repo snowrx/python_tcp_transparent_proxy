@@ -117,6 +117,8 @@ class Session:
                     (rcvbuf, rcvlen), (sndbuf, sndlen) = (sndbuf, 0), (rcvbuf, rcvlen)
 
                     snd = gevent.spawn(self._sendto, dst, sndbuf[:sndlen])
+                    gevent.sleep(0)
+
                     try:
                         wait_read(src.fileno(), 0)
                         if not (rcvlen := src.recv_into(rcvbuf)):
@@ -190,4 +192,4 @@ class Session:
         txt = f"{subject:60}"
         if msg:
             txt += f" | {msg}"
-        self._logger.log(level, txt)
+        gevent.spawn(self._logger.log, level, txt)
