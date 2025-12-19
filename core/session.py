@@ -110,6 +110,9 @@ class Session:
                 self._remote_sock.sendall(self._buffer[sent:recv])
                 self._log(logging.DEBUG, f"Sent {recv - sent:18} bytes", f"{self._client_name} {DIR_UP} {self._remote_name}")
 
+            if sent:
+                self._log(logging.INFO, "TFO success", f"{self._client_name} {DIR_UP} {self._remote_name}")
+
             success = True
         except Exception as e:
             self._log(logging.ERROR, f"Failed to connect: {e}", f"{self._client_name} {DIR_UP} {self._remote_name}")
@@ -151,7 +154,6 @@ class Session:
                 if not (rlen := src.recv_into(rbuf)):
                     closed = True
                     break
-                self._log(logging.DEBUG, f"Recv {rlen:18} bytes", f"{self._client_name} {dir} {self._remote_name}")
                 gevent.sleep()
 
                 dst.setsockopt(socket.SOL_TCP, socket.TCP_CORK, 1)
@@ -166,7 +168,6 @@ class Session:
                         if not (rlen := src.recv_into(rbuf)):
                             closed = True
                             break
-                        self._log(logging.DEBUG, f"Recv {rlen:18} bytes (fast)", f"{self._client_name} {dir} {self._remote_name}")
                         gevent.sleep()
                     except TimeoutError:
                         pass
@@ -199,11 +200,12 @@ class Session:
             while sent < len(buf):
                 wait_write(sock.fileno())
                 sent += sock.send(buf[sent:])
-                self._log(logging.DEBUG, f"Sent {sent:18} bytes", f"{self._client_name} {dir} {self._remote_name}")
+                if sent < len(buf):
+                    self._log(logging.DEBUG, f"Sent {sent:8} / {len(buf):7} bytes", f"{self._client_name} {dir} {self._remote_name}")
                 gevent.sleep()
             success = True
         except Exception as e:
-            self._log(logging.ERROR, f"Failed to send {len(buf)} bytes: {e}", f"{self._client_name} {dir} {self._remote_name}")
+            self._log(logging.ERROR, f"Failed to send {len(buf) - sent:8} bytes: {e}", f"{self._client_name} {dir} {self._remote_name}")
 
         return success
 
