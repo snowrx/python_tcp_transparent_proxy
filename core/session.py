@@ -92,9 +92,10 @@ class Session:
         try:
             self._remote_sock.connect(self._remote_addr)
 
+            mss = self._client_sock.getsockopt(socket.SOL_TCP, socket.TCP_MAXSEG)
             try:
                 wait_read(self._client_sock.fileno(), 0)
-                if recv := self._client_sock.recv_into(self._buffer):
+                if recv := self._client_sock.recv_into(self._buffer, mss):
                     self._log(logging.DEBUG, f"TFO-R {recv:17} bytes", f"{self._client_name} {DIR_UP} {self._remote_name}")
                 else:
                     self._log(logging.WARNING, "Client sent EOF before data", f"{self._client_name} {DIR_UP} {self._remote_name}")
