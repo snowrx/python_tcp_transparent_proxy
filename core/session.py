@@ -1,12 +1,15 @@
+import gevent
+from gevent import socket, monkey
+from gevent.socket import wait_read, wait_write
+from gevent.pool import Group
+
+monkey.patch_all()
+
 import logging
 import struct
 import ipaddress
+import time
 from functools import cache
-
-import gevent
-from gevent import socket
-from gevent.socket import wait_read, wait_write
-from gevent.pool import Group
 
 SO_ORIGINAL_DST = 80
 V4_LEN = 16
@@ -52,21 +55,6 @@ class Session:
         self._buffer = buffer
         self._idle_timeout = idle_timeout
 
-        self._init()
-
-    def run(self) -> None:
-        self._log(logging.DEBUG, "Session started", f"{self._client_name} {DIR_UP} {self._remote_name}")
-
-        with self._client_sock, self._remote_sock:
-            if not self._connect():
-                return
-
-            self._log(logging.INFO, "Session connected", f"{self._client_name} {DIR_UP} {self._remote_name}")
-            self._run()
-
-        self._log(logging.INFO, "Session ended", f"{self._client_name} {DIR_UP} {self._remote_name}")
-
-    def _init(self) -> None:
         self._client_name = f"[{self._client_addr[0]}]:{self._client_addr[1]}"
         self._family = socket.AF_INET if ipv4_mapped(self._client_addr[0]) else socket.AF_INET6
 
@@ -80,6 +68,21 @@ class Session:
 
         self._setsockopt(self._client_sock)
         self._setsockopt(self._remote_sock, tfo=True)
+
+    def run(self) -> None:
+        self._log(logging.DEBUG, "Session started", f"{self._client_name} {DIR_UP} {self._remote_name}")
+        started_at = time.perf_counter()
+
+        with self._client_sock, self._remote_sock:
+            if not self._connect():
+                return
+
+            connect_time = time.perf_counter() - started_at
+            self._log(logging.INFO, f"Session established in {connect_time * 1000:.1f}ms", f"{self._client_name} {DIR_UP} {self._remote_name}")
+            self._run()
+
+        session_time = time.perf_counter() - started_at
+        self._log(logging.INFO, f"Session ended in {session_time:.1f}s", f"{self._client_name} {DIR_UP} {self._remote_name}")
 
     def _connect(self) -> bool:
         success = False
