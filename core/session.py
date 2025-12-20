@@ -107,7 +107,8 @@ class Session:
                 if sent := self._remote_sock.sendto(self._buffer[:recv], socket.MSG_FASTOPEN, self._remote_addr):
                     self._log(logging.DEBUG, f"TFO-S {sent:7} / {recv:7} bytes", f"{self._client_name} {DIR_UP} {self._remote_name}")
             except BlockingIOError:
-                self._log(logging.DEBUG, "TFO-S Failed", f"{self._client_name} {DIR_UP} {self._remote_name}")
+                if recv:
+                    self._log(logging.DEBUG, "TFO-S Failed", f"{self._client_name} {DIR_UP} {self._remote_name}")
 
             if sent < recv:
                 wait_write(self._remote_sock.fileno())
