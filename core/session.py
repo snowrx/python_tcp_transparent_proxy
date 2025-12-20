@@ -173,6 +173,7 @@ class Session:
                         if not (rlen := src.recv_into(rbuf)):
                             closed = True
                             break
+                        self._log(logging.DEBUG, "Fast receive", f"{self._client_name:>50} {dir} {self._remote_name:>50}")
                         gevent.sleep()
                     except TimeoutError:
                         pass
@@ -206,7 +207,7 @@ class Session:
                 wait_write(sock.fileno())
                 sent += sock.send(buf[sent:])
                 if sent < len(buf):
-                    self._log(logging.DEBUG, f"Sent {sent:8} / {len(buf):7} bytes", f"{self._client_name:>50} {dir} {self._remote_name:>50}")
+                    self._log(logging.DEBUG, "Sent partial", f"{self._client_name:>50} {dir} {self._remote_name:>50}")
                 gevent.sleep()
             success = True
         except Exception as e:
