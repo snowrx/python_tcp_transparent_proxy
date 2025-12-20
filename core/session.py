@@ -92,11 +92,10 @@ class Session:
         try:
             self._remote_sock.connect(self._remote_addr)
 
-            mss = self._client_sock.getsockopt(socket.SOL_TCP, socket.TCP_MAXSEG)
             try:
                 wait_read(self._client_sock.fileno(), 0)
-                if recv := self._client_sock.recv_into(self._buffer, mss):
-                    self._log(logging.DEBUG, f"TFO-R {recv:17} bytes", f"{self._client_name:>50} {DIR_UP} {self._remote_name:>50}")
+                if recv := self._client_sock.recv_into(self._buffer):
+                    self._log(logging.DEBUG, f"TFO-R {recv:11} bytes", f"{self._client_name:>50} {DIR_UP} {self._remote_name:>50}")
                 else:
                     self._log(logging.WARNING, "Client sent EOF before data", f"{self._client_name:>50} {DIR_UP} {self._remote_name:>50}")
             except TimeoutError:
@@ -105,7 +104,7 @@ class Session:
             try:
                 wait_write(self._remote_sock.fileno())
                 if sent := self._remote_sock.sendto(self._buffer[:recv], socket.MSG_FASTOPEN, self._remote_addr):
-                    self._log(logging.DEBUG, f"TFO-S {sent:7} / {recv:7} bytes", f"{self._client_name:>50} {DIR_UP} {self._remote_name:>50}")
+                    self._log(logging.DEBUG, f"TFO-S {sent:4} / {recv:4} bytes", f"{self._client_name:>50} {DIR_UP} {self._remote_name:>50}")
             except BlockingIOError:
                 if recv:
                     self._log(logging.DEBUG, "TFO-S Failed", f"{self._client_name:>50} {DIR_UP} {self._remote_name:>50}")
@@ -113,7 +112,7 @@ class Session:
             if sent < recv:
                 wait_write(self._remote_sock.fileno())
                 self._remote_sock.sendall(self._buffer[sent:recv])
-                self._log(logging.DEBUG, f"Sent {recv - sent:18} bytes", f"{self._client_name:>50} {DIR_UP} {self._remote_name:>50}")
+                self._log(logging.DEBUG, f"Sent {recv - sent:12} bytes", f"{self._client_name:>50} {DIR_UP} {self._remote_name:>50}")
 
             if sent:
                 self._log(logging.INFO, "TFO success", f"{self._client_name:>50} {DIR_UP} {self._remote_name:>50}")
@@ -173,7 +172,6 @@ class Session:
                         if not (rlen := src.recv_into(rbuf)):
                             closed = True
                             break
-                        self._log(logging.DEBUG, "Fast receive", f"{self._client_name:>50} {dir} {self._remote_name:>50}")
                         gevent.sleep()
                     except TimeoutError:
                         pass
@@ -200,18 +198,19 @@ class Session:
 
     def _sendto(self, sock: socket.socket, buf: memoryview, dir: str) -> bool:
         success = False
-        sent = 0
+        total = 0
 
         try:
-            while sent < len(buf):
+            while total < len(buf):
                 wait_write(sock.fileno())
-                sent += sock.send(buf[sent:])
+                sent = sock.send(buf[total:])
+                total += sent
                 if sent < len(buf):
-                    self._log(logging.DEBUG, "Sent partial", f"{self._client_name:>50} {dir} {self._remote_name:>50}")
+                    self._log(logging.DEBUG, f"Partial {sent:9} bytes", f"{self._client_name:>50} {dir} {self._remote_name:>50}")
                 gevent.sleep()
             success = True
         except Exception as e:
-            self._log(logging.ERROR, f"Failed to send {len(buf) - sent:8} bytes: {e}", f"{self._client_name:>50} {dir} {self._remote_name:>50}")
+            self._log(logging.ERROR, f"Failed to send {len(buf) - total} bytes: {e}", f"{self._client_name:>50} {dir} {self._remote_name:>50}")
 
         return success
 
@@ -223,7 +222,7 @@ class Session:
             sock.setsockopt(socket.SOL_TCP, socket.TCP_FASTOPEN_CONNECT, 1)
 
     def _log(self, level: int, subject: str, msg: str = "") -> None:
-        txt = f"{subject:80}"
+        txt = f"{subject:60}"
         if msg:
             txt += f" | {msg}"
         gevent.spawn(self._logger.log, level, txt)
