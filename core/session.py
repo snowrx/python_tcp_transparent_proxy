@@ -168,7 +168,6 @@ class Session:
                     if not sent:
                         raise BrokenPipeError
                     wbuf = wbuf[sent:]
-                    self._log(logging.DEBUG, f"Sent {sent:7} / {recv:7} bytes", _label)
                     while wbuf:
                         _wait_write(_dst_fd, _idle_timeout)
                         if not (sent := _send(wbuf)):
