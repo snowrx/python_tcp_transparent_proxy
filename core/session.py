@@ -156,21 +156,25 @@ class Session:
         self._log(logging.DEBUG, "Pipe started", _label)
 
         try:
-            while 1:
+            while True:
+                gevent.idle()
                 _wait_read(_src_fd, _idle_timeout)
-                recv = _recv_into(buf)
-                if not recv:
+                if not (recv := _recv_into(buf)):
                     self._log(logging.DEBUG, "EOF received", _label)
                     break
 
-                wv = buf[:recv]
-                while wv:
-                    _wait_write(_dst_fd, _idle_timeout)
-                    sent = _send(wv)
+                _wait_write(_dst_fd, _idle_timeout)
+                wbuf = buf[:recv]
+                if (sent := _send(wbuf)) < recv:
                     if not sent:
-                        self._log(logging.DEBUG, "Failed to send", _label)
                         raise BrokenPipeError
-                    wv = wv[sent:]
+                    wbuf = wbuf[sent:]
+                    self._log(logging.DEBUG, f"Sent {sent:7} / {recv:7} bytes", _label)
+                    while wbuf:
+                        _wait_write(_dst_fd, _idle_timeout)
+                        if not (sent := _send(wbuf)):
+                            raise BrokenPipeError
+                        wbuf = wbuf[sent:]
 
         except ConnectionResetError:
             self._log(logging.ERROR, "Connection reset", _label)
