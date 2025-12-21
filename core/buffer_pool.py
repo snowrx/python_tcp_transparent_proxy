@@ -7,7 +7,6 @@ from gevent.queue import SimpleQueue
 
 DEFAULT_BUFFER_SIZE = 1 << 20
 DEFAULT_POOL_SIZE = 100
-TEMP_INDEX = -1
 
 
 class BufferPool:
@@ -18,42 +17,31 @@ class BufferPool:
         self._buffer_size = buffer_size if buffer_size > 0 else DEFAULT_BUFFER_SIZE
         self._pool_size = pool_size if pool_size > 0 else DEFAULT_POOL_SIZE
 
-        self._bedrock = memoryview(bytearray(self._buffer_size * self._pool_size))
-        self._free_list = SimpleQueue(self._pool_size)
-        for i in range(self._pool_size):
-            self._free_list.put(i)
-
+        self._pool: SimpleQueue[memoryview] = SimpleQueue(self._pool_size)
         self._eraser = bytes(self._buffer_size)
-        self._temp_count = 0
 
     @contextmanager
     def borrow(self):
-        idx, buffer = self._acquire()
+        buffer = self._acquire()
         try:
             yield buffer
         finally:
-            gevent.spawn(self._release, idx, buffer)
+            gevent.spawn(self._release, buffer)
 
-    def _acquire(self) -> tuple[int, memoryview]:
+    def _acquire(self) -> memoryview:
         with self._lock:
-            if self._free_list.empty():
-                self._temp_count += 1
-                self._logger.warning(f"No free buffers, allocating temporary buffer {self._temp_count}")
-                return TEMP_INDEX, memoryview(bytearray(self._buffer_size))
+            if self._pool.empty():
+                self._logger.info("Creating new buffer")
+                return memoryview(bytearray(self._buffer_size))
             else:
-                idx = self._free_list.get()
-                buffer = self._bedrock[idx * self._buffer_size : (idx + 1) * self._buffer_size]
-                self._logger.debug(f"Acquired buffer {idx}")
-                return idx, buffer
+                return memoryview(self._pool.get())
 
-    def _release(self, idx: int, buffer: memoryview):
+    def _release(self, buffer: memoryview) -> None:
         gevent.idle()
         with self._lock:
-            if idx is TEMP_INDEX:
-                self._temp_count -= 1
+            if self._pool.full():
+                self._logger.info("Dropping buffer")
                 buffer.release()
-                self._logger.warning(f"Released temporary buffer, {self._temp_count} remaining")
             else:
                 buffer[:] = self._eraser
-                self._free_list.put(idx)
-                self._logger.debug(f"Released buffer {idx}")
+                self._pool.put(buffer)
