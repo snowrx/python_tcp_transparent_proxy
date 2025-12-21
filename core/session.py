@@ -85,6 +85,7 @@ class Session:
         self._log(logging.INFO, f"Session ended in {session_time:.1f}s", f"{self._client_name:>50} {DIR_UP} {self._remote_name:>50}")
 
     def _connect(self) -> bool:
+        label = f"{self._client_name:>50} {DIR_UP} {self._remote_name:>50}"
         success = False
         recv = 0
         sent = 0
@@ -94,32 +95,30 @@ class Session:
 
             try:
                 wait_read(self._client_sock.fileno(), 0)
-                if recv := self._client_sock.recv_into(self._buffer):
-                    self._log(logging.DEBUG, f"TFO-R {recv:11} bytes", f"{self._client_name:>50} {DIR_UP} {self._remote_name:>50}")
-                else:
-                    self._log(logging.WARNING, "Client sent EOF before data", f"{self._client_name:>50} {DIR_UP} {self._remote_name:>50}")
+                recv = self._client_sock.recv_into(self._buffer)
             except TimeoutError:
-                self._log(logging.DEBUG, "TFO-R Timeout", f"{self._client_name:>50} {DIR_UP} {self._remote_name:>50}")
+                pass
 
             try:
                 wait_write(self._remote_sock.fileno())
-                if sent := self._remote_sock.sendto(self._buffer[:recv], socket.MSG_FASTOPEN, self._remote_addr):
-                    self._log(logging.DEBUG, f"TFO-S {sent:4} / {recv:4} bytes", f"{self._client_name:>50} {DIR_UP} {self._remote_name:>50}")
+                sent = self._remote_sock.sendto(self._buffer[:recv], socket.MSG_FASTOPEN, self._remote_addr)
             except BlockingIOError:
-                if recv:
-                    self._log(logging.DEBUG, "TFO-S Failed", f"{self._client_name:>50} {DIR_UP} {self._remote_name:>50}")
+                pass
 
             if sent < recv:
                 wait_write(self._remote_sock.fileno())
                 self._remote_sock.sendall(self._buffer[sent:recv])
-                self._log(logging.DEBUG, f"Sent {recv - sent:12} bytes", f"{self._client_name:>50} {DIR_UP} {self._remote_name:>50}")
-
-            if sent:
-                self._log(logging.INFO, "TFO success", f"{self._client_name:>50} {DIR_UP} {self._remote_name:>50}")
 
             success = True
+            if sent:
+                self._log(logging.INFO, "TFO success", label)
+
+        except ConnectionRefusedError:
+            self._log(logging.ERROR, "Connection refused", label)
+        except TimeoutError:
+            self._log(logging.ERROR, "Connection timed out", label)
         except Exception as e:
-            self._log(logging.ERROR, f"Failed to connect: {e}", f"{self._client_name:>50} {DIR_UP} {self._remote_name:>50}")
+            self._log(logging.ERROR, f"Connection failed: {e}", label)
 
         return success
 
