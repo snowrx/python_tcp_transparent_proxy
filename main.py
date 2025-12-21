@@ -17,7 +17,7 @@ LOG_LEVEL = logging.INFO
 PORT = 8081
 NUM_WORKERS = 4
 IDLE_TIMEOUT = 86400
-BUFFER_SIZE = 63 << 12
+BUFFER_SIZE = 1 << 21
 
 
 def main():
@@ -36,7 +36,7 @@ def main():
 if __name__ == "__main__":
     if os.getenv("DEBUG"):
         LOG_LEVEL = logging.DEBUG
-    logging.basicConfig(level=LOG_LEVEL, format="%(name)-25s | %(levelname)-10s | %(message)s")
+    logging.basicConfig(level=LOG_LEVEL, format="%(name)-30s | %(levelname)-10s | %(message)s")
 
     if NUM_WORKERS > 0:
         with ProcessPoolExecutor(NUM_WORKERS) as pool:

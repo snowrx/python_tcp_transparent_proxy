@@ -143,76 +143,50 @@ class Session:
             pass
 
     def _pipe(self, src: socket.socket, dst: socket.socket, buf: memoryview, dir: str) -> None:
-        center = len(buf) // 2
-        rbuf = buf[:center]
-        wbuf = buf[center:]
-        rlen = 0
-        wlen = 0
-        closed = False
+        _label = f"{self._client_name:>50} {dir} {self._remote_name:>50}"
+        _idle_timeout = self._idle_timeout
 
-        self._log(logging.DEBUG, "Pipe started", f"{self._client_name:>50} {dir} {self._remote_name:>50}")
+        _src_fd = src.fileno()
+        _dst_fd = dst.fileno()
+        _wait_read = wait_read
+        _wait_write = wait_write
+        _recv_into = src.recv_into
+        _send = dst.send
+
+        self._log(logging.DEBUG, "Pipe started", _label)
 
         try:
-            while not closed:
-                wait_read(src.fileno(), self._idle_timeout)
-                if not (rlen := src.recv_into(rbuf)):
-                    closed = True
+            while 1:
+                _wait_read(_src_fd, _idle_timeout)
+                recv = _recv_into(buf)
+                if not recv:
+                    self._log(logging.DEBUG, "EOF received", _label)
                     break
-                gevent.sleep()
 
-                dst.setsockopt(socket.SOL_TCP, socket.TCP_CORK, 1)
-                while rlen:
-                    (rbuf, rlen), (wbuf, wlen) = (wbuf, 0), (rbuf, rlen)
+                wv = buf[:recv]
+                while wv:
+                    _wait_write(_dst_fd, _idle_timeout)
+                    sent = _send(wv)
+                    if not sent:
+                        self._log(logging.DEBUG, "Failed to send", _label)
+                        raise BrokenPipeError
+                    wv = wv[sent:]
 
-                    send = gevent.spawn(self._sendto, dst, wbuf[:wlen], dir)
-                    gevent.sleep()
-
-                    try:
-                        wait_read(src.fileno(), 0)
-                        if not (rlen := src.recv_into(rbuf)):
-                            closed = True
-                            break
-                        gevent.sleep()
-                    except TimeoutError:
-                        pass
-
-                    if not send.get():
-                        closed = True
-                        break
-                dst.setsockopt(socket.SOL_TCP, socket.TCP_CORK, 0)
         except ConnectionResetError:
-            self._log(logging.WARNING, "Connection reset", f"{self._client_name:>50} {dir} {self._remote_name:>50}")
+            self._log(logging.ERROR, "Connection reset", _label)
         except TimeoutError:
-            self._log(logging.WARNING, "Connection timed out", f"{self._client_name:>50} {dir} {self._remote_name:>50}")
+            self._log(logging.ERROR, "Connection timed out", _label)
         except BrokenPipeError:
-            self._log(logging.WARNING, "Broken pipe", f"{self._client_name:>50} {dir} {self._remote_name:>50}")
+            self._log(logging.ERROR, "Broken pipe", _label)
         except Exception as e:
-            self._log(logging.ERROR, f"Pipe failed: {e}", f"{self._client_name:>50} {dir} {self._remote_name:>50}")
+            self._log(logging.ERROR, f"Pipe failed: {e}", _label)
         finally:
             try:
                 dst.shutdown(socket.SHUT_WR)
             except:
                 pass
 
-        self._log(logging.DEBUG, "Pipe ended", f"{self._client_name:>50} {dir} {self._remote_name:>50}")
-
-    def _sendto(self, sock: socket.socket, buf: memoryview, dir: str) -> bool:
-        success = False
-        total = 0
-
-        try:
-            while total < len(buf):
-                wait_write(sock.fileno())
-                sent = sock.send(buf[total:])
-                total += sent
-                if sent < len(buf):
-                    self._log(logging.DEBUG, f"Partial {sent:9} bytes", f"{self._client_name:>50} {dir} {self._remote_name:>50}")
-                gevent.sleep()
-            success = True
-        except Exception as e:
-            self._log(logging.ERROR, f"Failed to send {len(buf) - total} bytes: {e}", f"{self._client_name:>50} {dir} {self._remote_name:>50}")
-
-        return success
+        self._log(logging.DEBUG, "Pipe ended", _label)
 
     def _setsockopt(self, sock: socket.socket, tfo: bool = False) -> None:
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
@@ -224,5 +198,5 @@ class Session:
     def _log(self, level: int, subject: str, msg: str = "") -> None:
         txt = f"{subject:60}"
         if msg:
-            txt += f" | {msg}"
+            txt += f" | {msg} |"
         gevent.spawn(self._logger.log, level, txt)
