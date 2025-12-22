@@ -1,46 +1,56 @@
 import gevent
-from gevent import socket
-from gevent import monkey
+from gevent import socket, monkey
+
+from core import server
 
 monkey.patch_all()
 
 import logging
 import os
-from concurrent.futures import ProcessPoolExecutor
+import gc
 
-from core.buffer_pool import BufferPool
 from core.server import Server
 from core.session import Session
-
+from core.buffer_pool import BufferPool
+from core.util import get_original_dst, ipv4_mapped
 
 LOG_LEVEL = logging.INFO
+LOG_FORMAT = "%(name)-30s | %(levelname)-10s | %(message)s"
+
 PORT = 8081
-NUM_WORKERS = 4
-IDLE_TIMEOUT = 86400
+IDLE_TIMEOUT = 7200
+
 BUFFER_SIZE = 1 << 21
+POOL_SIZE = 100
 
 
 def main():
-    buffer_pool = BufferPool(BUFFER_SIZE)
+    buffer_pool = BufferPool(BUFFER_SIZE, POOL_SIZE)
 
-    def on_accepted(client_sock: socket.socket, client_addr: tuple[str, int]):
-        with buffer_pool.borrow() as buffer:
-            gevent.sleep()
-            session = Session(client_sock, client_addr, buffer, IDLE_TIMEOUT)
-            gevent.spawn(session.run).join()
+    def handler(client_sock: socket.socket, client_addr: tuple[str, int]) -> None:
+        with client_sock:
+            try:
+                family = socket.AF_INET if ipv4_mapped(client_addr[0]) else socket.AF_INET6
+                remote_addr = get_original_dst(client_sock, family)
+                srv_name = client_sock.getsockname()
+                if remote_addr[0] == srv_name[0] and remote_addr[1] == srv_name[1]:
+                    return
 
-    server = Server(PORT, on_accepted)
-    gevent.spawn(server.serve_forever).join()
+                with buffer_pool.buffer() as buffer:
+                    session = Session(client_sock, client_addr, remote_addr, family, buffer, IDLE_TIMEOUT)
+                    session.run()
+
+            except Exception as e:
+                logging.error(f"Session failed: {e}")
+
+    server = Server(PORT, handler)
+    server.serve_forever()
 
 
 if __name__ == "__main__":
     if os.getenv("DEBUG"):
         LOG_LEVEL = logging.DEBUG
-    logging.basicConfig(level=LOG_LEVEL, format="%(name)-30s | %(levelname)-10s | %(message)s")
+        gc.set_debug(gc.DEBUG_STATS)
+    logging.basicConfig(level=LOG_LEVEL, format=LOG_FORMAT)
 
-    if NUM_WORKERS > 0:
-        with ProcessPoolExecutor(NUM_WORKERS) as pool:
-            for _ in range(NUM_WORKERS):
-                pool.submit(main)
-    else:
-        main()
+    main()
