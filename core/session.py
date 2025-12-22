@@ -123,9 +123,9 @@ class Session:
         return success
 
     def _run(self) -> None:
-        center = len(self._buffer) // 2
-        ubuf = self._buffer[:center]
-        dbuf = self._buffer[center:]
+        size = len(self._buffer) // 2
+        ubuf = self._buffer[:size]
+        dbuf = self._buffer[size:]
         group = Group()
 
         group.spawn(self._pipe, self._client_sock, self._remote_sock, ubuf, DIR_UP)
@@ -151,28 +151,48 @@ class Session:
         _wait_write = wait_write
         _recv_into = src.recv_into
         _send = dst.send
+        _set_opt = dst.setsockopt
+
+        SOL_TCP = socket.SOL_TCP
+        TCP_CORK = socket.TCP_CORK
+
+        size = len(buf) // 2
+        r_buf = buf[:size]
+        s_buf = buf[size:]
+        r_len = 0
+        s_len = 0
+        eof = False
 
         self._log(logging.DEBUG, "Pipe started", _label)
 
         try:
-            while True:
-                gevent.idle()
+            # main loop
+            while not eof:
                 _wait_read(_src_fd, _idle_timeout)
-                if not (recv := _recv_into(buf)):
-                    self._log(logging.DEBUG, "EOF received", _label)
+                if not (r_len := _recv_into(r_buf)):
                     break
 
-                _wait_write(_dst_fd, _idle_timeout)
-                wbuf = buf[:recv]
-                if (sent := _send(wbuf)) < recv:
-                    if not sent:
-                        raise BrokenPipeError
-                    wbuf = wbuf[sent:]
-                    while wbuf:
+                # swap loop
+                _set_opt(SOL_TCP, TCP_CORK, 1)
+                while r_len:
+                    r_buf, r_len, s_buf, s_len = s_buf, 0, r_buf, r_len
+                    progress = 0
+
+                    # send loop
+                    while progress < s_len:
                         _wait_write(_dst_fd, _idle_timeout)
-                        if not (sent := _send(wbuf)):
-                            raise BrokenPipeError
-                        wbuf = wbuf[sent:]
+                        progress += _send(s_buf[progress:s_len])
+
+                        if not eof and r_len < size:
+                            try:
+                                _wait_read(_src_fd, 0)
+                                if not (recv := _recv_into(r_buf[r_len:])):
+                                    eof = True
+                                else:
+                                    r_len += recv
+                            except TimeoutError:
+                                pass
+                _set_opt(SOL_TCP, TCP_CORK, 0)
 
         except ConnectionResetError:
             self._log(logging.ERROR, "Connection reset", _label)
@@ -184,6 +204,7 @@ class Session:
             self._log(logging.ERROR, f"Pipe failed: {e}", _label)
         finally:
             try:
+                _set_opt(SOL_TCP, TCP_CORK, 0)
                 dst.shutdown(socket.SHUT_WR)
             except:
                 pass
