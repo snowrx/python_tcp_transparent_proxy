@@ -1,49 +1,47 @@
-from gevent import monkey
-from gevent.lock import BoundedSemaphore
 from gevent.queue import SimpleQueue
+from gevent.lock import BoundedSemaphore
 
-monkey.patch_all()
-
+import logging
 from contextlib import contextmanager
 
 
 class BufferPool:
-    def __init__(self, page_size: int, count: int) -> None:
+    def __init__(self, page_size: int, page_count: int):
+        self._logger = logging.getLogger(f"{self.__class__.__name__}-{hex(id(self))}")
         self._page_size = page_size
-        self._count = count
+        self._page_count = page_count
         self._lock = BoundedSemaphore()
-        self._free = SimpleQueue()
-        for idx in range(count):
-            self._free.put(idx)
-        self._memory = memoryview(bytearray(page_size * count))
-        self._overcomitted = 0
-        self._eraser = bytes(page_size)
+        self._free_pages = SimpleQueue()
+        for i in range(page_count):
+            self._free_pages.put(i)
+        self._memory = memoryview(bytearray(self._page_size * self._page_count))
+        self._eraser = bytes(self._page_size)
+        self._overcommit = 0
 
     @contextmanager
-    def buffer(self):
-        idx, buf = self._acquire()
+    def acquire(self):
+        page_id, buffer = self._acquire()
         try:
-            yield buf
+            yield buffer
         finally:
-            self._release(idx, buf)
+            self._release(page_id, buffer)
 
     def _acquire(self) -> tuple[int | None, memoryview]:
         with self._lock:
-            if self._free.empty():
-                self._overcomitted += 1
+            if self._free_pages.empty():
+                self._overcommit += 1
+                self._logger.warning(f"overcommit: {self._overcommit}")
                 return None, memoryview(bytearray(self._page_size))
+            else:
+                page_id = self._free_pages.get()
+                return page_id, self._memory[page_id * self._page_size : (page_id + 1) * self._page_size]
 
-            idx = self._free.get()
-            head = idx * self._page_size
-            tail = head + self._page_size
-            return idx, self._memory[head:tail]
-
-    def _release(self, idx: int | None, buf: memoryview) -> None:
+    def _release(self, page_id: int | None, buffer: memoryview) -> None:
         with self._lock:
-            if idx is None:
-                self._overcomitted -= 1
-                buf.release()
-                return
-
-            buf[:] = self._eraser
-            self._free.put(idx)
+            if page_id is None:
+                buffer.release()
+                self._overcommit -= 1
+                self._logger.debug(f"overcommit: {self._overcommit}")
+            else:
+                buffer[:] = self._eraser
+                self._free_pages.put(page_id)

@@ -1,9 +1,6 @@
-import gevent
-from gevent import socket, monkey
+from gevent import socket
 from gevent.socket import wait_read, wait_write
 from gevent.pool import Group
-
-monkey.patch_all()
 
 import logging
 
@@ -12,48 +9,52 @@ DIR_DOWN = "<-"
 
 
 class Session:
-    def __init__(self, client_sock: socket.socket, client_addr: tuple[str, int], remote_addr: tuple[str, int], family: socket.AddressFamily, buffer: memoryview, idle_timeout: int):
+    def __init__(
+        self,
+        client_sock: socket.socket,
+        client_addr: tuple[str, int],
+        remote_addr: tuple[str, int],
+        family: socket.AddressFamily,
+        buffer: memoryview,
+        timeout: int,
+    ) -> None:
         self._logger = logging.getLogger(f"{self.__class__.__name__}-{hex(id(self))}")
+
         self._client_sock = client_sock
         self._client_addr = client_addr
         self._remote_addr = remote_addr
         self._family = family
         self._buffer = buffer
-        self._idle_timeout = idle_timeout
+        self._timeout = timeout
 
-        self._client_name = f"[{client_addr[0]}]:{client_addr[1]:<5}"
-        self._remote_name = f"[{remote_addr[0]}]:{remote_addr[1]:<5}"
+        self._client_name = f"[{self._client_addr[0]}]:{self._client_addr[1]:<5}"
+        self._remote_name = f"[{self._remote_addr[0]}]:{self._remote_addr[1]:<5}"
 
-        self._remote_sock = socket.socket(self._family, socket.SOCK_STREAM)
-        self._tune_sock(self._client_sock)
-        self._tune_sock(self._remote_sock, tfo=True)
+        self._remote_sock = socket.socket(family, socket.SOCK_STREAM)
+        self._tune(self._client_sock)
+        self._tune(self._remote_sock, tfo=True)
 
     def run(self) -> None:
-        label = f"{self._client_name:>50} {DIR_UP} {self._remote_name:>50}"
+        label = f"{self._client_name:>48} {DIR_UP} {self._remote_name:>48}"
 
         with self._client_sock, self._remote_sock:
             if not self._connect():
                 return
-            self._log(logging.INFO, "Connected", label)
 
-            size = len(self._buffer) // 2
-            u_buf = self._buffer[:size]
-            d_buf = self._buffer[size:]
+            center = len(self._buffer) // 2
+            u_buf = self._buffer[:center]
+            d_buf = self._buffer[center:]
+
             group = Group()
-            group.spawn(self._pipe, self._client_sock, self._remote_sock, u_buf, DIR_UP)
-            group.spawn(self._pipe, self._remote_sock, self._client_sock, d_buf, DIR_DOWN)
+            group.spawn(self._relay, self._client_sock, self._remote_sock, u_buf, DIR_UP)
+            group.spawn(self._relay, self._remote_sock, self._client_sock, d_buf, DIR_DOWN)
+
+            self._log(logging.INFO, "Session started", label)
             group.join()
-
-            for sock in self._client_sock, self._remote_sock:
-                try:
-                    sock.shutdown(socket.SHUT_RDWR)
-                except:
-                    pass
-
-        self._log(logging.INFO, "Closed", label)
+            self._log(logging.INFO, "Session finished", label)
 
     def _connect(self) -> bool:
-        label = f"{self._client_name:>50} {DIR_UP} {self._remote_name:>50}"
+        label = f"{self._client_name:>48} {DIR_UP} {self._remote_name:>48}"
         connected = False
 
         try:
@@ -67,55 +68,59 @@ class Session:
             except TimeoutError:
                 pass
             try:
-                wait_write(self._remote_sock.fileno())
+                wait_write(self._remote_sock.fileno(), self._timeout)
                 sent = self._remote_sock.sendto(self._buffer[:recv], socket.MSG_FASTOPEN, self._remote_addr)
             except BlockingIOError:
                 pass
             if sent < recv:
-                wait_write(self._remote_sock.fileno())
+                wait_write(self._remote_sock.fileno(), self._timeout)
                 self._remote_sock.sendall(self._buffer[sent:recv])
             if sent:
-                self._log(logging.INFO, "TFO success", label)
+                self._log(logging.INFO, f"TFO sent {sent} bytes", label)
 
             connected = True
         except Exception as e:
-            self._log(logging.ERROR, f"Connect failed: {e}", label)
+            self._log(logging.ERROR, f"Connection error: {e}", label)
 
         return connected
 
-    def _pipe(self, src_sock: socket.socket, dst_sock: socket.socket, buffer: memoryview, direction: str) -> None:
-        label = f"{self._client_name:>50} {direction} {self._remote_name:>50}"
-        src_fd = src_sock.fileno()
-        dst_fd = dst_sock.fileno()
-        idle_timeout = self._idle_timeout
+    def _relay(self, src: socket.socket, dst: socket.socket, buffer: memoryview, dir: str) -> None:
+        label = f"{self._client_name:>48} {dir} {self._remote_name:>48}"
+        timeout = self._timeout
 
+        src_fd = src.fileno()
+        dst_fd = dst.fileno()
+
+        _recv = src.recv_into
+        _send = dst.send
         _wait_read = wait_read
         _wait_write = wait_write
-        _recv = src_sock.recv_into
-        _send = dst_sock.send
 
-        size = len(buffer) // 2
-        r_buf = buffer[:size]
-        s_buf = buffer[size:]
+        center = len(buffer) // 2
+        r_buf = buffer[:center]
+        s_buf = buffer[center:]
         r_len = 0
         s_len = 0
         eof = False
 
+        self._log(logging.DEBUG, f"Relay started", label)
         try:
             while not eof:
-                _wait_read(src_fd, idle_timeout)
+                _wait_read(src_fd, timeout)
                 if not (r_len := _recv(r_buf)):
                     break
 
                 while r_len:
                     r_buf, r_len, s_buf, s_len = s_buf, 0, r_buf, r_len
-                    sent = 0
+                    s_pos = 0
 
-                    while sent < s_len:
-                        _wait_write(dst_fd, idle_timeout)
-                        sent += _send(s_buf[sent:s_len])
+                    while s_pos < s_len:
+                        _wait_write(dst_fd, timeout)
+                        if not (sent := _send(s_buf[s_pos:s_len])):
+                            raise BrokenPipeError
+                        s_pos += sent
 
-                        if not eof and r_len < size:
+                        if not eof and r_len < center:
                             try:
                                 _wait_read(src_fd, 0)
                                 if not (recv := _recv(r_buf[r_len:])):
@@ -126,28 +131,23 @@ class Session:
                                 pass
 
         except Exception as e:
-            self._log(logging.ERROR, f"Pipe failed: {e}", label)
+            self._log(logging.ERROR, f"Relay error: {e}", label)
         finally:
             try:
-                dst_sock.shutdown(socket.SHUT_WR)
+                dst.shutdown(socket.SHUT_WR)
             except:
                 pass
+        self._log(logging.DEBUG, f"Relay finished", label)
 
-    def _tune_sock(self, sock: socket.socket, tfo: bool = False) -> None:
+    def _tune(self, sock: socket.socket, tfo: bool = False) -> None:
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
         sock.setsockopt(socket.SOL_TCP, socket.TCP_NODELAY, 1)
         sock.setsockopt(socket.SOL_TCP, socket.TCP_QUICKACK, 1)
         if tfo:
             sock.setsockopt(socket.SOL_TCP, socket.TCP_FASTOPEN_CONNECT, 1)
 
-    def _log(self, level: int, subject: str, message: str = "") -> None:
-        _logger = self._logger
-
-        def _print():
-            gevent.idle()
-            msg = f"{subject:60} |"
-            if message:
-                msg += f" {message:104} |"
-            _logger.log(level, msg)
-
-        gevent.spawn(_print)
+    def _log(self, level: int, subject: str, msg: str = "") -> None:
+        output = f"{subject:60} |"
+        if msg:
+            output += f" {msg:100} |"
+        self._logger.log(level, output)
