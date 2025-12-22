@@ -6,220 +6,146 @@ from gevent.pool import Group
 monkey.patch_all()
 
 import logging
-import struct
-import ipaddress
-import time
-from functools import cache
-
-SO_ORIGINAL_DST = 80
-V4_LEN = 16
-V4_FMT = "!2xH4s"
-V6_LEN = 28
-V6_FMT = "!2xH4x16s"
 
 DIR_UP = "->"
 DIR_DOWN = "<-"
 
-DEFAULT_TIMEOUT = 86400
-
-
-def get_original_dst(sock: socket.socket, family: socket.AddressFamily) -> tuple[str, int]:
-    ip: str
-    port: int
-
-    match family:
-        case socket.AF_INET:
-            dst = sock.getsockopt(socket.SOL_IP, SO_ORIGINAL_DST, V4_LEN)
-            port, raw_ip = struct.unpack_from(V4_FMT, dst)
-            ip = socket.inet_ntop(socket.AF_INET, raw_ip)
-        case socket.AF_INET6:
-            dst = sock.getsockopt(socket.IPPROTO_IPV6, SO_ORIGINAL_DST, V6_LEN)
-            port, raw_ip = struct.unpack_from(V6_FMT, dst)
-            ip = socket.inet_ntop(socket.AF_INET6, raw_ip)
-        case _:
-            raise RuntimeError(f"Unsupported address family: {family}")
-
-    return ip, port
-
-
-@cache
-def ipv4_mapped(addr: str) -> bool:
-    return ipaddress.IPv6Address(addr).ipv4_mapped is not None
-
 
 class Session:
-    def __init__(self, client_sock: socket.socket, client_addr: tuple[str, int], buffer: memoryview, idle_timeout: int = DEFAULT_TIMEOUT):
+    def __init__(self, client_sock: socket.socket, client_addr: tuple[str, int], remote_addr: tuple[str, int], family: socket.AddressFamily, buffer: memoryview, idle_timeout: int):
         self._logger = logging.getLogger(f"{self.__class__.__name__}-{hex(id(self))}")
         self._client_sock = client_sock
         self._client_addr = client_addr
+        self._remote_addr = remote_addr
+        self._family = family
         self._buffer = buffer
         self._idle_timeout = idle_timeout
 
-        self._client_name = f"[{self._client_addr[0]}]:{self._client_addr[1]:<5}"
-        self._family = socket.AF_INET if ipv4_mapped(self._client_addr[0]) else socket.AF_INET6
+        self._client_name = f"[{client_addr[0]}]:{client_addr[1]:<5}"
+        self._remote_name = f"[{remote_addr[0]}]:{remote_addr[1]:<5}"
 
-        sock_addr = self._client_sock.getsockname()
-        self._remote_addr = get_original_dst(self._client_sock, self._family)
-        if self._remote_addr[0] == sock_addr[0] and self._remote_addr[1] == sock_addr[1]:
-            raise ConnectionRefusedError("Direct connection not allowed")
-
-        self._remote_name = f"[{self._remote_addr[0]}]:{self._remote_addr[1]:<5}"
         self._remote_sock = socket.socket(self._family, socket.SOCK_STREAM)
-
-        self._setsockopt(self._client_sock)
-        self._setsockopt(self._remote_sock, tfo=True)
+        self._tune_sock(self._client_sock)
+        self._tune_sock(self._remote_sock, tfo=True)
 
     def run(self) -> None:
-        self._log(logging.DEBUG, "Session started", f"{self._client_name:>50} {DIR_UP} {self._remote_name:>50}")
-        started_at = time.perf_counter()
+        label = f"{self._client_name:>50} {DIR_UP} {self._remote_name:>50}"
 
         with self._client_sock, self._remote_sock:
             if not self._connect():
                 return
+            self._log(logging.INFO, "Connected", label)
 
-            connect_time = time.perf_counter() - started_at
-            self._log(logging.INFO, f"Session established in {connect_time * 1000:.1f}ms", f"{self._client_name:>50} {DIR_UP} {self._remote_name:>50}")
-            self._run()
+            size = len(self._buffer) // 2
+            u_buf = self._buffer[:size]
+            d_buf = self._buffer[size:]
+            group = Group()
+            group.spawn(self._pipe, self._client_sock, self._remote_sock, u_buf, DIR_UP)
+            group.spawn(self._pipe, self._remote_sock, self._client_sock, d_buf, DIR_DOWN)
+            group.join()
 
-        session_time = time.perf_counter() - started_at
-        self._log(logging.INFO, f"Session ended in {session_time:.1f}s", f"{self._client_name:>50} {DIR_UP} {self._remote_name:>50}")
+            for sock in self._client_sock, self._remote_sock:
+                try:
+                    sock.shutdown(socket.SHUT_RDWR)
+                except:
+                    pass
+
+        self._log(logging.INFO, "Closed", label)
 
     def _connect(self) -> bool:
         label = f"{self._client_name:>50} {DIR_UP} {self._remote_name:>50}"
-        success = False
-        recv = 0
-        sent = 0
+        connected = False
 
         try:
             self._remote_sock.connect(self._remote_addr)
 
+            recv = 0
+            sent = 0
             try:
                 wait_read(self._client_sock.fileno(), 0)
                 recv = self._client_sock.recv_into(self._buffer)
             except TimeoutError:
                 pass
-
             try:
                 wait_write(self._remote_sock.fileno())
                 sent = self._remote_sock.sendto(self._buffer[:recv], socket.MSG_FASTOPEN, self._remote_addr)
             except BlockingIOError:
                 pass
-
             if sent < recv:
                 wait_write(self._remote_sock.fileno())
                 self._remote_sock.sendall(self._buffer[sent:recv])
-
-            success = True
             if sent:
                 self._log(logging.INFO, "TFO success", label)
 
-        except ConnectionRefusedError:
-            self._log(logging.ERROR, "Connection refused", label)
-        except TimeoutError:
-            self._log(logging.ERROR, "Connection timed out", label)
+            connected = True
         except Exception as e:
-            self._log(logging.ERROR, f"Connection failed: {e}", label)
+            self._log(logging.ERROR, f"Connect failed: {e}", label)
 
-        return success
+        return connected
 
-    def _run(self) -> None:
-        size = len(self._buffer) // 2
-        ubuf = self._buffer[:size]
-        dbuf = self._buffer[size:]
-        group = Group()
+    def _pipe(self, src_sock: socket.socket, dst_sock: socket.socket, buffer: memoryview, direction: str) -> None:
+        label = f"{self._client_name:>50} {direction} {self._remote_name:>50}"
+        src_fd = src_sock.fileno()
+        dst_fd = dst_sock.fileno()
+        idle_timeout = self._idle_timeout
 
-        group.spawn(self._pipe, self._client_sock, self._remote_sock, ubuf, DIR_UP)
-        group.spawn(self._pipe, self._remote_sock, self._client_sock, dbuf, DIR_DOWN)
-        group.join()
-
-        try:
-            self._remote_sock.shutdown(socket.SHUT_RDWR)
-        except:
-            pass
-        try:
-            self._client_sock.shutdown(socket.SHUT_RDWR)
-        except:
-            pass
-
-    def _pipe(self, src: socket.socket, dst: socket.socket, buf: memoryview, dir: str) -> None:
-        _label = f"{self._client_name:>50} {dir} {self._remote_name:>50}"
-        _idle_timeout = self._idle_timeout
-
-        _src_fd = src.fileno()
-        _dst_fd = dst.fileno()
         _wait_read = wait_read
         _wait_write = wait_write
-        _recv_into = src.recv_into
-        _send = dst.send
-        _set_opt = dst.setsockopt
+        _recv = src_sock.recv_into
+        _send = dst_sock.send
 
-        SOL_TCP = socket.SOL_TCP
-        TCP_CORK = socket.TCP_CORK
-
-        size = len(buf) // 2
-        r_buf = buf[:size]
-        s_buf = buf[size:]
+        size = len(buffer) // 2
+        r_buf = buffer[:size]
+        s_buf = buffer[size:]
         r_len = 0
         s_len = 0
         eof = False
 
-        self._log(logging.DEBUG, "Pipe started", _label)
-
         try:
-            # main loop
             while not eof:
-                _wait_read(_src_fd, _idle_timeout)
-                if not (r_len := _recv_into(r_buf)):
+                _wait_read(src_fd, idle_timeout)
+                if not (r_len := _recv(r_buf)):
                     break
 
-                # swap loop
-                _set_opt(SOL_TCP, TCP_CORK, 1)
                 while r_len:
                     r_buf, r_len, s_buf, s_len = s_buf, 0, r_buf, r_len
-                    progress = 0
+                    sent = 0
 
-                    # send loop
-                    while progress < s_len:
-                        _wait_write(_dst_fd, _idle_timeout)
-                        progress += _send(s_buf[progress:s_len])
+                    while sent < s_len:
+                        _wait_write(dst_fd, idle_timeout)
+                        sent += _send(s_buf[sent:s_len])
 
                         if not eof and r_len < size:
                             try:
-                                _wait_read(_src_fd, 0)
-                                if not (recv := _recv_into(r_buf[r_len:])):
+                                _wait_read(src_fd, 0)
+                                if not (recv := _recv(r_buf[r_len:])):
                                     eof = True
                                 else:
                                     r_len += recv
                             except TimeoutError:
                                 pass
-                _set_opt(SOL_TCP, TCP_CORK, 0)
 
-        except ConnectionResetError:
-            self._log(logging.ERROR, "Connection reset", _label)
-        except TimeoutError:
-            self._log(logging.ERROR, "Connection timed out", _label)
-        except BrokenPipeError:
-            self._log(logging.ERROR, "Broken pipe", _label)
         except Exception as e:
-            self._log(logging.ERROR, f"Pipe failed: {e}", _label)
+            self._log(logging.ERROR, f"Pipe failed: {e}", label)
         finally:
             try:
-                _set_opt(SOL_TCP, TCP_CORK, 0)
-                dst.shutdown(socket.SHUT_WR)
+                dst_sock.shutdown(socket.SHUT_WR)
             except:
                 pass
 
-        self._log(logging.DEBUG, "Pipe ended", _label)
-
-    def _setsockopt(self, sock: socket.socket, tfo: bool = False) -> None:
+    def _tune_sock(self, sock: socket.socket, tfo: bool = False) -> None:
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
         sock.setsockopt(socket.SOL_TCP, socket.TCP_NODELAY, 1)
         sock.setsockopt(socket.SOL_TCP, socket.TCP_QUICKACK, 1)
         if tfo:
             sock.setsockopt(socket.SOL_TCP, socket.TCP_FASTOPEN_CONNECT, 1)
 
-    def _log(self, level: int, subject: str, msg: str = "") -> None:
-        txt = f"{subject:60}"
-        if msg:
-            txt += f" | {msg} |"
-        gevent.spawn(self._logger.log, level, txt)
+    def _log(self, level: int, subject: str, message: str = "") -> None:
+        def _print():
+            gevent.idle()
+            msg = f"{subject:60} |"
+            if message:
+                msg += f" {message:104} |"
+            self._logger.log(level, msg)
+
+        gevent.spawn(_print)
