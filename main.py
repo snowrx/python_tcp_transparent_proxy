@@ -52,5 +52,6 @@ if __name__ == "__main__":
         LOG_LEVEL = logging.DEBUG
         gc.set_debug(gc.DEBUG_STATS)
     logging.basicConfig(level=LOG_LEVEL, format=LOG_FORMAT)
+    gc.set_threshold(10000)
 
     main()
