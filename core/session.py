@@ -141,11 +141,13 @@ class Session:
             sock.setsockopt(socket.SOL_TCP, socket.TCP_FASTOPEN_CONNECT, 1)
 
     def _log(self, level: int, subject: str, message: str = "") -> None:
+        _logger = self._logger
+
         def _print():
             gevent.idle()
             msg = f"{subject:60} |"
             if message:
                 msg += f" {message:104} |"
-            self._logger.log(level, msg)
+            _logger.log(level, msg)
 
         gevent.spawn(_print)
