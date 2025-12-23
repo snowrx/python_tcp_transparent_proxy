@@ -14,17 +14,16 @@ def get_original_dst(sock: socket.socket, family: socket.AddressFamily) -> tuple
     ip: str
     port: int
 
-    match family:
-        case socket.AF_INET:
-            dst = sock.getsockopt(socket.SOL_IP, SO_ORIGINAL_DST, V4_LEN)
-            port, raw_ip = struct.unpack_from(V4_FMT, dst)
-            ip = socket.inet_ntop(socket.AF_INET, raw_ip)
-        case socket.AF_INET6:
-            dst = sock.getsockopt(socket.IPPROTO_IPV6, SO_ORIGINAL_DST, V6_LEN)
-            port, raw_ip = struct.unpack_from(V6_FMT, dst)
-            ip = socket.inet_ntop(socket.AF_INET6, raw_ip)
-        case _:
-            raise RuntimeError(f"Unsupported address family: {family}")
+    if family == socket.AF_INET:
+        dst = sock.getsockopt(socket.SOL_IP, SO_ORIGINAL_DST, V4_LEN)
+        port, raw_ip = struct.unpack_from(V4_FMT, dst)
+        ip = socket.inet_ntop(socket.AF_INET, raw_ip)
+    elif family == socket.AF_INET6:
+        dst = sock.getsockopt(socket.IPPROTO_IPV6, SO_ORIGINAL_DST, V6_LEN)
+        port, raw_ip = struct.unpack_from(V6_FMT, dst)
+        ip = socket.inet_ntop(socket.AF_INET6, raw_ip)
+    else:
+        raise RuntimeError(f"Unsupported address family: {family}")
 
     return ip, port
 
