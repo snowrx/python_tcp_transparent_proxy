@@ -1,5 +1,6 @@
 from gevent import socket
 from gevent.socket import wait_read, wait_write
+from gevent.select import select
 from gevent.pool import Group
 
 import logging
@@ -91,50 +92,57 @@ class Session:
         label = f"{self._client_name:>48} {dir} {self._remote_name:>48}"
         timeout = self._timeout
 
-        src_fd = src.fileno()
-        dst_fd = dst.fileno()
-
         _recv = src.recv_into
         _send = dst.send
-        _wait_read = wait_read
-        _wait_write = wait_write
+        _select = select
 
         center = len(buffer) // 2
-        r_buf = buffer[:center]
-        s_buf = buffer[center:]
-        r_len = 0
-        s_len = 0
+        rbuf = buffer[:center]
+        wbuf = buffer[center:]
+        rlen = 0
+        wview = wbuf[:rlen]
         eof = False
 
         self._log(logging.DEBUG, f"Relay started", label)
         try:
-            while not eof:
-                _wait_read(src_fd, timeout)
-                if not (r_len := _recv(r_buf)):
-                    break
+            while True:
+                if not wview:
+                    if rlen:
+                        rbuf, wbuf = wbuf, rbuf
+                        wview = wbuf[:rlen]
+                        rlen = 0
+                    elif eof:
+                        break
 
-                while r_len:
-                    r_buf, r_len, s_buf, s_len = s_buf, 0, r_buf, r_len
-                    s_pos = 0
+                reads = [src] if (not eof and rlen < center) else []
+                writes = [dst] if wview else []
 
-                    while s_pos < s_len:
-                        _wait_write(dst_fd, timeout)
-                        if not (sent := _send(s_buf[s_pos:s_len])):
+                if reads or writes:
+                    ready_r, ready_w, _ = _select(reads, writes, [], timeout)
+
+                    if not ready_r and not ready_w:
+                        raise TimeoutError
+
+                    if ready_r:
+                        if not (recv := _recv(rbuf[rlen:])):
+                            eof = True
+                        else:
+                            rlen += recv
+
+                    if ready_w:
+                        if not (sent := _send(wview)):
                             raise BrokenPipeError
-                        s_pos += sent
-
-                        if not eof and r_len < center:
-                            try:
-                                _wait_read(src_fd, 0)
-                                if not (recv := _recv(r_buf[r_len:])):
-                                    eof = True
-                                else:
-                                    r_len += recv
-                            except (TimeoutError, socket.timeout):
-                                pass
+                        else:
+                            wview = wview[sent:]
+                else:
+                    self._log(logging.WARNING, "No tasks", label)
 
         except Exception as e:
             self._log(logging.ERROR, f"Relay error: {e}", label)
+            try:
+                dst.close()
+            except:
+                pass
         finally:
             try:
                 dst.shutdown(socket.SHUT_WR)
