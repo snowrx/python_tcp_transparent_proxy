@@ -131,7 +131,7 @@ class Session:
                 if not w_view:
                     if r_len:
                         r_buf, w_buf = w_buf, r_buf
-                        w_view = r_buf[:r_len]
+                        w_view = w_buf[:r_len]
                         r_len = 0
                     elif eof:
                         break
