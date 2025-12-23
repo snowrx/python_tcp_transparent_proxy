@@ -92,63 +92,62 @@ class Session:
         label = f"{self._client_name:>48} {dir} {self._remote_name:>48}"
         timeout = self._timeout
 
+        _select = select
         _recv = src.recv_into
         _send = dst.send
-        _select = select
 
         center = len(buffer) // 2
-        rbuf = buffer[:center]
-        wbuf = buffer[center:]
-        rlen = 0
-        wview = wbuf[:rlen]
+        r_buf = buffer[:center]
+        w_buf = buffer[center:]
+        r_len = 0
+        w_view = w_buf[:r_len]
         eof = False
 
-        self._log(logging.DEBUG, f"Relay started", label)
+        self._log(logging.DEBUG, "Relay started", label)
         try:
             while True:
-                if not wview:
-                    if rlen:
-                        rbuf, wbuf = wbuf, rbuf
-                        wview = wbuf[:rlen]
-                        rlen = 0
+                rlist = [src] if not eof and r_len < center else []
+                wlist = [dst] if w_view else []
+
+                if rlist or wlist:
+                    r, w, _ = _select(rlist, wlist, [], timeout)
+                    if not (r or w):
+                        raise TimeoutError
+
+                    if r and src in r:
+                        if recv := _recv(r_buf[r_len:]):
+                            r_len += recv
+                        else:
+                            eof = True
+
+                    if w and dst in w:
+                        if sent := _send(w_view):
+                            w_view = w_view[sent:]
+                        else:
+                            raise BrokenPipeError
+                else:
+                    self._log(logging.WARNING, "can't do anything", label)
+
+                if not w_view:
+                    if r_len:
+                        r_buf, w_buf = w_buf, r_buf
+                        w_view = r_buf[:r_len]
+                        r_len = 0
                     elif eof:
                         break
 
-                reads = [src] if (not eof and rlen < center) else []
-                writes = [dst] if wview else []
-
-                if reads or writes:
-                    ready_r, ready_w, _ = _select(reads, writes, [], timeout)
-
-                    if not ready_r and not ready_w:
-                        raise TimeoutError
-
-                    if ready_r:
-                        if not (recv := _recv(rbuf[rlen:])):
-                            eof = True
-                        else:
-                            rlen += recv
-
-                    if ready_w:
-                        if not (sent := _send(wview)):
-                            raise BrokenPipeError
-                        else:
-                            wview = wview[sent:]
-                else:
-                    self._log(logging.WARNING, "No tasks", label)
-
         except Exception as e:
-            self._log(logging.ERROR, f"Relay error: {e}", label)
             try:
                 dst.close()
             except:
                 pass
+            self._log(logging.ERROR, f"Relay error: {e}", label)
         finally:
             try:
                 dst.shutdown(socket.SHUT_WR)
             except:
                 pass
-        self._log(logging.DEBUG, f"Relay finished", label)
+        self._log(logging.DEBUG, "Relay finished", label)
 
     def _tune(self, sock: socket.socket, tfo: bool = False) -> None:
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
