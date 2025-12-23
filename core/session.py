@@ -7,6 +7,9 @@ import logging
 DIR_UP = "->"
 DIR_DOWN = "<-"
 
+TCP_FASTOPEN_CONNECT = getattr(socket, "TCP_FASTOPEN_CONNECT", 30)
+MSG_FASTOPEN = getattr(socket, "MSG_FASTOPEN", 0x20000000)
+
 
 class Session:
     def __init__(
@@ -65,11 +68,11 @@ class Session:
             try:
                 wait_read(self._client_sock.fileno(), 0)
                 recv = self._client_sock.recv_into(self._buffer)
-            except TimeoutError:
+            except (TimeoutError, socket.timeout):
                 pass
             try:
                 wait_write(self._remote_sock.fileno(), self._timeout)
-                sent = self._remote_sock.sendto(self._buffer[:recv], socket.MSG_FASTOPEN, self._remote_addr)
+                sent = self._remote_sock.sendto(self._buffer[:recv], MSG_FASTOPEN, self._remote_addr)
             except BlockingIOError:
                 pass
             if sent < recv:
@@ -127,7 +130,7 @@ class Session:
                                     eof = True
                                 else:
                                     r_len += recv
-                            except TimeoutError:
+                            except (TimeoutError, socket.timeout):
                                 pass
 
         except Exception as e:
@@ -144,7 +147,7 @@ class Session:
         sock.setsockopt(socket.SOL_TCP, socket.TCP_NODELAY, 1)
         sock.setsockopt(socket.SOL_TCP, socket.TCP_QUICKACK, 1)
         if tfo:
-            sock.setsockopt(socket.SOL_TCP, socket.TCP_FASTOPEN_CONNECT, 1)
+            sock.setsockopt(socket.SOL_TCP, TCP_FASTOPEN_CONNECT, 1)
 
     def _log(self, level: int, subject: str, msg: str = "") -> None:
         output = f"{subject:60} |"

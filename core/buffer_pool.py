@@ -4,6 +4,8 @@ from gevent.lock import BoundedSemaphore
 import logging
 from contextlib import contextmanager
 
+NULL = -1
+
 
 class BufferPool:
     def __init__(self, page_size: int, page_count: int):
@@ -26,19 +28,19 @@ class BufferPool:
         finally:
             self._release(page_id, buffer)
 
-    def _acquire(self) -> tuple[int | None, memoryview]:
+    def _acquire(self) -> tuple[int, memoryview]:
         with self._lock:
             if self._free_pages.empty():
                 self._overcommit += 1
                 self._logger.warning(f"overcommit: {self._overcommit}")
-                return None, memoryview(bytearray(self._page_size))
+                return NULL, memoryview(bytearray(self._page_size))
             else:
                 page_id = self._free_pages.get()
                 return page_id, self._memory[page_id * self._page_size : (page_id + 1) * self._page_size]
 
-    def _release(self, page_id: int | None, buffer: memoryview) -> None:
+    def _release(self, page_id: int, buffer: memoryview) -> None:
         with self._lock:
-            if page_id is None:
+            if page_id == NULL:
                 buffer.release()
                 self._overcommit -= 1
                 self._logger.debug(f"overcommit: {self._overcommit}")
