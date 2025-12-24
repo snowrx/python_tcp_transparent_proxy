@@ -21,7 +21,7 @@ BACKLOG = 100
 BUFFER_SIZE = 1 << 20
 POOL_SIZE = 100
 
-WORKER_COUNT = os.cpu_count() or 1
+WORKER_COUNT = 4
 
 
 def main() -> None:
