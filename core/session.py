@@ -8,8 +8,9 @@ import logging
 DIR_UP = "->"
 DIR_DOWN = "<-"
 
-TCP_FASTOPEN_CONNECT = getattr(socket, "TCP_FASTOPEN_CONNECT", 30)
-MSG_FASTOPEN = getattr(socket, "MSG_FASTOPEN", 0x20000000)
+TCP_FASTOPEN_CONNECT = 30
+MSG_FASTOPEN = 0x20000000
+TFO_RECV_TIMEOUT = 0.01
 
 
 class Session:
@@ -67,20 +68,22 @@ class Session:
             recv = 0
             sent = 0
             try:
-                wait_read(self._client_sock.fileno(), 0)
-                recv = self._client_sock.recv_into(self._buffer)
+                wait_read(self._client_sock.fileno(), TFO_RECV_TIMEOUT)
+                if recv := self._client_sock.recv_into(self._buffer):
+                    self._log(logging.DEBUG, f"TFO recv {recv} bytes", label)
             except (TimeoutError, socket.timeout):
-                pass
+                self._log(logging.DEBUG, "TFO recv timeout", label)
             try:
                 wait_write(self._remote_sock.fileno(), self._timeout)
-                sent = self._remote_sock.sendto(self._buffer[:recv], MSG_FASTOPEN, self._remote_addr)
+                if sent := self._remote_sock.sendto(self._buffer[:recv], MSG_FASTOPEN, self._remote_addr):
+                    self._log(logging.INFO, f"TFO sent {sent} bytes", label)
             except BlockingIOError:
-                pass
+                if recv:
+                    self._log(logging.INFO, "TFO failed", label)
             if sent < recv:
                 wait_write(self._remote_sock.fileno(), self._timeout)
                 self._remote_sock.sendall(self._buffer[sent:recv])
-            if sent:
-                self._log(logging.INFO, f"TFO sent {sent} bytes", label)
+                self._log(logging.DEBUG, f"Sent remaining {recv - sent} bytes", label)
 
             connected = True
         except Exception as e:
