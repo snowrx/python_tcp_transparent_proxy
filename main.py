@@ -4,6 +4,8 @@ monkey.patch_all()
 
 import logging
 import os
+import gc
+from concurrent.futures import ProcessPoolExecutor
 
 from core.buffer_pool import BufferPool
 from core.server import Server
@@ -16,8 +18,10 @@ LOG_FORMAT = "%(name)-30s | %(levelname)-10s | %(message)s"
 PORT = 8081
 TIMEOUT = 7200
 
-BUFFER_SIZE = 1 << 20
-POOL_SIZE = 1 << 8
+BUFFER_SIZE = 63 << 12
+POOL_SIZE = 100
+
+WORKER_COUNT = os.cpu_count() or 1
 
 
 def main() -> None:
@@ -40,6 +44,12 @@ def main() -> None:
 if __name__ == "__main__":
     if os.getenv("DEBUG"):
         LOG_LEVEL = logging.DEBUG
+        gc.set_debug(gc.DEBUG_STATS)
     logging.basicConfig(level=LOG_LEVEL, format=LOG_FORMAT)
 
-    main()
+    if WORKER_COUNT > 1:
+        with ProcessPoolExecutor(WORKER_COUNT) as executor:
+            for _ in range(WORKER_COUNT):
+                executor.submit(main)
+    else:
+        main()
