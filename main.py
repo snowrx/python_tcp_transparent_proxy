@@ -4,7 +4,6 @@ monkey.patch_all()
 
 import logging
 import os
-import gc
 from concurrent.futures import ProcessPoolExecutor
 
 from core.buffer_pool import BufferPool
@@ -44,7 +43,6 @@ def main() -> None:
 if __name__ == "__main__":
     if os.getenv("DEBUG"):
         LOG_LEVEL = logging.DEBUG
-        gc.set_debug(gc.DEBUG_STATS)
     logging.basicConfig(level=LOG_LEVEL, format=LOG_FORMAT)
 
     if WORKER_COUNT > 1:
