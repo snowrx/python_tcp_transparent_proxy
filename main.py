@@ -18,7 +18,7 @@ TIMEOUT = 7200
 BUFFER_SIZE = 63 << 12
 POOL_SIZE = 100
 
-WORKER_COUNT = 1
+WORKER_COUNT = 0
 
 
 def main() -> None:
