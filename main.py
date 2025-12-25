@@ -1,10 +1,8 @@
-from gevent import socket, monkey
-
-monkey.patch_all()
-
 import logging
 import os
 from concurrent.futures import ProcessPoolExecutor
+
+from gevent import socket
 
 from core.buffer_pool import BufferPool
 from core.server import Server
@@ -36,7 +34,12 @@ def main() -> None:
                 return
 
             with buffer_pool.acquire() as buffer:
-                Session(client_sock, client_addr, remote_addr, family, buffer, TIMEOUT).run()
+                Session(
+                    client_sock, client_addr, remote_addr, family, buffer, TIMEOUT
+                ).run()
+                Session(
+                    client_sock, client_addr, remote_addr, family, buffer, TIMEOUT
+                ).run()
 
     Server(PORT, handler, BACKLOG).serve_forever()
 
