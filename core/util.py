@@ -1,7 +1,8 @@
-from gevent import socket
-import struct
 import ipaddress
+import struct
 from functools import cache
+
+from gevent import socket
 
 SO_ORIGINAL_DST = 80
 V4_LEN = 16
@@ -10,7 +11,9 @@ V6_LEN = 28
 V6_FMT = "!2xH4x16s"
 
 
-def get_original_dst(sock: socket.socket, family: socket.AddressFamily) -> tuple[str, int]:
+def get_original_dst(
+    sock: socket.socket, family: socket.AddressFamily
+) -> tuple[str, int]:
     ip: str
     port: int
 

@@ -1,8 +1,8 @@
-from gevent.queue import SimpleQueue
-from gevent.lock import BoundedSemaphore
-
 import logging
 from contextlib import contextmanager
+
+from gevent.lock import BoundedSemaphore
+from gevent.queue import SimpleQueue
 
 NULL = -1
 
@@ -36,7 +36,9 @@ class BufferPool:
                 return NULL, memoryview(bytearray(self._page_size))
             else:
                 page_id = self._free_pages.get()
-                return page_id, self._memory[page_id * self._page_size : (page_id + 1) * self._page_size]
+                head = page_id * self._page_size
+                tail = head + self._page_size
+                return page_id, self._memory[head:tail]
 
     def _release(self, page_id: int, buffer: memoryview) -> None:
         with self._lock:

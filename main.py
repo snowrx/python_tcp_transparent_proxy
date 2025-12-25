@@ -14,12 +14,11 @@ LOG_FORMAT = "%(name)-30s | %(levelname)-10s | %(message)s"
 
 PORT = 8081
 TIMEOUT = 7200
-BACKLOG = 100
 
 BUFFER_SIZE = 63 << 12
 POOL_SIZE = 100
 
-WORKER_COUNT = 4
+WORKER_COUNT = 1
 
 
 def main() -> None:
@@ -37,11 +36,8 @@ def main() -> None:
                 Session(
                     client_sock, client_addr, remote_addr, family, buffer, TIMEOUT
                 ).run()
-                Session(
-                    client_sock, client_addr, remote_addr, family, buffer, TIMEOUT
-                ).run()
 
-    Server(PORT, handler, BACKLOG).serve_forever()
+    Server(PORT, handler).serve_forever()
 
 
 if __name__ == "__main__":
