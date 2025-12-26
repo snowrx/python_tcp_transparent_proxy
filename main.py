@@ -1,8 +1,8 @@
 import logging
 import os
+from concurrent.futures import ProcessPoolExecutor
 
 from gevent import socket
-from gevent.threadpool import ThreadPool
 
 from core.buffer_pool import BufferPool
 from core.server import Server
@@ -18,7 +18,7 @@ TIMEOUT = 7200
 BUFFER_SIZE = 1 << 20
 POOL_SIZE = 100
 
-THREAD_COUNT = 4
+WORKER_COUNT = 4
 
 
 def main() -> None:
@@ -45,7 +45,6 @@ if __name__ == "__main__":
         LOG_LEVEL = logging.DEBUG
     logging.basicConfig(level=LOG_LEVEL, format=LOG_FORMAT)
 
-    thread_pool = ThreadPool(THREAD_COUNT)
-    for _ in range(THREAD_COUNT):
-        thread_pool.spawn(main)
-    thread_pool.join()
+    with ProcessPoolExecutor(WORKER_COUNT) as executor:
+        for _ in range(WORKER_COUNT):
+            executor.submit(main)
