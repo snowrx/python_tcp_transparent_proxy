@@ -18,7 +18,7 @@ TIMEOUT = 7200
 BUFFER_SIZE = 1 << 20
 POOL_SIZE = 100
 
-WORKER_COUNT = 4
+WORKER_COUNT = 1
 
 
 def main() -> None:
@@ -45,6 +45,9 @@ if __name__ == "__main__":
         LOG_LEVEL = logging.DEBUG
     logging.basicConfig(level=LOG_LEVEL, format=LOG_FORMAT)
 
-    with ProcessPoolExecutor(WORKER_COUNT) as executor:
-        for _ in range(WORKER_COUNT):
-            executor.submit(main)
+    if WORKER_COUNT > 1:
+        with ProcessPoolExecutor(WORKER_COUNT) as executor:
+            for _ in range(WORKER_COUNT):
+                executor.submit(main)
+    else:
+        main()
