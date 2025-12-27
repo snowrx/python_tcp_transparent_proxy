@@ -33,9 +33,7 @@ def main() -> None:
                 return
 
             with buffer_pool.acquire() as buffer:
-                Session(
-                    client_sock, client_addr, remote_addr, family, buffer, TIMEOUT
-                ).run()
+                Session(client_sock, client_addr, remote_addr, family, buffer, TIMEOUT).run()
 
     Server(PORT, handler).serve_forever()
 

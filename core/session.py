@@ -51,12 +51,8 @@ class Session:
             d_buf = self._buffer[center:]
 
             group = Group()
-            group.spawn(
-                self._relay, self._client_sock, self._remote_sock, u_buf, DIR_UP
-            )
-            group.spawn(
-                self._relay, self._remote_sock, self._client_sock, d_buf, DIR_DOWN
-            )
+            group.spawn(self._relay, self._client_sock, self._remote_sock, u_buf, DIR_UP)
+            group.spawn(self._relay, self._remote_sock, self._client_sock, d_buf, DIR_DOWN)
 
             self._log(logging.INFO, "Session started", label)
             group.join()
@@ -79,9 +75,7 @@ class Session:
                 self._log(logging.DEBUG, "TFO recv timeout", label)
             try:
                 wait_write(self._remote_sock.fileno(), self._timeout)
-                if sent := self._remote_sock.sendto(
-                    self._buffer[:recv], MSG_FASTOPEN, self._remote_addr
-                ):
+                if sent := self._remote_sock.sendto(self._buffer[:recv], MSG_FASTOPEN, self._remote_addr):
                     self._log(logging.INFO, f"TFO sent {sent} bytes", label)
             except BlockingIOError:
                 if recv:
@@ -97,9 +91,7 @@ class Session:
 
         return connected
 
-    def _relay(
-        self, src: socket.socket, dst: socket.socket, buffer: memoryview, dir: str
-    ) -> None:
+    def _relay(self, src: socket.socket, dst: socket.socket, buffer: memoryview, dir: str) -> None:
         label = f"{self._client_name:>48} {dir} {self._remote_name:>48}"
         timeout = self._timeout
 

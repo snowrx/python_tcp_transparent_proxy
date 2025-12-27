@@ -11,9 +11,7 @@ V6_LEN = 28
 V6_FMT = "!2xH4x16s"
 
 
-def get_original_dst(
-    sock: socket.socket, family: socket.AddressFamily
-) -> tuple[str, int]:
+def get_original_dst(sock: socket.socket, family: socket.AddressFamily) -> tuple[str, int]:
     ip: str
     port: int
 
