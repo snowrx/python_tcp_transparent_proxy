@@ -3,6 +3,8 @@ import logging
 from gevent import socket
 from gevent.server import StreamServer
 
+BACKLOG = 10
+
 
 class Server:
     def __init__(self, port: int, handler) -> None:
@@ -13,7 +15,7 @@ class Server:
         listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
         listener.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 0)
         listener.bind(("", self._port))
-        listener.listen(socket.SOMAXCONN)
+        listener.listen(BACKLOG)
 
         self._server = StreamServer(listener, handler)
 
