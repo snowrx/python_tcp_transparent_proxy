@@ -2,7 +2,6 @@ import logging
 import os
 
 from gevent import socket
-from gevent.threadpool import ThreadPool
 
 from core.buffer_pool import BufferPool
 from core.server import Server
@@ -13,12 +12,10 @@ LOG_LEVEL = logging.INFO
 LOG_FORMAT = "%(name)-30s | %(levelname)-10s | %(message)s"
 
 PORT = 8081
-TIMEOUT = 7200
+TIMEOUT = 86400
 
-BUFFER_SIZE = 1 << 20
-POOL_SIZE = 100
-
-WORKER_COUNT = 4
+BUFFER_SIZE = 1 << 18
+POOL_SIZE = 1 << 8
 
 
 def main() -> None:
@@ -33,11 +30,13 @@ def main() -> None:
                 return
 
             with buffer_pool.acquire() as buffer:
-                Session(
+                session = Session(
                     client_sock, client_addr, remote_addr, family, buffer, TIMEOUT
-                ).run()
+                )
+                session.run()
 
-    Server(PORT, handler).serve_forever()
+    server = Server(PORT, handler)
+    server.serve_forever()
 
 
 if __name__ == "__main__":
@@ -45,9 +44,4 @@ if __name__ == "__main__":
         LOG_LEVEL = logging.DEBUG
     logging.basicConfig(level=LOG_LEVEL, format=LOG_FORMAT)
 
-    if WORKER_COUNT > 1:
-        sub_count = WORKER_COUNT - 1
-        thread_pool = ThreadPool(sub_count)
-        for _ in range(sub_count):
-            thread_pool.spawn(main)
     main()
