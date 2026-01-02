@@ -14,7 +14,7 @@ LOG_FORMAT = "%(name)-30s | %(levelname)-10s | %(message)s"
 PORT = 8081
 TIMEOUT = 86400
 
-BUFFER_SIZE = 1 << 18
+BUFFER_SIZE = 1 << 20
 POOL_SIZE = 1 << 8
 
 
