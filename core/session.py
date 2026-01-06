@@ -12,6 +12,9 @@ TCP_FASTOPEN_CONNECT = 30
 MSG_FASTOPEN = 0x20000000
 TFO_RECV_TIMEOUT = 0.01
 
+DEFAULT_BUFFER_SIZE = 1 << 18
+DEFAULT_TIMEOUT = 86400
+
 
 class Session:
     def __init__(
@@ -20,8 +23,8 @@ class Session:
         client_addr: tuple[str, int],
         remote_addr: tuple[str, int],
         family: socket.AddressFamily,
-        buffer: memoryview,
-        timeout: int,
+        buffer: memoryview = memoryview(bytearray(DEFAULT_BUFFER_SIZE)),
+        timeout: int = DEFAULT_TIMEOUT,
     ) -> None:
         self._logger = logging.getLogger(f"{self.__class__.__name__}-{hex(id(self))}")
 

@@ -12,7 +12,6 @@ LOG_LEVEL = logging.INFO
 LOG_FORMAT = "%(name)-30s | %(levelname)-10s | %(message)s"
 
 PORT = 8081
-TIMEOUT = 86400
 
 CHUNK_SIZE = 1 << 20
 POOL_SIZE = 100
@@ -30,11 +29,8 @@ def main() -> None:
             if remote_addr == sockname:
                 return
 
-            with buffer_pool.acquire() as buffer:
-                session = Session(
-                    client_sock, client_addr, remote_addr, family, buffer, TIMEOUT
-                )
-                session.run()
+            with buffer_pool.borrow() as buffer:
+                Session(client_sock, client_addr, remote_addr, family, buffer).run()
 
     server = Server(PORT, handler)
     server.serve_forever()
