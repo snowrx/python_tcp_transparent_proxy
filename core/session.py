@@ -1,5 +1,6 @@
 import logging
 
+import gevent
 from gevent import socket
 from gevent.pool import Group
 from gevent.select import select
@@ -14,6 +15,12 @@ TFO_RECV_TIMEOUT = 0.01
 
 DEFAULT_BUFFER_SIZE = 1 << 18
 DEFAULT_TIMEOUT = 86400
+
+DEBUG = logging.DEBUG
+INFO = logging.INFO
+WARN = logging.WARN
+ERROR = logging.ERROR
+CRITICAL = logging.CRITICAL
 
 
 class Session:
@@ -61,9 +68,9 @@ class Session:
                 self._relay, self._remote_sock, self._client_sock, d_buf, DIR_DOWN
             )
 
-            self._log(logging.INFO, "Session started", label)
+            self._log(INFO, "Session started", label)
             group.join()
-            self._log(logging.INFO, "Session finished", label)
+            self._log(INFO, "Session finished", label)
 
     def _connect(self) -> bool:
         label = f"{self._client_name:>48} {DIR_UP} {self._remote_name:>48}"
@@ -77,26 +84,26 @@ class Session:
             try:
                 wait_read(self._client_sock.fileno(), TFO_RECV_TIMEOUT)
                 if recv := self._client_sock.recv_into(self._buffer):
-                    self._log(logging.DEBUG, f"TFO recv {recv} bytes", label)
+                    self._log(DEBUG, f"TFO recv {recv} bytes", label)
             except (TimeoutError, socket.timeout):
-                self._log(logging.DEBUG, "TFO recv timeout", label)
+                self._log(DEBUG, "TFO recv timeout", label)
             try:
                 wait_write(self._remote_sock.fileno(), self._timeout)
                 if sent := self._remote_sock.sendto(
                     self._buffer[:recv], MSG_FASTOPEN, self._remote_addr
                 ):
-                    self._log(logging.INFO, f"TFO sent {sent} bytes", label)
+                    self._log(INFO, f"TFO sent {sent} bytes", label)
             except BlockingIOError:
                 if recv:
-                    self._log(logging.INFO, "TFO failed", label)
+                    self._log(INFO, "TFO failed", label)
             if sent < recv:
                 wait_write(self._remote_sock.fileno(), self._timeout)
                 self._remote_sock.sendall(self._buffer[sent:recv])
-                self._log(logging.DEBUG, f"Sent remaining {recv - sent} bytes", label)
+                self._log(DEBUG, f"Sent remaining {recv - sent} bytes", label)
 
             connected = True
         except Exception as e:
-            self._log(logging.ERROR, f"Connection error: {e}", label)
+            self._log(ERROR, f"Connection error: {e}", label)
 
         return connected
 
@@ -106,6 +113,10 @@ class Session:
         label = f"{self._client_name:>48} {dir} {self._remote_name:>48}"
         timeout = self._timeout
 
+        src_fd = src.fileno()
+        dst_fd = dst.fileno()
+
+        _log = self._log
         _select = select
         _recv = src.recv_into
         _send = dst.send
@@ -116,9 +127,12 @@ class Session:
         w_view = w_buf[:w_len]
         eof = False
 
-        self._log(logging.DEBUG, "Relay started", label)
+        _log(DEBUG, "Relay started", label)
         try:
             while True:
+                if src_fd == -1 or dst_fd == -1:
+                    raise ConnectionResetError
+                recv, sent = 0, 0
                 rlist = [src] if not eof and r_len < center else []
                 wlist = [dst] if w_view else []
 
@@ -139,12 +153,14 @@ class Session:
                         else:
                             raise BrokenPipeError
 
+                _log(
+                    DEBUG,
+                    f"{recv=:7d}, {r_len=:7d}, {sent=:7d}, w_view={len(w_view):7d}",
+                    label,
+                )
+
                 if not w_view:
-                    self._log(
-                        logging.DEBUG,
-                        f"Relay recv: {r_len:7d}, sent: {w_len:7d}, eof: {eof}",
-                        label,
-                    )
+                    gevent.idle()
                     if eof and not r_len:
                         break
                     r_buf, w_buf = w_buf, r_buf
@@ -156,13 +172,13 @@ class Session:
                 dst.close()
             except Exception:
                 pass
-            self._log(logging.ERROR, f"Relay error: {e}", label)
+            _log(ERROR, f"Relay error: {e}", label)
         finally:
             try:
                 dst.shutdown(socket.SHUT_WR)
             except Exception:
                 pass
-        self._log(logging.DEBUG, "Relay finished", label)
+        _log(DEBUG, "Relay finished", label)
 
     def _tune(self, sock: socket.socket, tfo: bool = False) -> None:
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
