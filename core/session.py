@@ -111,10 +111,9 @@ class Session:
         _send = dst.send
 
         center = len(buffer) // 2
-        r_buf = buffer[:center]
-        w_buf = buffer[center:]
-        r_len = 0
-        w_view = w_buf[:r_len]
+        r_buf, w_buf = buffer[:center], buffer[center:]
+        r_len, w_len = 0, 0
+        w_view = w_buf[:w_len]
         eof = False
 
         self._log(logging.DEBUG, "Relay started", label)
@@ -141,12 +140,16 @@ class Session:
                             raise BrokenPipeError
 
                 if not w_view:
+                    self._log(
+                        logging.DEBUG,
+                        f"Relay recv: {r_len:7d}, sent: {w_len:7d}, eof: {eof}",
+                        label,
+                    )
                     if eof and not r_len:
                         break
-                    if r_len:
-                        r_buf, w_buf = w_buf, r_buf
-                        w_view = w_buf[:r_len]
-                        r_len = 0
+                    r_buf, w_buf = w_buf, r_buf
+                    r_len, w_len = 0, r_len
+                    w_view = w_buf[:w_len]
 
         except Exception as e:
             try:
