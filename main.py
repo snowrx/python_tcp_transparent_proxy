@@ -13,7 +13,7 @@ LOG_FORMAT = "%(name)-30s | %(levelname)-10s | %(message)s"
 
 PORT = 8081
 
-CHUNK_SIZE = 1 << 20
+CHUNK_SIZE = 1 << 16
 POOL_SIZE = 100
 
 
