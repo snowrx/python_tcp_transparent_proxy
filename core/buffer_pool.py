@@ -4,7 +4,7 @@ from contextlib import contextmanager
 from gevent.lock import BoundedSemaphore
 from gevent.queue import SimpleQueue
 
-DEFAULT_CHUNK_SIZE = 1 << 18
+DEFAULT_CHUNK_SIZE = 1 << 20
 DEFAULT_POOL_SIZE = 100
 
 

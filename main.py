@@ -13,13 +13,12 @@ LOG_FORMAT = "%(name)-30s | %(levelname)-10s | %(message)s"
 
 PORT = 8081
 
-CHUNK_SIZE = 1 << 16
+BUFFER_SIZE = 1 << 20
 POOL_SIZE = 100
 
 
 def main() -> None:
-    buffer_size = CHUNK_SIZE << 2
-    buffer_pool = BufferPool(buffer_size, POOL_SIZE)
+    buffer_pool = BufferPool(BUFFER_SIZE, POOL_SIZE)
 
     def handler(client_sock: socket.socket, client_addr: tuple[str, int]) -> None:
         with client_sock:

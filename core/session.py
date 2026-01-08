@@ -1,6 +1,5 @@
 import logging
 
-import gevent
 from gevent import socket
 from gevent.pool import Group
 from gevent.select import select
@@ -13,7 +12,7 @@ TCP_FASTOPEN_CONNECT = 30
 MSG_FASTOPEN = 0x20000000
 TFO_RECV_TIMEOUT = 0.01
 
-DEFAULT_BUFFER_SIZE = 1 << 18
+DEFAULT_BUFFER_SIZE = 1 << 20
 DEFAULT_TIMEOUT = 86400
 
 DEBUG = logging.DEBUG
@@ -56,7 +55,7 @@ class Session:
             if not self._connect():
                 return
 
-            center = len(self._buffer) // 2
+            center = len(self._buffer) >> 1
             u_buf = self._buffer[:center]
             d_buf = self._buffer[center:]
 
@@ -121,7 +120,7 @@ class Session:
         _recv = src.recv_into
         _send = dst.send
 
-        center = len(buffer) // 2
+        center = len(buffer) >> 1
         r_buf, w_buf = buffer[:center], buffer[center:]
         r_len, w_len = 0, 0
         w_view = w_buf[:w_len]
@@ -153,14 +152,7 @@ class Session:
                         else:
                             raise BrokenPipeError
 
-                _log(
-                    DEBUG,
-                    f"{recv=:7d}, {r_len=:7d}, {sent=:7d}, w_view={len(w_view):7d}",
-                    label,
-                )
-
                 if not w_view:
-                    gevent.idle()
                     if eof and not r_len:
                         break
                     r_buf, w_buf = w_buf, r_buf
