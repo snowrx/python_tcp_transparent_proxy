@@ -1,5 +1,6 @@
 import logging
 import os
+from concurrent.futures import ProcessPoolExecutor
 
 from gevent import socket
 
@@ -40,4 +41,10 @@ if __name__ == "__main__":
         LOG_LEVEL = logging.DEBUG
     logging.basicConfig(level=LOG_LEVEL, format=LOG_FORMAT)
 
-    main()
+    cpu_count = os.cpu_count() or 1
+    if cpu_count > 1:
+        with ProcessPoolExecutor(cpu_count) as pool:
+            for _ in range(cpu_count):
+                pool.submit(main)
+    else:
+        main()
