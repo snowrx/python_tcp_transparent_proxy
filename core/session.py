@@ -1,5 +1,6 @@
 import logging
 
+import gevent
 from gevent import socket
 from gevent.pool import Group
 from gevent.select import select
@@ -20,6 +21,8 @@ INFO = logging.INFO
 WARN = logging.WARN
 ERROR = logging.ERROR
 CRITICAL = logging.CRITICAL
+
+INVALID_FD = -1
 
 
 class Session:
@@ -119,6 +122,7 @@ class Session:
         _select = select
         _recv = src.recv_into
         _send = dst.send
+        _idle = gevent.idle
 
         center = len(buffer) >> 1
         r_buf, w_buf = buffer[:center], buffer[center:]
@@ -129,7 +133,7 @@ class Session:
         _log(DEBUG, "Relay started", label)
         try:
             while True:
-                if src_fd == -1 or dst_fd == -1:
+                if src_fd == INVALID_FD or dst_fd == INVALID_FD:
                     raise ConnectionResetError
                 recv, sent = 0, 0
                 rlist = [src] if not eof and r_len < center else []
@@ -153,6 +157,7 @@ class Session:
                             raise BrokenPipeError
 
                 if not w_view:
+                    _idle()
                     if eof and not r_len:
                         break
                     r_buf, w_buf = w_buf, r_buf
