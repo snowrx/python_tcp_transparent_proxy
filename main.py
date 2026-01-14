@@ -1,6 +1,5 @@
 import logging
 import os
-from concurrent.futures import ProcessPoolExecutor
 
 from gevent import socket
 
@@ -14,7 +13,7 @@ LOG_FORMAT = "%(name)-30s | %(levelname)-10s | %(message)s"
 
 PORT = 8081
 
-BUFFER_SIZE = 1 << 20
+BUFFER_SIZE = 1 << 22
 POOL_SIZE = 100
 
 
@@ -41,10 +40,4 @@ if __name__ == "__main__":
         LOG_LEVEL = logging.DEBUG
     logging.basicConfig(level=LOG_LEVEL, format=LOG_FORMAT)
 
-    cpu_count = os.cpu_count() or 1
-    if cpu_count > 1:
-        with ProcessPoolExecutor(cpu_count) as pool:
-            for _ in range(cpu_count):
-                pool.submit(main)
-    else:
-        main()
+    main()
