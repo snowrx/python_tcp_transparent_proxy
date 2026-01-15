@@ -1,5 +1,6 @@
 import logging
 import os
+from concurrent.futures import ProcessPoolExecutor
 
 from gevent import socket
 
@@ -15,6 +16,8 @@ PORT = 8081
 
 BUFFER_SIZE = 1 << 22
 POOL_SIZE = 100
+
+SUB_WORKERS = 3
 
 
 def main() -> None:
@@ -40,4 +43,10 @@ if __name__ == "__main__":
         LOG_LEVEL = logging.DEBUG
     logging.basicConfig(level=LOG_LEVEL, format=LOG_FORMAT)
 
-    main()
+    if SUB_WORKERS:
+        with ProcessPoolExecutor(SUB_WORKERS) as executor:
+            for _ in range(SUB_WORKERS):
+                executor.submit(main)
+            main()
+    else:
+        main()
