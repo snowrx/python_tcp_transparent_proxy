@@ -5,40 +5,48 @@ from gevent.lock import BoundedSemaphore
 from gevent.queue import SimpleQueue
 
 DEFAULT_CHUNK_SIZE = 1 << 20
-DEFAULT_POOL_SIZE = 100
+DEFAULT_POOL_SIZE = 1 << 8
+TEMP_ID = -1
 
 
 class BufferPool:
     def __init__(
-        self, chunk_size: int = DEFAULT_CHUNK_SIZE, pool_size: int = DEFAULT_POOL_SIZE
+        self,
+        chunk_size: int = DEFAULT_CHUNK_SIZE,
+        pool_size: int = DEFAULT_POOL_SIZE,
     ):
         self._logger = logging.getLogger(f"{__class__.__name__}-{hex(id(self))}")
         self._chunk_size = chunk_size if chunk_size > 0 else DEFAULT_CHUNK_SIZE
         self._pool_size = pool_size if pool_size > 0 else DEFAULT_POOL_SIZE
-        self._pool: SimpleQueue[memoryview] = SimpleQueue(self._pool_size)
-        self._semaphore = BoundedSemaphore()
+        self._lock = BoundedSemaphore()
+        self._memory = memoryview(bytearray(self._chunk_size * self._pool_size))
+        self._free_list = SimpleQueue()
+        for i in range(self._pool_size):
+            self._free_list.put(i)
 
     @contextmanager
     def borrow(self):
-        buffer = self.acquire()
+        idx, buf = self._alloc()
         try:
-            yield buffer
+            yield buf
         finally:
-            self.release(buffer)
+            self._free(idx, buf)
 
-    def acquire(self) -> memoryview:
-        with self._semaphore:
-            if self._pool.empty():
-                self._logger.debug("Creating new buffer")
-                return memoryview(bytearray(self._chunk_size))
-            self._logger.debug("Acquiring buffer from pool")
-            return self._pool.get()
-
-    def release(self, buffer: memoryview) -> None:
-        with self._semaphore:
-            if self._pool.full():
-                self._logger.debug("Buffer pool is full, discarding buffer")
-                buffer.release()
+    def _alloc(self) -> tuple[int, memoryview]:
+        with self._lock:
+            if self._free_list.empty():
+                self._logger.warning("Allocating temporary buffer")
+                return TEMP_ID, memoryview(bytearray(self._chunk_size))
             else:
-                self._logger.debug("Releasing buffer back to pool")
-                self._pool.put(buffer)
+                idx = self._free_list.get()
+                head = idx * self._chunk_size
+                return idx, self._memory[head : head + self._chunk_size]
+
+    def _free(self, idx: int, buf: memoryview):
+        with self._lock:
+            if idx == TEMP_ID:
+                self._logger.warning("Freeing temporary buffer")
+                buf.release()
+            else:
+                self._free_list.put(idx)
+                buf[:] = b"\0" * self._chunk_size

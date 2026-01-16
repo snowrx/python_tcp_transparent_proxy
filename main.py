@@ -14,10 +14,10 @@ LOG_FORMAT = "%(name)-30s | %(levelname)-10s | %(message)s"
 
 PORT = 8081
 
-BUFFER_SIZE = 1 << 22
-POOL_SIZE = 100
+BUFFER_SIZE = 1 << 20
+POOL_SIZE = 1 << 8
 
-SUB_WORKERS = 3
+WORKERS = 4
 
 
 def main() -> None:
@@ -43,9 +43,10 @@ if __name__ == "__main__":
         LOG_LEVEL = logging.DEBUG
     logging.basicConfig(level=LOG_LEVEL, format=LOG_FORMAT)
 
-    if SUB_WORKERS:
-        with ProcessPoolExecutor(SUB_WORKERS) as executor:
-            for _ in range(SUB_WORKERS):
+    if WORKERS > 1:
+        sub_count = WORKERS - 1
+        with ProcessPoolExecutor(sub_count) as executor:
+            for _ in range(sub_count):
                 executor.submit(main)
             main()
     else:
