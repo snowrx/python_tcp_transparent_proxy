@@ -14,8 +14,8 @@ LOG_FORMAT = "%(name)-30s | %(levelname)-10s | %(message)s"
 
 PORT = 8081
 
-BUFFER_SIZE = 1 << 20
-POOL_SIZE = 1 << 8
+BUFFER_SIZE = 1 << 22
+POOL_SIZE = 1 << 6
 
 WORKERS = 4
 
