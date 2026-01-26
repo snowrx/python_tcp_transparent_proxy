@@ -1,6 +1,5 @@
 import logging
 
-import gevent
 from gevent import socket
 from gevent.pool import Group
 from gevent.select import select
@@ -122,7 +121,6 @@ class Session:
         _select = select
         _recv = src.recv_into
         _send = dst.send
-        _idle = gevent.idle
 
         center = len(buffer) >> 1
         r_buf, w_buf = buffer[:center], buffer[center:]
@@ -159,7 +157,6 @@ class Session:
                 _log(DEBUG, f"Relay progress: {recv=:7d} {sent=:7d}", label)
 
                 if not w_view:
-                    _idle()
                     if eof and not r_len:
                         break
                     r_buf, w_buf = w_buf, r_buf
