@@ -1,4 +1,5 @@
 import logging
+import mmap
 import os
 from concurrent.futures import ProcessPoolExecutor
 
@@ -12,7 +13,10 @@ LOG_LEVEL = logging.INFO
 LOG_FORMAT = "%(name)-30s | %(levelname)-10s | %(message)s"
 
 PORT = 8081
-BUFFER_SIZE = 1 << 20
+BUFFER_SIZE = 1 << 21
+
+NOFILE = -1
+MMAP_FLAGS = mmap.MAP_PRIVATE | mmap.MAP_ANONYMOUS
 
 
 def main() -> None:
@@ -24,8 +28,10 @@ def main() -> None:
             if remote_addr == sockname:
                 return
 
-            with memoryview(bytearray(BUFFER_SIZE)) as buffer:
-                Session(client_sock, client_addr, remote_addr, family, buffer).run()
+            with mmap.mmap(NOFILE, BUFFER_SIZE, MMAP_FLAGS) as mm:
+                mm.madvise(mmap.MADV_HUGEPAGE)
+                with memoryview(mm) as buffer:
+                    Session(client_sock, client_addr, remote_addr, family, buffer).run()
 
     server = Server(PORT, handler)
     server.serve_forever()
