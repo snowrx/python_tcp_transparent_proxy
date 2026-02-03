@@ -154,8 +154,6 @@ class Session:
                         else:
                             raise BrokenPipeError
 
-                _log(DEBUG, f"Relay progress: {recv=:7d} {sent=:7d}", label)
-
                 if not w_view:
                     if eof and not r_len:
                         break
