@@ -1,5 +1,4 @@
 import logging
-import mmap
 import os
 from concurrent.futures import ProcessPoolExecutor
 
