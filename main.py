@@ -1,7 +1,5 @@
 import logging
-import mmap
 import os
-from concurrent.futures import ProcessPoolExecutor
 
 from gevent import socket
 
@@ -13,9 +11,7 @@ LOG_LEVEL = logging.INFO
 LOG_FORMAT = "%(name)-30s | %(levelname)-10s | %(message)s"
 
 PORT = 8081
-BUFFER_SIZE = 1 << 22
-
-ANON = -1
+BUFFER_SIZE = 1 << 18
 
 
 def main() -> None:
@@ -27,10 +23,8 @@ def main() -> None:
             if remote_addr == sockname:
                 return
 
-            with mmap.mmap(ANON, BUFFER_SIZE, mmap.MAP_PRIVATE) as mm:
-                mm.madvise(mmap.MADV_HUGEPAGE)
-                with memoryview(mm) as mv:
-                    Session(client_sock, client_addr, remote_addr, family, mv).run()
+            with memoryview(bytearray(BUFFER_SIZE)) as mv:
+                Session(client_sock, client_addr, remote_addr, family, mv).run()
 
     server = Server(PORT, handler)
     server.serve_forever()
@@ -41,11 +35,4 @@ if __name__ == "__main__":
         LOG_LEVEL = logging.DEBUG
     logging.basicConfig(level=LOG_LEVEL, format=LOG_FORMAT)
 
-    cpu_count = os.cpu_count() or 1
-    if sub_count := cpu_count - 1:
-        with ProcessPoolExecutor(sub_count) as executor:
-            for _ in range(sub_count):
-                executor.submit(main)
-            main()
-    else:
-        main()
+    main()
