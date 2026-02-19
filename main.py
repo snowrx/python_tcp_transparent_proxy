@@ -11,7 +11,7 @@ LOG_LEVEL = logging.INFO
 LOG_FORMAT = "%(name)-30s | %(levelname)-10s | %(message)s"
 
 PORT = 8081
-BUFFER_SIZE = 1 << 18
+BUFFER_SIZE = 1 << 22
 
 
 def main() -> None:
