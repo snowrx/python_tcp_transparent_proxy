@@ -11,7 +11,8 @@ LOG_LEVEL = logging.INFO
 LOG_FORMAT = "%(name)-30s | %(levelname)-10s | %(message)s"
 
 PORT = 8081
-BUFFER_SIZE = 1 << 22
+BUFFER_SIZE = 1 << 20
+TIMEOUT = 7200
 
 
 def main() -> None:
@@ -23,8 +24,9 @@ def main() -> None:
             if remote_addr == sockname:
                 return
 
-            with memoryview(bytearray(BUFFER_SIZE)) as mv:
-                Session(client_sock, client_addr, remote_addr, family, mv).run()
+            Session(
+                client_sock, client_addr, remote_addr, family, BUFFER_SIZE, TIMEOUT
+            ).run()
 
     server = Server(PORT, handler)
     server.serve_forever()
