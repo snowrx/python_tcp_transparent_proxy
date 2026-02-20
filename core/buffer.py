@@ -38,18 +38,10 @@ class ContinuousCircularBuffer:
         if available_size := self.get_used_size():
             # マーカーあり
             if self._marker:
-                # マーカーまでの距離確認
-                distance = self._marker - self._tail
-                # 終端決定
-                end = self._tail + min(distance, available_size)
-                # ビュー取得
-                return self._buffer[self._tail : end]
+                return self._buffer[self._tail : self._marker]
             # マーカーなし
             else:
-                # 終端決定
-                end = self._tail + available_size
-                # ビュー取得
-                return self._buffer[self._tail : end]
+                return self._buffer[self._tail : self._tail + available_size]
 
         # 使用済みがない場合空を返す
         return self._buffer[0:0]
