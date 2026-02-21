@@ -93,7 +93,7 @@ class Session:
                 if sent < recv:
                     wait_write(self._remote_sock.fileno(), self._timeout)
                     self._remote_sock.sendall(buffer[sent:recv])
-                    self._log(DEBUG, f"Sent remaining {recv - sent} bytes", label)
+                    self._log(INFO, f"Sent remaining {recv - sent} bytes", label)
 
             connected = True
         except Exception as e:
@@ -123,6 +123,9 @@ class Session:
                 rv = buffer.get_readable_view()
                 wv = buffer.get_writable_view()
 
+                if not eof and not wv:
+                    _log(WARN, "Read stalled: buffer full", label)
+
                 rlist = [src] if not eof and wv else []
                 wlist = [dst] if rv else []
 
@@ -142,13 +145,6 @@ class Session:
                             buffer.advance_read(sent)
                         else:
                             raise BrokenPipeError
-
-                    if recv or sent:
-                        _log(
-                            DEBUG,
-                            f"Progress: {recv:7d}/{len(wv):7d}, {sent:7d}/{len(rv):7d}",
-                            label,
-                        )
 
                 if eof and not buffer.get_used_size():
                     break
