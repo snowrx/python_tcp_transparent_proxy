@@ -1,6 +1,6 @@
 import logging
 
-from gevent import socket, time
+from gevent import socket
 from gevent.pool import Group
 from gevent.select import select
 from gevent.socket import wait_read, wait_write
@@ -115,7 +115,6 @@ class Session:
 
         eof = False
         buffer = ContinuousCircularBuffer(self._buffer_size)
-        stalled = 0
 
         try:
             while True:
@@ -126,11 +125,6 @@ class Session:
                 sent = 0
                 rv = buffer.get_readable_view()
                 wv = buffer.get_writable_view()
-
-                if not eof and not wv:
-                    if (now := time.time()) - stalled > 1:
-                        _log(WARN, "Read stalled: buffer full", label)
-                        stalled = now
 
                 rlist = [src] if not eof and wv else []
                 wlist = [dst] if rv else []
@@ -151,6 +145,9 @@ class Session:
                             buffer.advance_read(sent)
                         else:
                             raise BrokenPipeError("Destination socket closed")
+
+                if recv or sent:
+                    _log(DEBUG, f"Progress: {buffer.get_used_size():7d}", label)
 
                 if eof and not buffer.get_used_size():
                     break
