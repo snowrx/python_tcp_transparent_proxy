@@ -119,6 +119,9 @@ class Session:
 
         try:
             while True:
+                if src_fd == INVALID_FD or dst_fd == INVALID_FD:
+                    raise BrokenPipeError("Invalid file descriptor")
+
                 recv = 0
                 sent = 0
                 rv = buffer.get_readable_view()
@@ -147,7 +150,7 @@ class Session:
                         if sent := _send(rv):
                             buffer.advance_read(sent)
                         else:
-                            raise BrokenPipeError
+                            raise BrokenPipeError("Destination socket closed")
 
                 if eof and not buffer.get_used_size():
                     break
