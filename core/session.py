@@ -1,6 +1,6 @@
 import logging
 
-from gevent import socket
+from gevent import socket, time
 from gevent.pool import Group
 from gevent.select import select
 from gevent.socket import wait_read, wait_write
@@ -115,6 +115,7 @@ class Session:
 
         eof = False
         buffer = ContinuousCircularBuffer(self._buffer_size)
+        stalled = 0
 
         try:
             while True:
@@ -124,7 +125,9 @@ class Session:
                 wv = buffer.get_writable_view()
 
                 if not eof and not wv:
-                    _log(WARN, "Read stalled: buffer full", label)
+                    if (now := time.time()) - stalled > 1:
+                        _log(WARN, "Read stalled: buffer full", label)
+                        stalled = now
 
                 rlist = [src] if not eof and wv else []
                 wlist = [dst] if rv else []
