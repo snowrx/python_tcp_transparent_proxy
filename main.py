@@ -38,10 +38,9 @@ if __name__ == "__main__":
         LOG_LEVEL = logging.DEBUG
     logging.basicConfig(level=LOG_LEVEL, format=LOG_FORMAT)
 
-    cpu_count = len(os.sched_getaffinity(0))
-    if cpu_count > 1:
-        with ProcessPoolExecutor(cpu_count) as executor:
-            sub_count = cpu_count - 1
+    sub_count = len(os.sched_getaffinity(0)) - 1
+    if sub_count > 0:
+        with ProcessPoolExecutor(sub_count) as executor:
             for _ in range(sub_count):
                 executor.submit(main)
             main()
