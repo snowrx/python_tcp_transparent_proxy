@@ -3,8 +3,8 @@ import os
 from concurrent.futures import ProcessPoolExecutor
 
 from gevent import socket
+from gevent.server import StreamServer
 
-from core.server import Server
 from core.session import Session
 from core.util import get_original_dst, ipv4_mapped
 
@@ -16,7 +16,7 @@ BUFFER_SIZE = 1 << 20
 TIMEOUT = 7200
 
 
-def main() -> None:
+def worker_main(fd: int) -> None:
     def handler(client_sock: socket.socket, client_addr: tuple[str, int]) -> None:
         with client_sock:
             family = socket.AF_INET if ipv4_mapped(client_addr[0]) else socket.AF_INET6
@@ -29,8 +29,24 @@ def main() -> None:
                 client_sock, client_addr, remote_addr, family, BUFFER_SIZE, TIMEOUT
             ).run()
 
-    server = Server(PORT, handler)
+    listener = socket.fromfd(fd, socket.AF_INET6, socket.SOCK_STREAM)
+    server = StreamServer(listener, handler)
     server.serve_forever()
+
+
+def main() -> None:
+    with socket.socket(socket.AF_INET6, socket.SOCK_STREAM) as listener:
+        listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
+        listener.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 0)
+        listener.bind(("", PORT))
+        listener.listen(socket.SOMAXCONN)
+
+        worker_count = len(os.sched_getaffinity(0))
+        if worker_count > 1:
+            with ProcessPoolExecutor(worker_count) as executor:
+                executor.map(worker_main, [listener.fileno()] * worker_count)
+        else:
+            worker_main(listener.fileno())
 
 
 if __name__ == "__main__":
@@ -38,11 +54,4 @@ if __name__ == "__main__":
         LOG_LEVEL = logging.DEBUG
     logging.basicConfig(level=LOG_LEVEL, format=LOG_FORMAT)
 
-    sub_count = len(os.sched_getaffinity(0)) - 1
-    if sub_count > 0:
-        with ProcessPoolExecutor(sub_count) as executor:
-            for _ in range(sub_count):
-                executor.submit(main)
-            main()
-    else:
-        main()
+    main()
