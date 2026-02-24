@@ -87,3 +87,11 @@ class ContinuousCircularBuffer:
             return (self._marker - self._tail) + self._head
         # マーカーなし
         return self._head - self._tail
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        if self._buffer is not None:
+            self._buffer.release()
+            self._buffer = None

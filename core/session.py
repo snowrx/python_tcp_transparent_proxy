@@ -114,56 +114,57 @@ class Session:
         _send = dst.send
 
         eof = False
-        buffer = ContinuousCircularBuffer(self._buffer_size)
 
-        try:
-            while True:
-                if src_fd == INVALID_FD or dst_fd == INVALID_FD:
-                    raise BrokenPipeError("Invalid file descriptor")
-
-                recv = 0
-                sent = 0
-                rv = buffer.get_readable_view()
-                wv = buffer.get_writable_view()
-
-                rlist = [src] if not eof and wv else []
-                wlist = [dst] if rv else []
-
-                if rlist or wlist:
-                    r, w, _ = _select(rlist, wlist, [], timeout)
-                    if not (r or w):
-                        raise TimeoutError
-
-                    if r and src in r:
-                        if recv := _recv(wv):
-                            buffer.advance_write(recv)
-                        else:
-                            eof = True
-
-                    if w and dst in w:
-                        if sent := _send(rv):
-                            buffer.advance_read(sent)
-                        else:
-                            raise BrokenPipeError("Destination socket closed")
-
-                if recv or sent:
-                    _log(DEBUG, f"Progress: {buffer.get_used_size():7d}", label)
-
-                if eof and not buffer.get_used_size():
-                    break
-
-        except Exception as e:
+        with ContinuousCircularBuffer(self._buffer_size) as buffer:
+            _log(DEBUG, "Relay started", label)
             try:
-                dst.close()
-            except Exception:
-                pass
-            _log(ERROR, f"Relay error: {e}", label)
-        finally:
-            try:
-                dst.shutdown(socket.SHUT_WR)
-            except Exception:
-                pass
-        _log(DEBUG, "Relay finished", label)
+                while True:
+                    if src_fd == INVALID_FD or dst_fd == INVALID_FD:
+                        raise BrokenPipeError("Invalid file descriptor")
+
+                    recv = 0
+                    sent = 0
+                    rv = buffer.get_readable_view()
+                    wv = buffer.get_writable_view()
+
+                    rlist = [src] if not eof and wv else []
+                    wlist = [dst] if rv else []
+
+                    if rlist or wlist:
+                        r, w, _ = _select(rlist, wlist, [], timeout)
+                        if not (r or w):
+                            raise TimeoutError
+
+                        if r and src in r:
+                            if recv := _recv(wv):
+                                buffer.advance_write(recv)
+                            else:
+                                eof = True
+
+                        if w and dst in w:
+                            if sent := _send(rv):
+                                buffer.advance_read(sent)
+                            else:
+                                raise BrokenPipeError("Destination socket closed")
+
+                    if recv or sent:
+                        _log(DEBUG, f"Progress: {buffer.get_used_size():7d}", label)
+
+                    if eof and not buffer.get_used_size():
+                        break
+
+            except Exception as e:
+                try:
+                    dst.close()
+                except Exception:
+                    pass
+                _log(ERROR, f"Relay error: {e}", label)
+            finally:
+                try:
+                    dst.shutdown(socket.SHUT_WR)
+                except Exception:
+                    pass
+            _log(DEBUG, "Relay finished", label)
 
     def _tune(self, sock: socket.socket, tfo: bool = False) -> None:
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
