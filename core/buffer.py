@@ -14,13 +14,26 @@ function
     get_used_size(): 使用済みバッファサイズ
 """
 
+import mmap
+
+NULL = -1
+MAP_FLAGS = mmap.MAP_PRIVATE | mmap.MAP_ANONYMOUS
+MADV_FLAGS = mmap.MADV_HUGEPAGE
+HUGEPAGE_THRESHOLD = 1 << 19
+
 
 class ContinuousCircularBuffer:
     def __init__(self, capacity: int):
         if capacity <= 0:
             raise ValueError("capacity must be greater than 0")
         self._capacity = capacity
-        self._buffer = memoryview(bytearray(2 * capacity))
+        mm = mmap.mmap(NULL, capacity << 1, flags=MAP_FLAGS)
+        if self._capacity >= HUGEPAGE_THRESHOLD:
+            try:
+                mm.madvise(MADV_FLAGS)
+            except OSError:
+                pass
+        self._buffer = memoryview(mm)
         self._head = 0
         self._tail = 0
         self._marker = 0
@@ -92,6 +105,6 @@ class ContinuousCircularBuffer:
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
-        if self._buffer is not None:
+        if hasattr(self, "_buffer"):
             self._buffer.release()
-            self._buffer = None
+            del self._buffer

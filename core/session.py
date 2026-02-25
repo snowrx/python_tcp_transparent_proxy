@@ -1,4 +1,5 @@
 import logging
+import mmap
 
 from gevent import socket
 from gevent.pool import Group
@@ -6,6 +7,8 @@ from gevent.select import select
 from gevent.socket import wait_read, wait_write
 
 from core.buffer import ContinuousCircularBuffer
+
+NULL = -1
 
 DIR_UP = "->"
 DIR_DOWN = "<-"
@@ -15,13 +18,13 @@ MSG_FASTOPEN = 0x20000000
 TFO_BUFFER_SIZE = 63 << 10
 TFO_RECV_TIMEOUT = 0.01
 
+MAP_FLAGS = mmap.MAP_PRIVATE | mmap.MAP_ANONYMOUS
+
 DEBUG = logging.DEBUG
 INFO = logging.INFO
 WARN = logging.WARN
 ERROR = logging.ERROR
 CRITICAL = logging.CRITICAL
-
-INVALID_FD = -1
 
 
 class Session:
@@ -72,13 +75,15 @@ class Session:
         try:
             self._remote_sock.connect(self._remote_addr)
 
-            with memoryview(bytearray(TFO_BUFFER_SIZE)) as buffer:
+            with memoryview(
+                mmap.mmap(NULL, TFO_BUFFER_SIZE, flags=MAP_FLAGS)
+            ) as buffer:
                 recv = 0
                 sent = 0
                 try:
                     wait_read(self._client_sock.fileno(), TFO_RECV_TIMEOUT)
                     if recv := self._client_sock.recv_into(buffer):
-                        self._log(DEBUG, f"TFO recv {recv} bytes", label)
+                        self._log(DEBUG, f"TFO recv {recv:5d} bytes", label)
                 except (TimeoutError, socket.timeout):
                     self._log(DEBUG, "TFO recv timeout", label)
                 try:
@@ -86,14 +91,14 @@ class Session:
                     if sent := self._remote_sock.sendto(
                         buffer[:recv], MSG_FASTOPEN, self._remote_addr
                     ):
-                        self._log(INFO, f"TFO sent {sent} bytes", label)
+                        self._log(INFO, f"TFO sent {sent:5d} bytes", label)
                 except BlockingIOError:
                     if recv:
-                        self._log(INFO, "TFO failed", label)
+                        self._log(DEBUG, "TFO failed", label)
                 if sent < recv:
                     wait_write(self._remote_sock.fileno(), self._timeout)
                     self._remote_sock.sendall(buffer[sent:recv])
-                    self._log(INFO, f"Sent remaining {recv - sent} bytes", label)
+                    self._log(DEBUG, f"Sent remaining {recv - sent:5d} bytes", label)
 
             connected = True
         except Exception as e:
@@ -119,7 +124,7 @@ class Session:
             _log(DEBUG, "Relay started", label)
             try:
                 while True:
-                    if src_fd == INVALID_FD or dst_fd == INVALID_FD:
+                    if src_fd == NULL or dst_fd == NULL:
                         raise BrokenPipeError("Invalid file descriptor")
 
                     recv = 0
