@@ -75,30 +75,31 @@ class Session:
         try:
             self._remote_sock.connect(self._remote_addr)
 
-            with memoryview(
-                mmap.mmap(NULL, TFO_BUFFER_SIZE, flags=MAP_FLAGS)
-            ) as buffer:
-                recv = 0
-                sent = 0
-                try:
-                    wait_read(self._client_sock.fileno(), TFO_RECV_TIMEOUT)
-                    if recv := self._client_sock.recv_into(buffer):
-                        self._log(DEBUG, f"TFO recv {recv:5d} bytes", label)
-                except (TimeoutError, socket.timeout):
-                    self._log(DEBUG, "TFO recv timeout", label)
-                try:
-                    wait_write(self._remote_sock.fileno(), self._timeout)
-                    if sent := self._remote_sock.sendto(
-                        buffer[:recv], MSG_FASTOPEN, self._remote_addr
-                    ):
-                        self._log(INFO, f"TFO sent {sent:5d} bytes", label)
-                except BlockingIOError:
-                    if recv:
-                        self._log(DEBUG, "TFO failed", label)
-                if sent < recv:
-                    wait_write(self._remote_sock.fileno(), self._timeout)
-                    self._remote_sock.sendall(buffer[sent:recv])
-                    self._log(DEBUG, f"Sent remaining {recv - sent:5d} bytes", label)
+            with mmap.mmap(NULL, TFO_BUFFER_SIZE, flags=MAP_FLAGS) as mm:
+                with memoryview(mm) as buffer:
+                    recv = 0
+                    sent = 0
+                    try:
+                        wait_read(self._client_sock.fileno(), TFO_RECV_TIMEOUT)
+                        if recv := self._client_sock.recv_into(buffer):
+                            self._log(DEBUG, f"TFO recv {recv:5d} bytes", label)
+                    except (TimeoutError, socket.timeout):
+                        self._log(DEBUG, "TFO recv timeout", label)
+                    try:
+                        wait_write(self._remote_sock.fileno(), self._timeout)
+                        if sent := self._remote_sock.sendto(
+                            buffer[:recv], MSG_FASTOPEN, self._remote_addr
+                        ):
+                            self._log(INFO, f"TFO sent {sent:5d} bytes", label)
+                    except BlockingIOError:
+                        if recv:
+                            self._log(DEBUG, "TFO failed", label)
+                    if sent < recv:
+                        wait_write(self._remote_sock.fileno(), self._timeout)
+                        self._remote_sock.sendall(buffer[sent:recv])
+                        self._log(
+                            DEBUG, f"Sent remaining {recv - sent:5d} bytes", label
+                        )
 
             connected = True
         except Exception as e:
@@ -119,6 +120,8 @@ class Session:
         _send = dst.send
 
         eof = False
+        rv = None
+        wv = None
 
         with ContinuousCircularBuffer(self._buffer_size) as buffer:
             _log(DEBUG, "Relay started", label)
@@ -168,6 +171,16 @@ class Session:
                     dst.shutdown(socket.SHUT_WR)
                 except Exception:
                     pass
+                if rv is not None:
+                    try:
+                        rv.release()
+                    except Exception:
+                        pass
+                if wv is not None:
+                    try:
+                        wv.release()
+                    except Exception:
+                        pass
             _log(DEBUG, "Relay finished", label)
 
     def _tune(self, sock: socket.socket, tfo: bool = False) -> None:

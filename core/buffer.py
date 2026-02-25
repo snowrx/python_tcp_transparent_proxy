@@ -27,84 +27,70 @@ class ContinuousCircularBuffer:
         if capacity <= 0:
             raise ValueError("capacity must be greater than 0")
         self._capacity = capacity
-        mm = mmap.mmap(NULL, capacity << 1, flags=MAP_FLAGS)
+        # 物理領域を2倍確保して、論理的な連続性を保証する
+        self._mm = mmap.mmap(NULL, capacity << 1, flags=MAP_FLAGS)
         if self._capacity >= HUGEPAGE_THRESHOLD:
             try:
-                mm.madvise(MADV_FLAGS)
+                self._mm.madvise(MADV_FLAGS)
             except OSError:
                 pass
-        self._buffer = memoryview(mm)
+        self._buffer = memoryview(self._mm)
         self._head = 0
         self._tail = 0
         self._marker = 0
 
     def get_writable_view(self) -> memoryview:
-        # 空き容量取得
-        if available_size := self._capacity - self.get_used_size():
-            return self._buffer[self._head : self._head + available_size]
-
-        # 空きがない場合空を返す
-        return self._buffer[0:0]
+        free_size = self._capacity - self.get_used_size()
+        return self._buffer[self._head : self._head + free_size]
 
     def get_readable_view(self) -> memoryview:
-        # 使用済み容量取得
-        if available_size := self.get_used_size():
-            # マーカーあり
-            if self._marker:
-                return self._buffer[self._tail : self._marker]
-            # マーカーなし
-            else:
-                return self._buffer[self._tail : self._tail + available_size]
-
-        # 使用済みがない場合空を返す
-        return self._buffer[0:0]
+        used_size = self.get_used_size()
+        if self._marker:
+            end = min(self._marker, self._tail + used_size)
+        else:
+            end = self._tail + used_size
+        return self._buffer[self._tail : end]
 
     def advance_write(self, nbytes: int):
-        # 進行可能確認
-        if nbytes < 0:
-            raise ValueError("nbytes must be greater than 0")
-        if nbytes > self._capacity - self.get_used_size():
-            raise ValueError("nbytes is greater than the writable size")
+        free_size = self._capacity - self.get_used_size()
+        if not (0 <= nbytes <= free_size):
+            raise ValueError("Invalid range")
 
-        # 書き込み位置進行
         self._head += nbytes
 
-        # 折り返し判定
         if self._head >= self._capacity:
-            # マーカーセット
             self._marker = self._head
-            # ヘッダー折り返し
             self._head = 0
 
     def advance_read(self, nbytes: int):
-        # 進行可能確認
-        if nbytes < 0:
-            raise ValueError("nbytes must be greater than 0")
-        if nbytes > self.get_used_size():
-            raise ValueError("nbytes is greater than the readable size")
+        used_size = self.get_used_size()
+        if not (0 <= nbytes <= used_size):
+            raise ValueError("Invalid range")
 
-        # 読み出し位置進行
         self._tail += nbytes
 
-        # 折り返し判定
         if self._marker and self._tail >= self._marker:
-            # マーカークリア
             self._marker = 0
-            # テール折り返し
             self._tail = 0
 
     def get_used_size(self) -> int:
-        # 使用済み容量取得
         if self._marker:
-            # マーカーあり
             return (self._marker - self._tail) + self._head
-        # マーカーなし
         return self._head - self._tail
 
     def __enter__(self):
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
+        self.close()
+
+    def __del__(self):
+        self.close()
+
+    def close(self):
         if hasattr(self, "_buffer"):
             self._buffer.release()
             del self._buffer
+        if hasattr(self, "_mm"):
+            self._mm.close()
+            del self._mm
