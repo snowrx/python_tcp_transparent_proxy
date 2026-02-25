@@ -147,8 +147,7 @@ class Session:
                             else:
                                 raise BrokenPipeError("Destination socket closed")
 
-                    if recv or sent:
-                        _log(DEBUG, f"Progress: {buffer.get_used_size():7d}", label)
+                        _log(DEBUG, f"{recv=:7d} {sent=:7d}", label)
 
                     if eof and not buffer.get_used_size():
                         break
