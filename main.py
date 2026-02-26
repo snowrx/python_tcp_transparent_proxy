@@ -1,6 +1,6 @@
 import logging
 import os
-from concurrent.futures import ProcessPoolExecutor
+import multiprocessing
 
 from gevent import socket
 from gevent.server import StreamServer
@@ -25,9 +25,7 @@ def worker_main(fd: int) -> None:
             if remote_addr == sockname:
                 return
 
-            Session(
-                client_sock, client_addr, remote_addr, family, BUFFER_SIZE, TIMEOUT
-            ).run()
+            Session(client_sock, client_addr, remote_addr, family, BUFFER_SIZE, TIMEOUT).run()
 
     listener = socket.fromfd(fd, socket.AF_INET6, socket.SOCK_STREAM)
     server = StreamServer(listener, handler)
@@ -41,12 +39,16 @@ def main() -> None:
         listener.bind(("", PORT))
         listener.listen(socket.SOMAXCONN)
 
-        worker_count = len(os.sched_getaffinity(0))
-        if worker_count > 1:
-            with ProcessPoolExecutor(worker_count) as executor:
-                executor.map(worker_main, [listener.fileno()] * worker_count)
-        else:
+        process = multiprocessing.Process(target=worker_main, args=(listener.fileno(),), daemon=True)
+        try:
+            process.start()
             worker_main(listener.fileno())
+        except KeyboardInterrupt:
+            print("Stopping...")
+        finally:
+            if process.is_alive():
+                process.terminate()
+                process.join()
 
 
 if __name__ == "__main__":
