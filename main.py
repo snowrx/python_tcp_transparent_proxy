@@ -1,6 +1,6 @@
 import logging
-import os
 import multiprocessing
+import os
 
 from gevent import socket
 from gevent.server import StreamServer
@@ -25,7 +25,9 @@ def worker_main(fd: int) -> None:
             if remote_addr == sockname:
                 return
 
-            Session(client_sock, client_addr, remote_addr, family, BUFFER_SIZE, TIMEOUT).run()
+            Session(
+                client_sock, client_addr, remote_addr, family, BUFFER_SIZE, TIMEOUT
+            ).run()
 
     listener = socket.fromfd(fd, socket.AF_INET6, socket.SOCK_STREAM)
     server = StreamServer(listener, handler)
@@ -39,7 +41,9 @@ def main() -> None:
         listener.bind(("", PORT))
         listener.listen(socket.SOMAXCONN)
 
-        process = multiprocessing.Process(target=worker_main, args=(listener.fileno(),), daemon=True)
+        process = multiprocessing.Process(
+            target=worker_main, args=(listener.fileno(),), daemon=True
+        )
         try:
             process.start()
             worker_main(listener.fileno())

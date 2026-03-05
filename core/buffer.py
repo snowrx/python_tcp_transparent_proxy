@@ -1,40 +1,9 @@
-"""
-書き込みビューの連続性を保証する循環バッファ。
-
-parameter
-    capacity: 論理容量
-    head: 書き込み先頭
-    tail: 読み出し先頭
-    marker: 書き込み折り返し位置
-function
-    get_writable_view(): 書き込みビューの取得
-    get_readable_view(): 読み出しビューの取得
-    advance_write(): 書き込みポインタを進める
-    advance_read(): 読み出しポインタを進める
-    get_used_size(): 使用済みバッファサイズ
-"""
-
-import mmap
-
-NULL = -1
-MAP_FLAGS = mmap.MAP_PRIVATE | mmap.MAP_ANONYMOUS
-MADV_FLAGS = mmap.MADV_HUGEPAGE
-HUGEPAGE_THRESHOLD = 1 << 19
-
-
 class ContinuousCircularBuffer:
     def __init__(self, capacity: int):
         if capacity <= 0:
             raise ValueError("capacity must be greater than 0")
         self._capacity = capacity
-        # 物理領域を2倍確保して、論理的な連続性を保証する
-        self._mm = mmap.mmap(NULL, capacity << 1, flags=MAP_FLAGS)
-        if self._capacity >= HUGEPAGE_THRESHOLD:
-            try:
-                self._mm.madvise(MADV_FLAGS)
-            except OSError:
-                pass
-        self._buffer = memoryview(self._mm)
+        self._buffer = memoryview(bytearray(capacity << 1))
         self._head = 0
         self._tail = 0
         self._marker = 0
@@ -91,6 +60,3 @@ class ContinuousCircularBuffer:
         if hasattr(self, "_buffer"):
             self._buffer.release()
             del self._buffer
-        if hasattr(self, "_mm"):
-            self._mm.close()
-            del self._mm
