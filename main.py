@@ -12,7 +12,7 @@ LOG_LEVEL = logging.INFO
 LOG_FORMAT = "%(name)-30s | %(levelname)-10s | %(message)s"
 
 PORT = 8081
-BUFFER_SIZE = 1 << 17
+BUFFER_SIZE = 1 << 21
 TIMEOUT = 7200
 
 
