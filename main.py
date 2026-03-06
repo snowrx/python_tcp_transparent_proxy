@@ -47,6 +47,7 @@ def main() -> None:
             with ProcessPoolExecutor(sub) as executor:
                 for _ in range(sub):
                     executor.submit(worker_main, fd)
+                worker_main(fd)
         else:
             worker_main(fd)
 
