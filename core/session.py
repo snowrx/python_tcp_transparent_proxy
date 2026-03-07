@@ -5,13 +5,10 @@ from gevent.pool import Group
 from gevent.select import select
 from gevent.socket import wait_read, wait_write
 
-from core.buffer import ContinuousCircularBuffer
-
-NULL = -1
-
 DIR_UP = "->"
 DIR_DOWN = "<-"
 
+CHUNK_SIZE = 1 << 20
 TCP_FASTOPEN_CONNECT = 30
 MSG_FASTOPEN = 0x20000000
 TFO_RECV_TIMEOUT = 0.01
@@ -71,7 +68,7 @@ class Session:
         try:
             self._remote_sock.connect(self._remote_addr)
 
-            with memoryview(bytearray(self._buffer_size)) as buffer:
+            with memoryview(bytearray(CHUNK_SIZE)) as buffer:
                 recv = 0
                 sent = 0
                 try:
@@ -112,70 +109,62 @@ class Session:
         _recv = src.recv_into
         _send = dst.send
 
+        status = "UNEXPECTED"
         eof = False
-        rv = None
-        wv = None
-        sent_max = 0
 
-        with ContinuousCircularBuffer(self._buffer_size) as buffer:
-            _log(DEBUG, "Relay started", label)
+        with memoryview(bytearray(CHUNK_SIZE << 1)) as buffer:
+            rv, wv = buffer[:CHUNK_SIZE], buffer[CHUNK_SIZE:]
+            rl = 0
+            tv = wv[:0]
+
             try:
                 while True:
-                    if src_fd == NULL or dst_fd == NULL:
-                        raise BrokenPipeError("Invalid file descriptor")
-
-                    recv = 0
-                    sent = 0
-                    rv = buffer.get_readable_view()
-                    wv = buffer.get_writable_view()
-
-                    rlist = [src] if not eof and wv else []
-                    wlist = [dst] if rv else []
+                    r, s = 0, 0
+                    free = max(0, CHUNK_SIZE - (rl + tv.nbytes))
+                    rlist = [src_fd] if not eof and free else []
+                    wlist = [dst_fd] if tv else []
 
                     if rlist or wlist:
-                        r, w, _ = _select(rlist, wlist, [], timeout)
-                        if not (r or w):
-                            raise TimeoutError
+                        rready, wready, _ = _select(rlist, wlist, [], timeout)
 
-                        if r and src in r:
-                            if recv := _recv(wv):
-                                buffer.advance_write(recv)
+                        if not (rready or wready):
+                            status = "TIMEOUT"
+                            break
+
+                        if dst_fd in wready:
+                            if s := _send(tv):
+                                tv = tv[s:]
+                                free += s
+                            else:
+                                status = "DST_LOST"
+                                break
+
+                        if src_fd in rready:
+                            if r := _recv(rv[rl : rl + free]):
+                                rl += r
+                                free -= r
                             else:
                                 eof = True
 
-                        if w and dst in w:
-                            if sent := _send(rv):
-                                buffer.advance_read(sent)
-                                sent_max = max(sent_max, sent)
-                            else:
-                                raise BrokenPipeError("Destination socket closed")
+                    if not tv:
+                        if eof and not rl:
+                            status = "SUCCESS"
+                            break
 
-                    if eof and not buffer.get_used_size():
-                        break
+                        rv, wv = wv, rv
+                        tv = wv[:rl]
+                        rl = 0
 
             except Exception as e:
-                try:
-                    dst.close()
-                except Exception:
-                    pass
-                _log(ERROR, f"Relay error: {e}", label)
+                status = type(e).__name__
+
             finally:
                 try:
                     dst.shutdown(socket.SHUT_WR)
                 except Exception:
                     pass
-                if rv is not None:
-                    try:
-                        rv.release()
-                    except Exception:
-                        pass
-                if wv is not None:
-                    try:
-                        wv.release()
-                    except Exception:
-                        pass
 
-        _log(DEBUG, f"Relay finished, sent max {sent_max:7d} bytes", label)
+        _log(INFO, f"Relay finished: {status}", label)
 
     def _tune(self, sock: socket.socket, tfo: bool = False) -> None:
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
