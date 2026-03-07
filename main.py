@@ -12,7 +12,6 @@ LOG_LEVEL = logging.INFO
 LOG_FORMAT = "%(name)-30s | %(levelname)-10s | %(message)s"
 
 PORT = 8081
-BUFFER_SIZE = 1 << 20
 TIMEOUT = 7200
 
 
@@ -25,9 +24,7 @@ def worker_main(fd: int) -> None:
             if remote_addr == sockname:
                 return
 
-            Session(
-                client_sock, client_addr, remote_addr, family, BUFFER_SIZE, TIMEOUT
-            ).run()
+            Session(client_sock, client_addr, remote_addr, family, TIMEOUT).run()
 
     listener = socket.fromfd(fd, socket.AF_INET6, socket.SOCK_STREAM)
     server = StreamServer(listener, handler)

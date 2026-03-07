@@ -27,7 +27,6 @@ class Session:
         client_addr: tuple[str, int],
         remote_addr: tuple[str, int],
         family: socket.AddressFamily,
-        buffer_size: int,
         timeout: int,
     ) -> None:
         self._logger = logging.getLogger(f"{self.__class__.__name__}-{hex(id(self))}")
@@ -36,7 +35,6 @@ class Session:
         self._client_addr = client_addr
         self._remote_addr = remote_addr
         self._family = family
-        self._buffer_size = buffer_size
         self._timeout = timeout
 
         self._client_name = f"[{self._client_addr[0]}]:{self._client_addr[1]:<5}"
@@ -100,6 +98,7 @@ class Session:
     def _relay(self, src: socket.socket, dst: socket.socket, dir: str) -> None:
         label = f"{self._client_name:>48} {dir} {self._remote_name:>48}"
         timeout = self._timeout
+        threshold = CHUNK_SIZE >> 3
 
         src_fd = src.fileno()
         dst_fd = dst.fileno()
@@ -121,7 +120,7 @@ class Session:
                 while True:
                     r, s = 0, 0
                     free = max(0, CHUNK_SIZE - (rl + tv.nbytes))
-                    rlist = [src_fd] if not eof and free else []
+                    rlist = [src_fd] if not eof and free >= threshold else []
                     wlist = [dst_fd] if tv else []
 
                     if rlist or wlist:
@@ -141,6 +140,7 @@ class Session:
 
                         if src_fd in rready:
                             if r := _recv(rv[rl : rl + free]):
+                                _log(DEBUG, f"{free=:7d} {r=:7d}", label)
                                 rl += r
                                 free -= r
                             else:
