@@ -8,7 +8,6 @@ from gevent.socket import wait_read, wait_write
 DIR_UP = "->"
 DIR_DOWN = "<-"
 
-CHUNK_SIZE = 1 << 20
 TCP_FASTOPEN_CONNECT = 30
 MSG_FASTOPEN = 0x20000000
 TFO_RECV_TIMEOUT = 0.01
@@ -27,6 +26,7 @@ class Session:
         client_addr: tuple[str, int],
         remote_addr: tuple[str, int],
         family: socket.AddressFamily,
+        buffer: memoryview,
         timeout: int,
     ) -> None:
         self._logger = logging.getLogger(f"{self.__class__.__name__}-{hex(id(self))}")
@@ -35,6 +35,7 @@ class Session:
         self._client_addr = client_addr
         self._remote_addr = remote_addr
         self._family = family
+        self._buffer = buffer
         self._timeout = timeout
 
         self._client_name = f"[{self._client_addr[0]}]:{self._client_addr[1]:<5}"
@@ -52,8 +53,15 @@ class Session:
                 return
 
             group = Group()
-            group.spawn(self._relay, self._client_sock, self._remote_sock, DIR_UP)
-            group.spawn(self._relay, self._remote_sock, self._client_sock, DIR_DOWN)
+            center = self._buffer.nbytes >> 1
+            up_buffer = self._buffer[:center]
+            down_buffer = self._buffer[center:]
+            group.spawn(
+                self._relay, self._client_sock, self._remote_sock, up_buffer, DIR_UP
+            )
+            group.spawn(
+                self._relay, self._remote_sock, self._client_sock, down_buffer, DIR_DOWN
+            )
 
             self._log(INFO, "Session started", label)
             group.join()
@@ -66,28 +74,27 @@ class Session:
         try:
             self._remote_sock.connect(self._remote_addr)
 
-            with memoryview(bytearray(CHUNK_SIZE)) as buffer:
-                recv = 0
-                sent = 0
-                try:
-                    wait_read(self._client_sock.fileno(), TFO_RECV_TIMEOUT)
-                    if recv := self._client_sock.recv_into(buffer):
-                        self._log(DEBUG, f"TFO recv {recv:5d} bytes", label)
-                except (TimeoutError, socket.timeout):
-                    self._log(DEBUG, "TFO recv timeout", label)
-                try:
-                    wait_write(self._remote_sock.fileno(), self._timeout)
-                    if sent := self._remote_sock.sendto(
-                        buffer[:recv], MSG_FASTOPEN, self._remote_addr
-                    ):
-                        self._log(INFO, f"TFO sent {sent:5d} bytes", label)
-                except BlockingIOError:
-                    if recv:
-                        self._log(DEBUG, "TFO failed", label)
-                if sent < recv:
-                    wait_write(self._remote_sock.fileno(), self._timeout)
-                    self._remote_sock.sendall(buffer[sent:recv])
-                    self._log(DEBUG, f"Sent remaining {recv - sent:5d} bytes", label)
+            recv = 0
+            sent = 0
+            try:
+                wait_read(self._client_sock.fileno(), TFO_RECV_TIMEOUT)
+                if recv := self._client_sock.recv_into(self._buffer):
+                    self._log(DEBUG, f"TFO recv {recv:5d} bytes", label)
+            except (TimeoutError, socket.timeout):
+                self._log(DEBUG, "TFO recv timeout", label)
+            try:
+                wait_write(self._remote_sock.fileno(), self._timeout)
+                if sent := self._remote_sock.sendto(
+                    self._buffer[:recv], MSG_FASTOPEN, self._remote_addr
+                ):
+                    self._log(INFO, f"TFO sent {sent:5d} bytes", label)
+            except BlockingIOError:
+                if recv:
+                    self._log(DEBUG, "TFO failed", label)
+            if sent < recv:
+                wait_write(self._remote_sock.fileno(), self._timeout)
+                self._remote_sock.sendall(self._buffer[sent:recv])
+                self._log(DEBUG, f"Sent remaining {recv - sent:5d} bytes", label)
 
             connected = True
         except Exception as e:
@@ -95,10 +102,11 @@ class Session:
 
         return connected
 
-    def _relay(self, src: socket.socket, dst: socket.socket, dir: str) -> None:
+    def _relay(
+        self, src: socket.socket, dst: socket.socket, buffer: memoryview, dir: str
+    ) -> None:
         label = f"{self._client_name:>48} {dir} {self._remote_name:>48}"
         timeout = self._timeout
-        threshold = CHUNK_SIZE >> 3
 
         src_fd = src.fileno()
         dst_fd = dst.fileno()
@@ -111,60 +119,62 @@ class Session:
         status = "UNEXPECTED"
         eof = False
 
-        with memoryview(bytearray(CHUNK_SIZE << 1)) as buffer:
-            rv, wv = buffer[:CHUNK_SIZE], buffer[CHUNK_SIZE:]
-            rl = 0
-            tv = wv[:0]
+        center = buffer.nbytes >> 1
+        threshold = center >> 3
 
+        rv, wv = buffer[:center], buffer[center:]
+        rl = 0
+        tv = wv[:0]
+
+        try:
+            while True:
+                r, s = 0, 0
+                free = max(0, center - (rl + tv.nbytes))
+                rlist = [src_fd] if not eof and free >= threshold else []
+                wlist = [dst_fd] if tv else []
+
+                if rlist or wlist:
+                    rready, wready, _ = _select(rlist, wlist, [], timeout)
+
+                    if not (rready or wready):
+                        status = "TIMEOUT"
+                        break
+
+                    if dst_fd in wready:
+                        if s := _send(tv):
+                            tv = tv[s:]
+                            free += s
+                        else:
+                            status = "DST_LOST"
+                            break
+
+                    if src_fd in rready:
+                        if r := _recv(rv[rl : rl + free]):
+                            _log(DEBUG, f"{free=:7d} {r=:7d}", label)
+                            rl += r
+                            free -= r
+                        else:
+                            eof = True
+
+                if not tv:
+                    if eof and not rl:
+                        status = "SUCCESS"
+                        break
+
+                    rv, wv = wv, rv
+                    tv = wv[:rl]
+                    rl = 0
+
+        except Exception as e:
+            status = type(e).__name__
+
+        finally:
+            rv.release()
+            wv.release()
             try:
-                while True:
-                    r, s = 0, 0
-                    free = max(0, CHUNK_SIZE - (rl + tv.nbytes))
-                    rlist = [src_fd] if not eof and free >= threshold else []
-                    wlist = [dst_fd] if tv else []
-
-                    if rlist or wlist:
-                        rready, wready, _ = _select(rlist, wlist, [], timeout)
-
-                        if not (rready or wready):
-                            status = "TIMEOUT"
-                            break
-
-                        if dst_fd in wready:
-                            if s := _send(tv):
-                                tv = tv[s:]
-                                free += s
-                            else:
-                                status = "DST_LOST"
-                                break
-
-                        if src_fd in rready:
-                            if r := _recv(rv[rl : rl + free]):
-                                _log(DEBUG, f"{free=:7d} {r=:7d}", label)
-                                rl += r
-                                free -= r
-                            else:
-                                eof = True
-
-                    if not tv:
-                        if eof and not rl:
-                            status = "SUCCESS"
-                            break
-
-                        rv, wv = wv, rv
-                        tv = wv[:rl]
-                        rl = 0
-
-            except Exception as e:
-                status = type(e).__name__
-
-            finally:
-                rv.release()
-                wv.release()
-                try:
-                    dst.shutdown(socket.SHUT_WR)
-                except Exception:
-                    pass
+                dst.shutdown(socket.SHUT_WR)
+            except Exception:
+                pass
 
         _log(INFO, f"Relay finished: {status}", label)
 
