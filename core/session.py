@@ -159,6 +159,8 @@ class Session:
                 status = type(e).__name__
 
             finally:
+                rv.release()
+                wv.release()
                 try:
                     dst.shutdown(socket.SHUT_WR)
                 except Exception:
