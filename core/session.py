@@ -1,9 +1,16 @@
+import ctypes
+import ctypes.util
+import fcntl
 import logging
+import mmap
+import os
 
 from gevent import socket
 from gevent.pool import Group
 from gevent.select import select
 from gevent.socket import wait_read, wait_write
+
+NULL = -1
 
 DIR_UP = "->"
 DIR_DOWN = "<-"
@@ -18,6 +25,27 @@ WARN = logging.WARN
 ERROR = logging.ERROR
 CRITICAL = logging.CRITICAL
 
+# === splice ===
+libc = ctypes.CDLL(ctypes.util.find_library("c"), use_errno=True)
+_splice = libc.splice
+_splice.argtypes = [
+    ctypes.c_int,
+    ctypes.POINTER(ctypes.c_longlong),
+    ctypes.c_int,
+    ctypes.POINTER(ctypes.c_longlong),
+    ctypes.c_size_t,
+    ctypes.c_uint,
+]
+_splice.restype = ctypes.c_ssize_t
+
+SPLICE_F_MOVE = 0x01
+SPLICE_F_NONBLOCK = 0x02
+S_FLAGS = SPLICE_F_MOVE | SPLICE_F_NONBLOCK
+EAGAIN = 11
+F_SETPIPE_SZ = 1031
+PIPE_BUF_SIZE = 1 << 20
+# === splice ===
+
 
 class Session:
     def __init__(
@@ -26,7 +54,6 @@ class Session:
         client_addr: tuple[str, int],
         remote_addr: tuple[str, int],
         family: socket.AddressFamily,
-        buffer: memoryview,
         timeout: int,
     ) -> None:
         self._logger = logging.getLogger(f"{self.__class__.__name__}-{hex(id(self))}")
@@ -35,7 +62,6 @@ class Session:
         self._client_addr = client_addr
         self._remote_addr = remote_addr
         self._family = family
-        self._buffer = buffer
         self._timeout = timeout
 
         self._client_name = f"[{self._client_addr[0]}]:{self._client_addr[1]:<5}"
@@ -53,15 +79,8 @@ class Session:
                 return
 
             group = Group()
-            center = self._buffer.nbytes >> 1
-            up_buffer = self._buffer[:center]
-            down_buffer = self._buffer[center:]
-            group.spawn(
-                self._relay, self._client_sock, self._remote_sock, up_buffer, DIR_UP
-            )
-            group.spawn(
-                self._relay, self._remote_sock, self._client_sock, down_buffer, DIR_DOWN
-            )
+            group.spawn(self._zrelay, self._client_sock, self._remote_sock, DIR_UP)
+            group.spawn(self._zrelay, self._remote_sock, self._client_sock, DIR_DOWN)
 
             self._log(INFO, "Session started", label)
             group.join()
@@ -74,27 +93,33 @@ class Session:
         try:
             self._remote_sock.connect(self._remote_addr)
 
-            recv = 0
-            sent = 0
-            try:
-                wait_read(self._client_sock.fileno(), TFO_RECV_TIMEOUT)
-                if recv := self._client_sock.recv_into(self._buffer):
-                    self._log(DEBUG, f"TFO recv {recv:5d} bytes", label)
-            except (TimeoutError, socket.timeout):
-                self._log(DEBUG, "TFO recv timeout", label)
-            try:
-                wait_write(self._remote_sock.fileno(), self._timeout)
-                if sent := self._remote_sock.sendto(
-                    self._buffer[:recv], MSG_FASTOPEN, self._remote_addr
-                ):
-                    self._log(INFO, f"TFO sent {sent:5d} bytes", label)
-            except BlockingIOError:
-                if recv:
-                    self._log(DEBUG, "TFO failed", label)
-            if sent < recv:
-                wait_write(self._remote_sock.fileno(), self._timeout)
-                self._remote_sock.sendall(self._buffer[sent:recv])
-                self._log(DEBUG, f"Sent remaining {recv - sent:5d} bytes", label)
+            with mmap.mmap(
+                NULL, mmap.PAGESIZE, mmap.MAP_ANONYMOUS | mmap.MAP_PRIVATE
+            ) as mm:
+                with memoryview(mm) as mv:
+                    recv = 0
+                    sent = 0
+                    try:
+                        wait_read(self._client_sock.fileno(), TFO_RECV_TIMEOUT)
+                        if recv := self._client_sock.recv_into(mv):
+                            self._log(DEBUG, f"TFO recv {recv:5d} bytes", label)
+                    except (TimeoutError, socket.timeout):
+                        self._log(DEBUG, "TFO recv timeout", label)
+                    try:
+                        wait_write(self._remote_sock.fileno(), self._timeout)
+                        if sent := self._remote_sock.sendto(
+                            mv[:recv], MSG_FASTOPEN, self._remote_addr
+                        ):
+                            self._log(INFO, f"TFO sent {sent:5d} bytes", label)
+                    except BlockingIOError:
+                        if recv:
+                            self._log(DEBUG, "TFO failed", label)
+                    if sent < recv:
+                        wait_write(self._remote_sock.fileno(), self._timeout)
+                        self._remote_sock.sendall(mv[sent:recv])
+                        self._log(
+                            DEBUG, f"Sent remaining {recv - sent:5d} bytes", label
+                        )
 
             connected = True
         except Exception as e:
@@ -102,81 +127,85 @@ class Session:
 
         return connected
 
-    def _relay(
-        self, src: socket.socket, dst: socket.socket, buffer: memoryview, dir: str
+    def _zrelay(
+        self, src_sock: socket.socket, dst_sock: socket.socket, dir: str
     ) -> None:
         label = f"{self._client_name:>48} {dir} {self._remote_name:>48}"
-        timeout = self._timeout
 
-        src_fd = src.fileno()
-        dst_fd = dst.fileno()
+        src_fd = src_sock.fileno()
+        dst_fd = dst_sock.fileno()
 
-        _log = self._log
-        _select = select
-        _recv = src.recv_into
-        _send = dst.send
+        p_r, p_w = os.pipe2(os.O_NONBLOCK)
+        try:
+            fcntl.fcntl(p_w, F_SETPIPE_SZ, PIPE_BUF_SIZE)
+        except OSError:
+            pass
 
-        status = "UNEXPECTED"
-        eof = False
-
-        center = buffer.nbytes >> 1
-        threshold = center >> 3
-
-        rv, wv = buffer[:center], buffer[center:]
-        rl = 0
-        tv = wv[:0]
+        status = {"reason": "unknown", "errno": 0}
+        is_eof = False
+        pipe_has_data = False
+        pipe_full = False
+        _get_errno = ctypes.get_errno
 
         try:
-            while True:
-                r, s = 0, 0
-                free = max(0, center - (rl + tv.nbytes))
-                rlist = [src_fd] if not eof and free >= threshold else []
-                wlist = [dst_fd] if tv else []
+            while not is_eof or pipe_has_data:
+                r_watch = []
+                w_watch = []
 
-                if rlist or wlist:
-                    rready, wready, _ = _select(rlist, wlist, [], timeout)
+                if not is_eof and not pipe_full:
+                    r_watch.append(src_fd)
 
-                    if not (rready or wready):
-                        status = "TIMEOUT"
-                        break
+                if pipe_has_data:
+                    w_watch.append(dst_fd)
 
-                    if dst_fd in wready:
-                        if s := _send(tv):
-                            tv = tv[s:]
-                            free += s
+                rready, wready, _ = select(r_watch, w_watch, [], self._timeout)
+                if not (rready or wready):
+                    status = {"reason": "timeout"}
+                    break
+
+                if dst_fd in wready and pipe_has_data:
+                    m = _splice(p_r, None, dst_fd, None, PIPE_BUF_SIZE, S_FLAGS)
+                    if m > 0:
+                        pipe_has_data = True
+                    elif m < 0:
+                        err = _get_errno()
+                        if err == EAGAIN:
+                            pipe_has_data = False
+                            pipe_full = False
                         else:
-                            status = "DST_LOST"
+                            status = {"reason": "error_dst", "errno": err}
                             break
 
-                    if src_fd in rready:
-                        if r := _recv(rv[rl : rl + free]):
-                            _log(DEBUG, f"{free=:7d} {r=:7d}", label)
-                            rl += r
-                            free -= r
+                if src_fd in rready and not pipe_full:
+                    n = _splice(src_fd, None, p_w, None, PIPE_BUF_SIZE, S_FLAGS)
+                    if n > 0:
+                        pipe_has_data = True
+                    elif n == 0:
+                        is_eof = True
+                    else:
+                        err = _get_errno()
+                        if err == EAGAIN:
+                            pipe_full = True
                         else:
-                            eof = True
+                            status = {"reason": "error_src", "errno": err}
+                            break
 
-                if not tv:
-                    if eof and not rl:
-                        status = "SUCCESS"
-                        break
-
-                    rv, wv = wv, rv
-                    tv = wv[:rl]
-                    rl = 0
-
-        except Exception as e:
-            status = type(e).__name__
+            if status["reason"] == "unknown":
+                status["reason"] = "eof"
 
         finally:
-            rv.release()
-            wv.release()
+            os.close(p_r)
+            os.close(p_w)
             try:
-                dst.shutdown(socket.SHUT_WR)
-            except Exception:
+                dst_sock.shutdown(socket.SHUT_WR)
+            except OSError:
                 pass
 
-        _log(INFO, f"Relay finished: {status}", label)
+        self._log(
+            INFO,
+            f"ZRelay finished: {status['reason']} ({status['errno']})",
+            label,
+        )
 
     def _tune(self, sock: socket.socket, tfo: bool = False) -> None:
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
