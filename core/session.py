@@ -215,7 +215,7 @@ class Session:
             sock.setsockopt(socket.SOL_TCP, TCP_FASTOPEN_CONNECT, 1)
 
     def _log(self, level: int, subject: str, msg: str = "") -> None:
-        output = f"{subject:60} |"
+        output = f"{subject:50} |"
         if msg:
             output += f" {msg:100} |"
         self._logger.log(level, output)
