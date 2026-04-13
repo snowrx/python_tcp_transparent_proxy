@@ -43,7 +43,8 @@ SPLICE_F_NONBLOCK = 0x02
 S_FLAGS = SPLICE_F_MOVE | SPLICE_F_NONBLOCK
 EAGAIN = 11
 F_SETPIPE_SZ = 1031
-PIPE_BUF_SIZE = 1 << 20
+PIPE_MIN_SCALE = 12
+PIPE_MAX_SCALE = 24
 # === splice ===
 
 
@@ -136,10 +137,15 @@ class Session:
         dst_fd = dst_sock.fileno()
 
         p_r, p_w = os.pipe2(os.O_NONBLOCK)
+        pipe_size = 1 << PIPE_MIN_SCALE
         try:
-            fcntl.fcntl(p_w, F_SETPIPE_SZ, PIPE_BUF_SIZE)
+            for scale in range(PIPE_MIN_SCALE, PIPE_MAX_SCALE + 1):
+                t = 1 << scale
+                fcntl.fcntl(p_w, F_SETPIPE_SZ, t)
+                pipe_size = t
         except OSError:
             pass
+        self._log(DEBUG, f"Pipe size set to {pipe_size}", label)
 
         status = {"reason": "unknown", "errno": 0}
         is_eof = False
@@ -164,7 +170,7 @@ class Session:
                     break
 
                 if dst_fd in wready and pipe_has_data:
-                    m = _splice(p_r, None, dst_fd, None, PIPE_BUF_SIZE, S_FLAGS)
+                    m = _splice(p_r, None, dst_fd, None, pipe_size, S_FLAGS)
                     if m > 0:
                         pipe_has_data = True
                     elif m < 0:
@@ -177,7 +183,7 @@ class Session:
                             break
 
                 if src_fd in rready and not pipe_full:
-                    n = _splice(src_fd, None, p_w, None, PIPE_BUF_SIZE, S_FLAGS)
+                    n = _splice(src_fd, None, p_w, None, pipe_size, S_FLAGS)
                     if n > 0:
                         pipe_has_data = True
                     elif n == 0:
